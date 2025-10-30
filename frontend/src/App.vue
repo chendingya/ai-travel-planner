@@ -170,32 +170,42 @@ const flyTo = (coords) => {
   margin: 0 40px;
   height: 100%;
   display: flex;
-  align-items: center;
+  align-items: stretch;
 }
 
 .header-menu :deep(.t-default-menu) {
   height: 100% !important;
   width: 100% !important;
+  max-width: 100% !important;
   background: transparent !important;
   border: none !important;
+  flex: 1;
 }
 
 .header-menu :deep(.t-default-menu__inner) {
   height: 100% !important;
   border-bottom: none !important;
+  display: flex !important;
+  align-items: stretch !important;
 }
 
 .header-menu :deep(.t-menu) {
   border-bottom: none !important;
   background: transparent !important;
   height: 100% !important;
+  width: 100% !important;
   display: flex !important;
   flex-direction: row !important;
-  align-items: center !important;
+  align-items: stretch !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .header-menu :deep(.t-menu--scroll) {
   overflow: visible !important;
+  width: 100% !important;
+  display: flex !important;
+  align-items: stretch !important;
 }
 
 .header-menu :deep(.t-menu__operations) {
@@ -204,31 +214,63 @@ const flyTo = (coords) => {
 
 .header-menu :deep(.t-menu__item) {
   font-size: 15px;
-  padding: 0 20px !important;
-  height: var(--header-height) !important;
-  line-height: var(--header-height) !important;
+  padding: 0 24px !important;
+  height: 100% !important;
+  min-height: var(--header-height) !important;
+  max-height: var(--header-height) !important;
   display: inline-flex !important;
   align-items: center !important;
-  border-bottom: 2px solid transparent !important;
+  justify-content: center !important;
+  border-bottom: 3px solid transparent !important;
   transition: all 0.3s ease;
   white-space: nowrap;
+  gap: 8px !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.header-menu :deep(.t-menu__item .t-icon) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 18px;
+  margin: 0 !important;
+  flex-shrink: 0;
 }
 
 .header-menu :deep(.t-menu__item:hover) {
-  color: var(--brand-color) !important;
-  background: transparent !important;
+  color: #0084ff !important;
+  background: rgba(0, 132, 255, 0.04) !important;
+  border-bottom-color: rgba(0, 132, 255, 0.3) !important;
 }
 
 .header-menu :deep(.t-menu__item.t-is-active) {
-  color: var(--brand-color) !important;
-  border-bottom-color: var(--brand-color) !important;
+  color: #0084ff !important;
+  border-bottom-color: #0084ff !important;
   background: transparent !important;
+  font-weight: 500;
+  position: relative;
+}
+
+.header-menu :deep(.t-menu__item.t-is-active::after) {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #0084ff 20%, #0084ff 80%, transparent) !important;
+  z-index: 10;
 }
 
 .header-menu :deep(.t-menu__content) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1.5 !important;
+  vertical-align: middle;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 .header-right {
