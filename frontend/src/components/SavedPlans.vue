@@ -212,23 +212,22 @@ onMounted(fetchPlans);
 
 <style scoped>
 .saved-plans-container {
-  max-width: 1200px;
+  max-width: 100%;
   margin: 0 auto;
+  padding: 32px;
 }
 
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding: 20px;
-  background: var(--card-bg);
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-light);
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;

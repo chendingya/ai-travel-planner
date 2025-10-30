@@ -122,18 +122,34 @@ onMounted(() => {
 }
 
 .user-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 8px 16px !important;
+  height: auto !important;
+}
+
+.user-button :deep(.t-button__text) {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.user-button :deep(.t-icon) {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 16px;
 }
 
 .user-email {
+  display: inline-block;
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .login-tips {

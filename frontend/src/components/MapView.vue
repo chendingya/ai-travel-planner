@@ -1,12 +1,13 @@
 <template>
-  <div style="height: 400px; width: 100%;">
-    <l-map ref="map" v-model:zoom="zoom" :center="center">
+  <div class="map-container">
+    <l-map ref="map" v-model:zoom="zoom" :center="center" class="leaflet-map">
       <l-tile-layer
-        url-template="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         layer-type="base"
         name="OpenStreetMap"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       ></l-tile-layer>
-      <l-marker v-for="location in locations" :key="location.name" :lat-lng="location.coords">
+      <l-marker v-for="(location, index) in locations" :key="index" :lat-lng="location.coords">
         <l-popup>{{ location.name }}</l-popup>
       </l-marker>
     </l-map>
@@ -49,7 +50,9 @@ export default {
     });
 
     const flyTo = (coords) => {
-      map.value.flyTo(coords, 13);
+      if (map.value && map.value.leafletObject) {
+        map.value.leafletObject.flyTo(coords, 13);
+      }
     };
 
     return { zoom, center, map, flyTo };
@@ -57,4 +60,18 @@ export default {
 };
 </script>
 
-<style></style>
+<style scoped>
+.map-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--border-radius);
+}
+
+.leaflet-map {
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+</style>

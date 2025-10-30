@@ -2,7 +2,7 @@
   <div class="planner-container">
     <div class="planner-header">
       <h2 class="planner-title">
-        <t-icon name="compass" size="24px" />
+        <t-icon name="compass" size="28px" />
         规划你的旅行
       </h2>
       <p class="planner-subtitle">填写以下信息，AI 将为您生成专属旅行方案</p>
@@ -309,25 +309,25 @@ const flyToLocation = (coords) => {
 
 <style scoped>
 .planner-container {
-  padding: 24px;
+  width: 100%;
   height: 100%;
   overflow-y: auto;
 }
 
 .planner-header {
-  margin-bottom: 24px;
-  text-align: center;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .planner-title {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .planner-subtitle {

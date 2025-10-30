@@ -110,17 +110,26 @@ export default {
 
 <style scoped>
 .settings-container {
-  max-width: 800px;
+  max-width: 100%;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 32px;
+}
+
+.settings-container h2 {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 32px 0;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .setting-section {
-  margin-bottom: 2rem;
-  padding: 1.5rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  background-color: #f9f9f9;
+  margin-bottom: 32px;
+  padding: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 0;
+  background-color: var(--card-bg);
 }
 
 .setting-section h3 {

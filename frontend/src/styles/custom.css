@@ -1,0 +1,134 @@
+/* 全局自定义样式 - 知乎风格 */
+
+:root {
+  --primary-color: #0084ff;
+  --primary-hover: #0066cc;
+  --bg-color: #f6f6f6;
+  --card-bg: #ffffff;
+  --text-primary: #1a1a1a;
+  --text-secondary: #8590a6;
+  --border-color: #e4e6eb;
+  --shadow-light: 0 1px 3px rgba(26, 26, 26, 0.1);
+  --shadow-medium: 0 2px 8px rgba(26, 26, 26, 0.12);
+  --border-radius: 8px;
+  --header-height: 56px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: auto;
+  min-height: 100vh;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+#app {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* 卡片样式 */
+.card {
+  background: var(--card-bg);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-light);
+  padding: 20px;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-medium);
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+  :root {
+    --header-height: 48px;
+  }
+}
+
+/* TDesign 组件自定义 */
+.t-button--primary {
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+}
+
+.t-button--primary:hover {
+  background-color: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
+}
+
+/* 知乎风格的输入框 */
+.t-input__inner,
+.t-textarea__inner {
+  border-radius: 4px !important;
+  border-color: var(--border-color) !important;
+}
+
+.t-input__inner:focus,
+.t-textarea__inner:focus {
+  border-color: var(--primary-color) !important;
+}
+
+/* 动画效果 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-enter-active,
+.slide-leave-active {
+  transition: transform 0.3s ease;
+}
+
+.slide-enter-from {
+  transform: translateX(-20px);
+}
+
+.slide-leave-to {
+  transform: translateX(20px);
+}

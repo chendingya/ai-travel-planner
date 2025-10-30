@@ -10,37 +10,39 @@
           </h1>
         </div>
         
-        <t-menu 
-          class="header-menu" 
-          mode="horizontal" 
-          :value="view"
-          @change="handleMenuChange"
-        >
-          <t-menu-item value="planner">
-            <template #icon>
-              <t-icon name="compass" />
-            </template>
-            智能规划
-          </t-menu-item>
-          <t-menu-item value="saved">
-            <template #icon>
-              <t-icon name="bookmark" />
-            </template>
-            我的计划
-          </t-menu-item>
-          <t-menu-item value="expense">
-            <template #icon>
-              <t-icon name="money-circle" />
-            </template>
-            费用管理
-          </t-menu-item>
-          <t-menu-item value="settings">
-            <template #icon>
-              <t-icon name="setting" />
-            </template>
-            设置
-          </t-menu-item>
-        </t-menu>
+        <div class="header-menu">
+          <t-menu 
+            mode="horizontal" 
+            :value="view"
+            @change="handleMenuChange"
+            theme="light"
+          >
+            <t-menu-item value="planner">
+              <template #icon>
+                <t-icon name="compass" />
+              </template>
+              智能规划
+            </t-menu-item>
+            <t-menu-item value="saved">
+              <template #icon>
+                <t-icon name="bookmark" />
+              </template>
+              我的计划
+            </t-menu-item>
+            <t-menu-item value="expense">
+              <template #icon>
+                <t-icon name="wallet" />
+              </template>
+              费用管理
+            </t-menu-item>
+            <t-menu-item value="settings">
+              <template #icon>
+                <t-icon name="setting" />
+              </template>
+              设置
+            </t-menu-item>
+          </t-menu>
+        </div>
 
         <div class="header-right">
           <Auth />
@@ -53,13 +55,13 @@
       <transition name="fade" mode="out-in">
         <!-- 规划页面 -->
         <div v-if="view === 'planner'" class="content-wrapper" key="planner">
-          <t-row :gutter="16">
-            <t-col :xs="12" :sm="12" :md="5" :lg="5" :xl="4">
+          <t-row :gutter="24">
+            <t-col :xs="12" :sm="12" :md="8" :lg="8" :xl="8">
               <div class="planner-section">
                 <Planner @locations-updated="updateLocations" @fly-to="flyTo" />
               </div>
             </t-col>
-            <t-col :xs="12" :sm="12" :md="7" :lg="7" :xl="8">
+            <t-col :xs="12" :sm="12" :md="4" :lg="4" :xl="4">
               <div class="map-section">
                 <MapView :locations="locations" ref="mapView" />
               </div>
@@ -68,17 +70,17 @@
         </div>
 
         <!-- 已保存计划 -->
-        <div v-else-if="view === 'saved'" class="content-wrapper" key="saved">
+        <div v-else-if="view === 'saved'" class="content-wrapper content-page" key="saved">
           <SavedPlans />
         </div>
 
         <!-- 费用管理 -->
-        <div v-else-if="view === 'expense'" class="content-wrapper" key="expense">
+        <div v-else-if="view === 'expense'" class="content-wrapper content-page" key="expense">
           <ExpenseTracker />
         </div>
 
         <!-- 设置 -->
-        <div v-else-if="view === 'settings'" class="content-wrapper" key="settings">
+        <div v-else-if="view === 'settings'" class="content-wrapper content-page" key="settings">
           <Settings />
         </div>
       </transition>
@@ -118,10 +120,12 @@ const flyTo = (coords) => {
 #app {
   min-height: 100vh;
   background-color: var(--bg-color);
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header {
-  position: fixed;
+  position: sticky;
   top: 0;
   left: 0;
   right: 0;
@@ -131,6 +135,7 @@ const flyTo = (coords) => {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   z-index: 1000;
   padding: 0 24px;
+  flex-shrink: 0;
 }
 
 .header-container {
@@ -163,14 +168,67 @@ const flyTo = (coords) => {
 .header-menu {
   flex: 1;
   margin: 0 40px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.header-menu :deep(.t-default-menu) {
+  height: 100% !important;
+  width: 100% !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+.header-menu :deep(.t-default-menu__inner) {
+  height: 100% !important;
   border-bottom: none !important;
+}
+
+.header-menu :deep(.t-menu) {
+  border-bottom: none !important;
+  background: transparent !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+}
+
+.header-menu :deep(.t-menu--scroll) {
+  overflow: visible !important;
+}
+
+.header-menu :deep(.t-menu__operations) {
+  display: none !important;
 }
 
 .header-menu :deep(.t-menu__item) {
   font-size: 15px;
-  padding: 0 20px;
-  height: var(--header-height);
-  line-height: var(--header-height);
+  padding: 0 20px !important;
+  height: var(--header-height) !important;
+  line-height: var(--header-height) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border-bottom: 2px solid transparent !important;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.header-menu :deep(.t-menu__item:hover) {
+  color: var(--brand-color) !important;
+  background: transparent !important;
+}
+
+.header-menu :deep(.t-menu__item.t-is-active) {
+  color: var(--brand-color) !important;
+  border-bottom-color: var(--brand-color) !important;
+  background: transparent !important;
+}
+
+.header-menu :deep(.t-menu__content) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .header-right {
@@ -178,15 +236,17 @@ const flyTo = (coords) => {
 }
 
 .app-container {
-  margin-top: var(--header-height);
   padding: 24px;
   max-width: 1440px;
   margin-left: auto;
   margin-right: auto;
+  width: 100%;
+  flex: 1;
 }
 
 .content-wrapper {
   animation: fadeIn 0.3s ease-in-out;
+  height: 100%;
 }
 
 @keyframes fadeIn {
@@ -202,16 +262,29 @@ const flyTo = (coords) => {
 
 .planner-section,
 .map-section {
-  height: calc(100vh - var(--header-height) - 48px);
+  min-height: calc(100vh - var(--header-height) - 48px);
   background: var(--card-bg);
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-light);
-  overflow: hidden;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+}
+
+.planner-section {
+  padding: 32px;
 }
 
 .map-section {
   position: sticky;
   top: calc(var(--header-height) + 24px);
+}
+
+.content-page {
+  background: var(--card-bg);
+  border-radius: 0;
+  box-shadow: none;
+  border: 1px solid var(--border-color);
+  min-height: auto;
 }
 
 /* 响应式设计 */
