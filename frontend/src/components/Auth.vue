@@ -1,68 +1,155 @@
 <template>
   <div class="auth-container">
-    <h2>Login or Sign Up</h2>
-    <form @submit.prevent="handleLogin">
-      <div class="form-group">
-        <label for="email">Email:</label>
-        <input type="email" id="email" v-model="email" required>
-      </div>
-      <button type="submit">Send Magic Link</button>
-    </form>
+    <t-dropdown v-if="user" trigger="click">
+      <t-button variant="text" class="user-button">
+        <t-icon name="user" />
+        <span class="user-email">{{ user.email }}</span>
+      </t-button>
+      <t-dropdown-menu>
+        <t-dropdown-item @click="handleLogout">
+          <t-icon name="logout" />
+          退出登录
+        </t-dropdown-item>
+      </t-dropdown-menu>
+    </t-dropdown>
+
+    <t-button v-else theme="primary" variant="outline" @click="showLoginDialog = true">
+      <t-icon name="login" />
+      登录
+    </t-button>
+
+    <t-dialog
+      v-model:visible="showLoginDialog"
+      header="登录 / 注册"
+      :footer="false"
+      width="400px"
+    >
+      <t-form @submit="handleLogin">
+        <t-form-item label="邮箱">
+          <t-input
+            v-model="email"
+            type="email"
+            placeholder="请输入您的邮箱"
+            clearable
+            required
+          >
+            <template #prefix-icon>
+              <t-icon name="mail" />
+            </template>
+          </t-input>
+        </t-form-item>
+        <t-form-item>
+          <t-button
+            theme="primary"
+            type="submit"
+            block
+            size="large"
+            :loading="loading"
+          >
+            {{ loading ? '发送中...' : '发送登录链接' }}
+          </t-button>
+        </t-form-item>
+        <div class="login-tips">
+          <t-icon name="info-circle" size="14px" />
+          我们将向您的邮箱发送一个登录链接
+        </div>
+      </t-form>
+    </t-dialog>
   </div>
 </template>
 
-<script>
+<script setup>
+import { ref, onMounted } from 'vue';
 import { supabase } from '../supabase';
+import { MessagePlugin } from 'tdesign-vue-next';
 
-export default {
-  data() {
-    return {
-      email: '',
-    };
-  },
-  methods: {
-    async handleLogin() {
-      try {
-        const { error } = await supabase.auth.signInWithOtp({
-          email: this.email,
-        });
-        if (error) throw error;
-        alert('Check your email for the login link!');
-      } catch (error) {
-        alert(error.error_description || error.message);
-      }
-    },
-  },
+const email = ref('');
+const user = ref(null);
+const showLoginDialog = ref(false);
+const loading = ref(false);
+
+const handleLogin = async () => {
+  if (!email.value) {
+    MessagePlugin.warning('请输入邮箱地址');
+    return;
+  }
+  
+  loading.value = true;
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.value,
+    });
+    if (error) throw error;
+    MessagePlugin.success('登录链接已发送，请查收邮件！');
+    showLoginDialog.value = false;
+    email.value = '';
+  } catch (error) {
+    MessagePlugin.error(error.error_description || error.message);
+  } finally {
+    loading.value = false;
+  }
 };
+
+const handleLogout = async () => {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    user.value = null;
+    MessagePlugin.success('已退出登录');
+  } catch (error) {
+    MessagePlugin.error('退出登录失败');
+  }
+};
+
+const checkUser = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  user.value = session?.user || null;
+};
+
+onMounted(() => {
+  checkUser();
+  
+  supabase.auth.onAuthStateChange((_event, session) => {
+    user.value = session?.user || null;
+  });
+});
 </script>
 
 <style scoped>
 .auth-container {
-  max-width: 400px;
-  margin: 2rem auto;
-  padding: 2rem;
-  border: 1px solid #ccc;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
 }
-.form-group {
-  margin-bottom: 1rem;
+
+.user-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
 }
-label {
-  display: block;
-  margin-bottom: 0.5rem;
+
+.user-email {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
 }
-input {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+
+.login-tips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  text-align: center;
+  justify-content: center;
 }
-button {
-  padding: 0.75rem 1.5rem;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
+
+@media (max-width: 768px) {
+  .user-email {
+    max-width: 100px;
+  }
 }
 </style>

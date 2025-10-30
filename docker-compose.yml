@@ -10,4 +10,4 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
