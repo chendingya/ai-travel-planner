@@ -224,16 +224,17 @@ const getPlan = async () => {
     
     const data = await response.json();
     
-    // 更健壮的解析：只解析 "Day N" / "第 N 天" 的部分，且在遇到预算/交通等段（以【 开头）时停止
+        // 更健壮的解析：只解析真实的行程 Day 段，过滤元数据和后续预算/交通等区块
     const raw = data.plan || '';
-    // 去掉后面的描述性区块（例如【交通】【住宿】等），避免被时间轴渲染
+    
+    // 第一步：去掉后面的描述性区块（例如【交通】【住宿】等）
     let mainText = raw;
     const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
     if (cutoffMatch) {
       mainText = raw.slice(0, cutoffMatch.index).trim();
     }
 
-    // 以行首为 Day 标识分割，各种可能的 Day 标记都考虑
+    // 第二步：以 "Day N" 或 "第 N 天" 为分隔符拆分成日程块
     const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
 
     const daily_itinerary = dayBlocks.map((block, idx) => {
@@ -247,16 +248,34 @@ const getPlan = async () => {
         contentLines = lines.slice(1);
       }
 
-      // 将每一行按分隔符拆成若干活动（例如 a-b-c）
+      // 第三步：过滤掉元数据行（如 "- 旅行天数"、"- 目的地"、"2天"、"日本东京" 等单行元数据）
+      const metaKeywords = ['旅行天数', '目的地', '预算', '团队人数', '人数', '偏好', '喜欢', '元人民币', '天', '人'];
+      const filtered = contentLines.filter(line => {
+        // 如果是纯列表项（以 - 开头且后面是元数据关键词），跳过
+        if (/^-\s*/.test(line)) {
+          const stripped = line.replace(/^-\s*/, '');
+          if (metaKeywords.some(kw => stripped.includes(kw))) return false;
+        }
+        // 如果行很短且包含元数据关键词（例如 "2天" "10人" "10000元人民币"），跳过
+        if (line.length < 20 && metaKeywords.some(kw => line.includes(kw))) return false;
+        // 如果整行只是数字+单位（如 "2天"），跳过
+        if (/^\d+\s*[天人元]/.test(line)) return false;
+        return true;
+      });
+
+      // 第四步：将每一行按分隔符拆成若干活动（例如 a-b-c）
       const activities = [];
-      for (const line of contentLines) {
-        // 跳过可能的元数据行
-        if (/^\【|^\[|^\{/ .test(line)) continue;
-        // 如果是空或者为总结性的行（例如以【 开头），跳过
+      for (const line of filtered) {
+        // 跳过可能的元数据行（以【或[ 开头）
+        if (/^【|^\[|^\{/.test(line)) continue;
         if (!line) continue;
+
+        // 如果有多个分隔符（-、,、/ 等），拆成多个活动
         const parts = line.split(/[-–—,，、；;\/\\]/).map(p => p.trim()).filter(Boolean);
         if (parts.length > 1) {
           for (const part of parts) {
+            // 再次过滤短元数据片段
+            if (part.length < 3 || metaKeywords.some(kw => part.includes(kw))) continue;
             activities.push({ time: '', description: part });
           }
         } else {
