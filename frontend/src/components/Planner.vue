@@ -312,6 +312,8 @@ const flyToLocation = (coords) => {
   width: 100%;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .planner-header {
