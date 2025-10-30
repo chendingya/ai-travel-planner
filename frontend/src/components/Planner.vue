@@ -224,38 +224,100 @@ const getPlan = async () => {
     
     const data = await response.json();
     
-    const parsedPlan = {
-      daily_itinerary: data.plan.split('\n\nDay').map((dayString, index) => {
-        if (index === 0) {
-          const lines = dayString.split('\n');
-          const theme = lines[0].replace(/Day \d+: /,'');
-          const activities = lines.slice(1).filter(line => line.trim()).map(line => {
-            const [time, ...description] = line.split(':');
-            return { time: time.trim(), description: description.join(':').trim() };
-          });
-          return { theme, activities };
+    // 更健壮的解析：只解析 "Day N" / "第 N 天" 的部分，且在遇到预算/交通等段（以【 开头）时停止
+    const raw = data.plan || '';
+    // 去掉后面的描述性区块（例如【交通】【住宿】等），避免被时间轴渲染
+    let mainText = raw;
+    const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
+    if (cutoffMatch) {
+      mainText = raw.slice(0, cutoffMatch.index).trim();
+    }
+
+    // 以行首为 Day 标识分割，各种可能的 Day 标记都考虑
+    const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
+
+    const daily_itinerary = dayBlocks.map((block, idx) => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      let theme = `第 ${idx + 1} 天`;
+      let contentLines = lines;
+
+      // 如果首行是 Day 标题，提取主题并去掉首行
+      if (/^Day\s*\d+/i.test(lines[0]) || /^第\s*\d+\s*天/.test(lines[0])) {
+        theme = lines[0];
+        contentLines = lines.slice(1);
+      }
+
+      // 将每一行按分隔符拆成若干活动（例如 a-b-c）
+      const activities = [];
+      for (const line of contentLines) {
+        // 跳过可能的元数据行
+        if (/^\【|^\[|^\{/ .test(line)) continue;
+        // 如果是空或者为总结性的行（例如以【 开头），跳过
+        if (!line) continue;
+        const parts = line.split(/[-–—,，、；;\/\\]/).map(p => p.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          for (const part of parts) {
+            activities.push({ time: '', description: part });
+          }
+        } else {
+          // 如果含有冒号 time: description 则分离
+          if (line.includes(':')) {
+            const [time, ...desc] = line.split(':');
+            activities.push({ time: time.trim(), description: desc.join(':').trim() });
+          } else if (line.includes('：')) {
+            const [time, ...desc] = line.split('：');
+            activities.push({ time: time.trim(), description: desc.join('：').trim() });
+          } else {
+            activities.push({ time: '', description: line });
+          }
         }
-        const lines = dayString.split('\n');
-        const theme = lines[0].replace(/\d+: /,'');
-        const activities = lines.slice(1).filter(line => line.trim()).map(line => {
-            const [time, ...description] = line.split(':');
-            return { time: time.trim(), description: description.join(':').trim() };
-        });
-        return { theme, activities };
-      })
-    };
+      }
+
+      return { theme, activities };
+    });
+
+    const parsedPlan = { daily_itinerary };
     
     plan.value = parsedPlan;
     MessagePlugin.success('旅行方案生成成功！');
 
+    // 尝试收集活动坐标：优先使用已有 coords 字段，若无则调用 Nominatim 进行地理编码
     const mapLocations = [];
-    parsedPlan.daily_itinerary.forEach(day => {
-      day.activities.forEach(activity => {
+
+    // 简单的地理编码函数（使用 OpenStreetMap Nominatim）
+    const geocode = async (query) => {
+      if (!query) return null;
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data && data.length > 0) {
+          return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+        }
+        return null;
+      } catch (err) {
+        console.error('Geocode error:', err);
+        return null;
+      }
+    };
+
+    // 为每个活动获取坐标（若活动已有 coords 则直接使用）
+    for (const day of parsedPlan.daily_itinerary) {
+      for (const activity of day.activities) {
         if (activity.coords) {
           mapLocations.push({ name: activity.description, coords: activity.coords });
+        } else {
+          // 尝试根据描述地名进行地理编码，优先加上目的地上下文以提高命中率
+          const query = form.value.destination ? `${form.value.destination} ${activity.description}` : activity.description;
+          const coords = await geocode(query);
+          if (coords) {
+            mapLocations.push({ name: activity.description, coords });
+          }
         }
-      });
-    });
+      }
+    }
+
     emit('locations-updated', mapLocations);
 
   } catch (error) {
@@ -269,32 +331,52 @@ const getPlan = async () => {
 const savePlan = async () => {
   saving.value = true;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    // 更稳健地获取用户信息（兼容不同 supabase SDK 版本）
+    let user = null;
+    try {
+      const userRes = await supabase.auth.getUser();
+      if (userRes && userRes.data && userRes.data.user) user = userRes.data.user;
+    } catch (e) {
+      // ignore
+    }
+    if (!user) {
+      try {
+        const sess = await supabase.auth.getSession();
+        if (sess && sess.data && sess.data.session && sess.data.session.user) user = sess.data.session.user;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (!user) {
       MessagePlugin.warning('请先登录以保存您的方案');
       saving.value = false;
       return;
     }
 
-    const { data, error } = await supabase
-      .from('plans')
-      .insert([
-        {
-          user_id: session.user.id,
-          destination: form.value.destination,
-          duration: form.value.duration,
-          budget: form.value.budget,
-          travelers: form.value.travelers,
-          preferences: form.value.preferences,
-          plan_details: plan.value,
-        },
-      ]);
-      
-    if (error) throw error;
+    // 插入数据到 plans 表
+    const payload = {
+      user_id: user.id,
+      destination: form.value.destination,
+      duration: form.value.duration,
+      budget: form.value.budget,
+      travelers: form.value.travelers,
+      preferences: form.value.preferences,
+      plan_details: plan.value,
+    };
+
+    const { data: insertData, error } = await supabase.from('plans').insert([payload]);
+    if (error) {
+      console.error('Supabase insert error:', error);
+      MessagePlugin.error(error.message || '保存方案失败，请确认您已登录');
+      saving.value = false;
+      return;
+    }
+
     MessagePlugin.success('方案保存成功！');
   } catch (error) {
     console.error('Error saving plan:', error);
-    MessagePlugin.error('保存方案失败，请确认您已登录');
+    MessagePlugin.error(error.message || '保存方案失败，请确认您已登录');
   } finally {
     saving.value = false;
   }
@@ -340,6 +422,20 @@ const flyToLocation = (coords) => {
 
 .planner-form {
   margin-bottom: 24px;
+}
+
+/* 按钮内图标与文字水平垂直居中对齐 */
+.planner-form :deep(.t-button__text) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px;
+}
+.planner-form :deep(.t-button__text) .t-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  vertical-align: middle !important;
 }
 
 .planner-form :deep(.t-form__item) {
