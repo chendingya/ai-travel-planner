@@ -6,6 +6,19 @@ Write-Host "  AI 旅行规划师 - 项目启动工具" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 
+# 清理可能残留的 Node.js 进程
+Write-Host "🧹 检查并清理残留进程..." -ForegroundColor Yellow
+$nodeProcesses = Get-Process node -ErrorAction SilentlyContinue
+if ($nodeProcesses) {
+    Write-Host "⚠️  发现 $($nodeProcesses.Count) 个 Node.js 进程，正在清理..." -ForegroundColor Yellow
+    $nodeProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    Write-Host "✅ 进程清理完成" -ForegroundColor Green
+} else {
+    Write-Host "✅ 没有残留进程" -ForegroundColor Green
+}
+Write-Host ""
+
 # 检查环境变量是否配置
 Write-Host "🔍 检查配置文件..." -ForegroundColor Yellow
 
@@ -37,7 +50,6 @@ try {
     Write-Host "   请访问 https://nodejs.org/ 下载并安装 Node.js" -ForegroundColor Yellow
     exit 1
 }
-Write-Host ""
 
 # 检查依赖是否安装
 Write-Host "🔍 检查项目依赖..." -ForegroundColor Yellow
@@ -83,6 +95,7 @@ Write-Host ""
 Write-Host "💡 提示：" -ForegroundColor Yellow
 Write-Host "   - 在新打开的终端窗口中按 Ctrl+C 可停止服务" -ForegroundColor White
 Write-Host "   - 如需查看日志，请查看对应的终端窗口" -ForegroundColor White
+Write-Host "   - 如遇到端口占用问题，请运行 .\stop.ps1 后重试" -ForegroundColor White
 Write-Host ""
 Write-Host "🎉 祝你使用愉快！" -ForegroundColor Magenta
 Write-Host ""

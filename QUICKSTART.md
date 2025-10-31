@@ -41,6 +41,8 @@ cd ..
 .\start.ps1
 ```
 
+**💡 提示**: 如果遇到端口占用问题，请先运行 `.\stop.ps1` 停止服务，然后重新运行 `.\start.ps1`
+
 就这么简单！🎉
 
 ## 配置文件示例
@@ -77,8 +79,32 @@ VITE v4.5.14  ready in 2584 ms
 
 ## 遇到问题？
 
-- 端口被占用 → 关闭占用端口的程序或修改 .env 中的 PORT
-- API 调用失败 → 检查 API Key 是否正确
-- 页面空白 → 查看浏览器控制台的错误信息
+### 常见错误及解决方案
 
-更多帮助请查看主 README.md 文件。
+**❌ 端口被占用 (EACCES / EADDRINUSE)**
+```powershell
+# 运行停止脚本释放端口
+.\stop.ps1
+
+# 或手动查找并终止进程
+netstat -ano | findstr :5173  # 前端
+netstat -ano | findstr :3001  # 后端
+taskkill /PID <进程ID> /F
+```
+
+**❌ API 调用失败**
+- 检查 `backend\.env` 中的 `DASHSCOPE_API_KEY` 是否正确
+- 确认阿里云账号余额充足或有免费额度
+- 查看后端终端窗口的详细错误信息
+
+**❌ 页面空白或无法加载**
+- 按 F12 打开浏览器控制台查看错误
+- 检查 `frontend\.env` 中的 Supabase 配置是否正确
+- 确认后端服务是否正常运行 (访问 http://localhost:3001)
+
+**❌ 权限错误 (permission denied)**
+- 以管理员身份运行 PowerShell
+- 右键点击 PowerShell → 选择"以管理员身份运行"
+- 或者关闭占用端口的其他程序
+
+更多帮助请查看主 README.md 文件的"⚠️ 常见问题"章节。

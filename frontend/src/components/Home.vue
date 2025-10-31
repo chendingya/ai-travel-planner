@@ -283,7 +283,7 @@ defineEmits(['start-plan']);
   position: relative;
   padding: 120px 40px 100px;
   overflow: hidden;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+  background: linear-gradient(135deg, var(--td-brand-color-8) 0%, var(--td-brand-color-6) 30%, var(--td-brand-color-4) 70%, var(--td-brand-color-2) 100%);
 }
 
 .hero-background {
@@ -500,13 +500,13 @@ defineEmits(['start-plan']);
 .section-badge {
   display: inline-block;
   padding: 8px 20px;
-  background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
-  color: #667eea;
-  border-radius: 50px;
-  font-size: 14px;
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  border-radius: var(--td-radius-round);
+  font-size: var(--td-font-size-mark-small);
   font-weight: 600;
   margin-bottom: 16px;
-  border: 1px solid #667eea20;
+  border: 1px solid var(--td-brand-color-focus);
 }
 
 .section-title {
@@ -556,15 +556,15 @@ defineEmits(['start-plan']);
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(90deg, #667eea, #764ba2);
+  background: linear-gradient(90deg, var(--td-brand-color-7), var(--td-brand-color-5));
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
 .feature-card:hover {
   transform: translateY(-12px);
-  box-shadow: 0 20px 60px rgba(102, 126, 234, 0.15);
-  border-color: rgba(102, 126, 234, 0.2);
+  box-shadow: 0 20px 60px rgba(0, 82, 217, 0.15);
+  border-color: var(--td-brand-color-focus);
 }
 
 .feature-card:hover::before {
@@ -581,16 +581,16 @@ defineEmits(['start-plan']);
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle, rgba(102, 126, 234, 0.08) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(0, 82, 217, 0.08) 0%, transparent 70%);
   opacity: 0;
   transition: opacity 0.4s ease;
   pointer-events: none;
 }
 
-.feature-card-primary { border-top-color: #667eea15; }
-.feature-card-secondary { border-top-color: #f093fb15; }
-.feature-card-accent { border-top-color: #4facfe15; }
-.feature-card-info { border-top-color: #43e97b15; }
+.feature-card-primary { border-top-color: var(--td-brand-color-2); }
+.feature-card-secondary { border-top-color: var(--td-brand-color-3); }
+.feature-card-accent { border-top-color: var(--td-brand-color-4); }
+.feature-card-info { border-top-color: var(--td-success-color-light); }
 
 .feature-icon-wrapper {
   margin-bottom: 24px;
@@ -630,12 +630,12 @@ defineEmits(['start-plan']);
 
 .feature-tag {
   padding: 6px 16px;
-  background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%);
-  color: #667eea;
-  border-radius: 50px;
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  border-radius: var(--td-radius-round);
   font-size: 13px;
   font-weight: 500;
-  border: 1px solid #667eea20;
+  border: 1px solid var(--td-brand-color-focus);
 }
 
 /* Tutorial Section - 4列网格 */
@@ -662,8 +662,8 @@ defineEmits(['start-plan']);
 
 .tutorial-card:hover {
   transform: translateY(-8px);
-  box-shadow: 0 12px 40px rgba(102, 126, 234, 0.12);
-  border-color: rgba(102, 126, 234, 0.2);
+  box-shadow: 0 12px 40px rgba(0, 82, 217, 0.12);
+  border-color: var(--td-brand-color-focus);
 }
 
 .tutorial-number {
@@ -672,15 +672,15 @@ defineEmits(['start-plan']);
   right: 28px;
   width: 48px;
   height: 48px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, var(--td-brand-color-7), var(--td-brand-color-5));
   color: white;
-  border-radius: 50%;
+  border-radius: var(--td-radius-circle);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 18px;
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+  box-shadow: var(--td-shadow-2);
 }
 
 .tutorial-icon {
@@ -726,8 +726,8 @@ defineEmits(['start-plan']);
 
 .tip-card:hover {
   transform: translateY(-6px);
-  box-shadow: 0 12px 32px rgba(102, 126, 234, 0.1);
-  border-color: rgba(102, 126, 234, 0.15);
+  box-shadow: 0 12px 32px rgba(0, 82, 217, 0.1);
+  border-color: var(--td-brand-color-focus);
 }
 
 .tip-icon-wrapper {
@@ -737,7 +737,7 @@ defineEmits(['start-plan']);
 .tip-icon {
   font-size: 52px;
   display: inline-block;
-  filter: drop-shadow(0 4px 12px rgba(102, 126, 234, 0.15));
+  filter: drop-shadow(0 4px 12px rgba(0, 82, 217, 0.15));
 }
 
 .tip-title {
