@@ -288,4 +288,4 @@ taskkill /PID <PID> /F
 
 - 详细的阿里百炼配置说明请查看：`backend/阿里百炼配置说明.md`
 - 如需修改 AI 模型，请编辑 `backend/src/index.js` 中的 `model` 参数
-- 可用模型：`qwen-max`（默认）、`qwen-plus`、`qwen-turbo`
+- 可用模型：`qwen-max`、`qwen-plus`、`qwen-turbo`
