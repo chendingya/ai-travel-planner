@@ -1,70 +1,145 @@
 # AI 旅行规划师
 
-一个旨在简化旅行规划过程的智能 Web 应用程序。它利用 AI 理解用户需求，自动生成详细的旅行路线，并提供实时辅助。
+一个基于 AI 的智能旅行规划 Web 应用，帮助用户轻松创建个性化的旅行方案。采用现代化技术栈，提供流畅的用户体验和强大的功能。
 
 > **🚀 首次使用？** 查看 [快速开始指南 (QUICKSTART.md)](./QUICKSTART.md) 快速上手！
 
-## 核心功能
+## ✨ 核心功能
 
-- **智能行程规划**: 用户可以通过文字或语音输入旅行目的地、日期、预算、同行人数和偏好（例如："我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子"）。AI 将生成个性化的行程，包括交通、住宿、景点和餐饮建议，并自动提供每个景点的经纬度坐标。
-- **智能路线规划**: 基于高德地图 API，自动规划景点之间的最优路线，显示详细的路线图和导航信息。
-- **费用预算与管理**: AI 为规划的行程提供预算分析。用户还可以在旅途中记录开销，并支持语音输入。
-- **用户管理与数据存储**:
-  - **注册与登录**: 用户可以创建账户以保存、查看和管理多个旅行计划。
-  - **云端同步**: 所有旅行计划、用户偏好和费用记录都将同步到云端，方便在多个设备上无缝访问和修改。
+### 🧠 智能行程规划
+- **AI 驱动**：基于阿里云百炼大模型（通义千问），智能生成个性化旅行方案
+- **多维度输入**：支持目的地、天数、预算、人数、偏好等多维度需求
+- **语音输入**：支持语音识别输入目的地信息，提升填写效率
+- **结构化输出**：生成包含日程安排、预算分解、旅行提示的完整方案
 
-## 技术栈
+### 🗺️ 地图可视化
+- **高德地图集成**：基于高德地图 API，提供精准的地图展示
+- **景点定位**：自动标注每天活动的地理位置
+- **交互式查看**：点击时间轴中的活动，地图自动跳转到对应位置
+- **路线规划**：显示景点之间的路线和导航信息
 
-- **前端**: **Vue.js 3** (使用 Vite) 以实现快速、现代化的用户界面，使用 **TDesign Vue Next** UI 组件库。
-- **后端**: **Node.js** 与 **Express** 用于构建健壮且可扩展的 REST API。
-- **数据库与认证**: **Supabase** 将用于用户管理、认证和数据存储 (PostgreSQL)。
-- **大语言模型 (LLM)**: 核心的行程规划和预算生成由**阿里云百炼（通义千问 qwen3-max-preview）**大模型驱动，通过 OpenAI SDK 兼容模式调用，生成结构化 JSON 格式的旅行计划。
-- **语音识别**: 将使用浏览器内置的 **Web Speech API** 来实现语音转文本功能，从而简化架构并避免额外的 API 密钥。
-- **地图服务**: 使用 **高德地图 API**，提供精准的路线规划、导航、POI 搜索等功能，对中国境内旅行优化。
-- **容器化**: **Docker** 和 **Docker Compose** 将用于容器化应用程序，以便于部署和扩展。
+### 💰 预算管理
+- **智能分解**：AI 自动分解交通、住宿、餐饮、景点、购物等各项费用
+- **可视化图表**：饼图展示预算分布，柱状图展示费用对比
+- **实时统计**：查看总预算和各项明细
 
-## 项目结构
+### 👤 用户系统
+- **Supabase 认证**：安全可靠的用户注册和登录
+- **方案云存储**：保存多个旅行方案到云端，随时查看和管理
+- **多设备同步**：数据云端存储，支持跨设备访问
+
+### 📊 费用追踪
+- **旅行记账**：记录实际旅行支出
+- **数据可视化**：图表展示费用统计和分析
+
+## 🛠️ 技术栈
+
+### 前端
+- **框架**：Vue.js 3 + Composition API
+- **构建工具**：Vite
+- **UI 组件**：TDesign Vue Next
+- **路由**：Vue Router 4
+- **状态管理**：Pinia
+- **地图**：高德地图 JS API
+- **语音识别**：Web Speech API
+
+### 后端
+- **运行时**：Node.js
+- **框架**：Express.js
+- **AI 服务**：阿里云百炼（通义千问 qwen3-max-preview）
+- **API 调用**：OpenAI SDK 兼容模式
+
+### 数据库与认证
+- **数据库**：Supabase (PostgreSQL)
+- **认证**：Supabase Auth
+- **存储**：云端数据同步
+
+### 容器化
+- **Docker**：容器化部署
+- **Docker Compose**：多容器编排
+
+## 📁 项目结构
 
 ```
-.
-├── backend/              # Node.js/Express 后端
+ai-travel-planner/
+├── backend/                    # 后端服务
 │   ├── src/
-│   └── Dockerfile
-├── frontend/             # Vue.js 前端
+│   │   └── index.js           # Express 服务器主文件
+│   ├── Dockerfile             # 后端容器配置
+│   ├── package.json
+│   └── 阿里百炼配置说明.md
+│
+├── frontend/                   # 前端应用
 │   ├── src/
-│   └── Dockerfile
-├── .github/              # GitHub Actions 工作流
-│   └── workflows/
-│       └── ci.yml
-├── docker-compose.yml    # 用于多容器设置的 Docker Compose 文件
-└── README.md
+│   │   ├── components/        # Vue 组件
+│   │   │   ├── Auth.vue      # 用户认证组件
+│   │   │   ├── Home.vue      # 首页营销组件
+│   │   │   ├── Planner.vue   # 规划表单组件
+│   │   │   ├── PlanDetail.vue # 方案详情组件
+│   │   │   ├── SavedPlans.vue # 已保存方案列表
+│   │   │   ├── ExpenseTracker.vue # 费用追踪
+│   │   │   ├── MapView.vue   # 地图组件
+│   │   │   ├── SimpleBarChart.vue # 柱状图
+│   │   │   └── SimplePieChart.vue # 饼图
+│   │   ├── views/            # 页面视图
+│   │   │   ├── HomeView.vue
+│   │   │   ├── PlannerView.vue
+│   │   │   ├── PlanDetailView.vue
+│   │   │   ├── SavedPlansView.vue
+│   │   │   └── ExpenseTrackerView.vue
+│   │   ├── router/           # 路由配置
+│   │   ├── stores/           # Pinia 状态管理
+│   │   ├── config/           # 配置文件
+│   │   ├── styles/           # 全局样式
+│   │   ├── App.vue           # 根组件
+│   │   ├── main.js           # 入口文件
+│   │   └── supabase.js       # Supabase 客户端
+│   ├── Dockerfile
+│   ├── package.json
+│   └── 高德地图配置说明.md
+│
+├── docker-compose.yml         # Docker Compose 配置
+├── supabase-setup.sql        # 数据库初始化脚本
+├── start.ps1                 # Windows 启动脚本
+├── stop.ps1                  # Windows 停止脚本
+├── QUICKSTART.md             # 快速开始指南
+├── CHANGELOG_DOCS.md         # 变更日志
+└── README.md                 # 本文件
 ```
 
-## 配置与 API 密钥
+## 🎨 页面说明
 
-**重要提示**: 为保护敏感信息，API 密钥和其他机密信息**绝不能**硬编码在代码中。应通过环境变量进行管理。
+### 1. 首页 (`/`)
+- 现代化的营销页面设计
+- Hero 区域展示产品特色
+- 功能卡片介绍核心优势
+- 使用教程和技巧说明
 
-每个目录下都有 `.env.example` 文件，你可以复制并重命名为 `.env`，然后填入你自己的配置信息。
+### 2. 智能规划 (`/planner`)
+- 书本翻页式双卡片布局
+- 左侧：旅行规划表单
+- 右侧：快速开始指南
+- 支持语音输入目的地
 
-### 后端 (`backend/.env`)
+### 3. 方案详情 (`/plan-detail`)
+- 左侧：方案详情（日程、预算、提示）
+- 右侧：地图可视化
+- 点击活动跳转地图位置
+- 支持保存方案到云端
 
-```bash
-PORT=3001
-DASHSCOPE_API_KEY=你的_阿里百炼_API_KEY
-SUPABASE_URL=你的_SUPABASE_URL
-SUPABASE_KEY=你的_SUPABASE_ANON_KEY
-```
+### 4. 我的计划 (`/saved`)
+- 查看所有已保存的旅行方案
+- 支持查看方案详情
+- 云端数据同步
 
-### 前端 (`frontend/.env`)
+### 5. 费用统计 (`/expense`)
+- 记录旅行支出
+- 可视化图表展示
+- 费用分类统计
 
-```bash
-VITE_SUPABASE_URL=你的_SUPABASE_URL
-VITE_SUPABASE_ANON_KEY=你的_SUPABASE_ANON_KEY
-VITE_AMAP_KEY=你的_高德地图_API_KEY
-VITE_AMAP_SECURITY_CODE=你的_高德安全密钥（可选）
-```
+## 🚀 快速开始
 
-## 如何运行应用程序
+## 🚀 快速开始
 
 ### 前置准备：获取必需的 API 密钥
 
@@ -83,6 +158,7 @@ VITE_AMAP_SECURITY_CODE=你的_高德安全密钥（可选）
 3. 在项目设置 → API 中找到：
    - **Project URL** (`SUPABASE_URL`)
    - **anon public key** (`SUPABASE_ANON_KEY`)
+4. 在 SQL Editor 中执行 `supabase-setup.sql` 创建数据表
 
 #### 3. 高德地图 API Key
 1. 访问 [高德开放平台](https://console.amap.com/)
@@ -91,104 +167,124 @@ VITE_AMAP_SECURITY_CODE=你的_高德安全密钥（可选）
 4. 获取 API Key 和安全密钥（可选）
 5. 详细配置说明见：`frontend/高德地图配置说明.md`
 
-### 方式一：本地开发（推荐）
+### 🎯 方式一：一键启动（Windows 推荐）
 
-**先决条件**:
+**先决条件**：
 - Node.js (v16 或更高版本)
 - npm 或 yarn
-- Git
 
-**详细步骤**:
+**步骤**：
 
-#### 第一步：克隆并安装依赖
+1. **克隆项目**：
+   ```bash
+   git clone <你的-github-repo-url>
+   cd ai-travel-planner
+   ```
 
-```bash
-# 克隆仓库
-git clone <你的-github-repo-url>
-cd ai-travel-planner
+2. **配置环境变量**：
+   
+   **后端配置** (`backend/.env`)：
+   ```bash
+   cd backend
+   cp .env.example .env
+   # 编辑 .env 文件填入：
+   # PORT=3001
+   # DASHSCOPE_API_KEY=你的阿里百炼API密钥
+   # SUPABASE_URL=你的Supabase项目URL
+   # SUPABASE_KEY=你的Supabase匿名密钥
+   ```
 
-# 安装后端依赖
-cd backend
-npm install
+   **前端配置** (`frontend/.env`)：
+   ```bash
+   cd ../frontend
+   cp .env.example .env
+   # 编辑 .env 文件填入：
+   # VITE_SUPABASE_URL=你的Supabase项目URL
+   # VITE_SUPABASE_ANON_KEY=你的Supabase匿名密钥
+   # VITE_AMAP_KEY=你的高德地图API密钥
+   # VITE_AMAP_SECURITY_CODE=你的高德安全密钥（可选）
+   ```
 
-# 安装前端依赖
-cd ../frontend
-npm install
-```
+3. **一键启动**：
+   ```powershell
+   # 在项目根目录执行
+   .\start.ps1
+   ```
 
-#### 第二步：配置环境变量
+   该脚本会自动：
+   - ✅ 检查配置文件是否存在
+   - ✅ 检查 Node.js 是否安装
+   - ✅ 安装项目依赖
+   - ✅ 启动后端服务器（端口 3001）
+   - ✅ 启动前端服务器（端口 5173）
+   - ✅ 自动打开浏览器
 
-**配置后端**（在 `backend` 目录下）：
-```bash
-# 复制环境变量模板
-cp .env.example .env
+4. **停止服务**：
+   ```powershell
+   .\stop.ps1
+   ```
 
-# 编辑 .env 文件，填入以下内容：
-# PORT=3001
-# DASHSCOPE_API_KEY=你的阿里百炼API密钥
-# SUPABASE_URL=你的Supabase项目URL
-# SUPABASE_KEY=你的Supabase匿名密钥
-```
+### 📋 方式二：手动启动
 
-**配置前端**（在 `frontend` 目录下）：
-```bash
-# 复制环境变量模板
-cp .env.example .env
+**适用于**：需要更精细控制或非 Windows 系统
 
-# 编辑 .env 文件，填入以下内容：
-# VITE_SUPABASE_URL=你的Supabase项目URL
-# VITE_SUPABASE_ANON_KEY=你的Supabase匿名密钥
-# VITE_AMAP_KEY=你的高德地图API密钥
-# VITE_AMAP_SECURITY_CODE=你的高德安全密钥（可选）
-```
+**步骤**：
 
-#### 第三步：启动项目
+1. **安装依赖**：
+   ```bash
+   # 后端
+   cd backend
+   npm install
+   
+   # 前端
+   cd ../frontend
+   npm install
+   ```
 
-**重要**：需要开启两个终端窗口，分别运行前端和后端。
+2. **启动后端**（终端 1）：
+   ```bash
+   cd backend
+   node src/index.js
+   ```
+   
+   成功后显示：
+   ```
+   ✅ 阿里百炼 API 已配置
+   🚀 Server is running on port 3001
+   ```
 
-**终端 1 - 启动后端服务器**：
-```bash
-cd backend
-node src/index.js
-```
+3. **启动前端**（终端 2）：
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+   
+   成功后显示：
+   ```
+   VITE ready in xxx ms
+   ➜ Local: http://localhost:5173/
+   ```
 
-成功启动后，你会看到：
-```
-✅ 阿里百炼 API 已配置
-🚀 Server is running on port 3001
-📍 Backend API: http://localhost:3001
-```
+4. **访问应用**：
+   打开浏览器访问 `http://localhost:5173`
 
-**终端 2 - 启动前端开发服务器**：
-```bash
-cd frontend
-npm run dev
-```
+### 🐳 方式三：使用 Docker
 
-成功启动后，你会看到：
-```
-VITE v4.5.14  ready in 2584 ms
-➜  Local:   http://localhost:5173/
-```
-
-#### 第四步：访问应用
-
-在浏览器中打开：**http://localhost:5173**
-
-### 方式二：使用 Docker
-
-**先决条件**:
+**先决条件**：
 - Docker 和 Docker Compose
 
-**步骤**:
+**步骤**：
 
 1. **配置环境变量**：
    ```bash
    # 在项目根目录创建 .env 文件
    echo "DASHSCOPE_API_KEY=你的阿里百炼API密钥" > .env
+   echo "SUPABASE_URL=你的Supabase项目URL" >> .env
+   echo "SUPABASE_KEY=你的Supabase匿名密钥" >> .env
+   echo "VITE_AMAP_KEY=你的高德地图API密钥" >> .env
    ```
 
-2. **构建并启动容器**:
+2. **构建并启动**：
    ```bash
    docker-compose up --build
    ```
@@ -197,37 +293,49 @@ VITE v4.5.14  ready in 2584 ms
    - 前端：`http://localhost:8080`
    - 后端：`http://localhost:3001`
 
-### 🎯 快速启动脚本（Windows PowerShell）
+## ⚙️ 配置说明
 
-项目根目录提供了自动化启动脚本，让启动过程更加简单：
+## ⚙️ 配置说明
 
-**一键启动项目**：
-```powershell
-.\start.ps1
+### 环境变量配置
+
+**重要**：为保护敏感信息，API 密钥和其他机密信息**绝不能**硬编码在代码中，必须通过环境变量进行管理。
+
+#### 后端环境变量 (`backend/.env`)
+
+```bash
+PORT=3001                          # 后端服务器端口
+DASHSCOPE_API_KEY=sk-xxx...       # 阿里云百炼 API 密钥
+SUPABASE_URL=https://xxx.supabase.co  # Supabase 项目 URL
+SUPABASE_KEY=eyJxxx...            # Supabase 匿名公开密钥
 ```
 
-该脚本会自动：
-- ✅ 检查配置文件是否存在
-- ✅ 检查 Node.js 是否安装
-- ✅ 检查并安装项目依赖
-- ✅ 启动后端服务器（端口 3001）
-- ✅ 启动前端服务器（端口 5173）
-- ✅ 自动打开浏览器
+#### 前端环境变量 (`frontend/.env`)
 
-**停止所有服务**：
-```powershell
-.\stop.ps1
+```bash
+VITE_SUPABASE_URL=https://xxx.supabase.co  # Supabase 项目 URL
+VITE_SUPABASE_ANON_KEY=eyJxxx...           # Supabase 匿名公开密钥
+VITE_AMAP_KEY=xxx...                       # 高德地图 API 密钥
+VITE_AMAP_SECURITY_CODE=xxx...             # 高德安全密钥（可选）
 ```
 
-**手动启动方式**：
+### AI 模型配置
 
-如果你希望手动控制启动过程，可以：
+在 `backend/src/index.js` 中可以修改使用的 AI 模型：
 
-### 🛑 停止项目
+```javascript
+const model = 'qwen3-max-preview';  // 当前使用的模型
+```
 
-在各个终端窗口中按 `Ctrl + C` 即可停止相应的服务器。
+可用模型：
+- `qwen3-max-preview`（推荐）- 最新预览版本，性能最强
+- `qwen-max` - 稳定版本
+- `qwen-plus` - 性能与成本平衡
+- `qwen-turbo` - 快速响应
 
-### ⚠️ 常见问题
+## ⚠️ 常见问题
+
+### 启动相关
 
 **Q: 端口已被占用怎么办？**
 ```bash
@@ -239,73 +347,185 @@ netstat -ano | findstr :5173
 taskkill /PID <PID> /F
 ```
 
+**Q: 依赖安装失败？**
+- 确保 Node.js 版本 >= 16
+- 尝试清除缓存：`npm cache clean --force`
+- 删除 `node_modules` 和 `package-lock.json` 后重新安装
+
+### API 相关
+
 **Q: 阿里百炼 API 调用失败？**
-- 检查 API Key 是否正确配置
-- 确认阿里云账号余额充足
-- 查看后端终端的错误日志
+- 检查 API Key 是否正确配置在 `backend/.env` 中
+- 确认阿里云账号余额充足（有免费额度）
+- 查看后端终端的错误日志获取详细信息
+- 确认模型名称拼写正确
 
 **Q: 前端无法连接后端？**
 - 确认后端服务器已启动（端口 3001）
 - 检查 `frontend/src/components/Planner.vue` 中的 API 地址是否为 `http://localhost:3001`
+- 查看浏览器控制台的网络请求错误
 
 **Q: Supabase 连接失败？**
 - 确认 `.env` 文件中的 Supabase URL 和 Key 正确
 - 检查 Supabase 项目是否正常运行
+- 确认已在 Supabase SQL Editor 中执行 `supabase-setup.sql`
+
+### 地图相关
 
 **Q: 地图不显示或显示空白？**
 - 确认高德地图 API Key 已配置在 `frontend/.env` 中
 - 检查浏览器控制台是否有地图加载错误
 - 确认 API Key 类型为 "Web端(JS API)"
-- 详见：`frontend/高德地图配置说明.md`
+- 查看 `frontend/高德地图配置说明.md` 获取详细配置说明
 
-## 安全说明
+**Q: 地图点击事件不响应？**
+- 检查地图容器是否正确加载
+- 确认活动有坐标数据（coords 字段）
+- 查看控制台是否有 JavaScript 错误
 
-本项目高度重视安全性，采取以下措施保护敏感信息:
+### 功能相关
 
-1. **API 密钥保护**: 所有 API 密钥都通过环境变量配置，不会硬编码在源代码中
-2. **.gitignore 配置**: `.env` 文件已被添加到 `.gitignore` 中，防止意外提交到代码仓库
-3. **前端安全**: 前端只使用 Supabase 提供的公开匿名密钥，不包含任何私密密钥
-4. **后端保护**: 后端使用 Supabase 服务角色密钥，但该密钥仅存在于服务器端，不会发送到客户端
+**Q: 语音识别不工作？**
+- 确认使用的是支持 Web Speech API 的浏览器（Chrome、Edge）
+- 检查浏览器是否允许麦克风权限
+- 确保网站使用 HTTPS 或 localhost（语音识别需要安全上下文）
 
-为确保安全，请务必:
-- 不要将 `.env` 文件提交到 Git 仓库
-- 定期更换 API 密钥
-- 使用强密码策略
-- 为 Supabase 数据库配置适当的行级安全策略
+**Q: 方案保存失败？**
+- 确认已登录 Supabase 账户
+- 检查 Supabase 数据库表是否正确创建
+- 查看浏览器控制台的错误信息
 
-## 📊 项目运行检查清单
+## 🔒 安全说明
+
+本项目高度重视安全性，采取以下措施保护敏感信息：
+
+1. **API 密钥保护**：所有 API 密钥都通过环境变量配置，不会硬编码在源代码中
+2. **.gitignore 配置**：`.env` 文件已被添加到 `.gitignore` 中，防止意外提交到代码仓库
+3. **前端安全**：前端只使用 Supabase 提供的公开匿名密钥，不包含任何私密密钥
+4. **后端保护**：后端 API 密钥仅存在于服务器端，不会发送到客户端
+5. **HTTPS 推荐**：生产环境建议使用 HTTPS 协议
+
+**安全最佳实践**：
+- ✅ 不要将 `.env` 文件提交到 Git 仓库
+- ✅ 定期更换 API 密钥
+- ✅ 使用强密码策略
+- ✅ 为 Supabase 数据库配置适当的行级安全策略（RLS）
+- ✅ 限制 API 密钥的使用范围和权限
+
+## 📊 功能检查清单
 
 启动项目后，请确认以下内容：
 
 ### ✅ 后端服务检查
-1. 终端显示 "✅ 阿里百炼 API 已配置"
-2. 终端显示 "🚀 Server is running on port 3001"
-3. 访问 http://localhost:3001 应该看到欢迎消息
+- [ ] 终端显示 "✅ 阿里百炼 API 已配置"
+- [ ] 终端显示 "🚀 Server is running on port 3001"
+- [ ] 访问 http://localhost:3001 能看到欢迎消息
 
 ### ✅ 前端服务检查
-1. 终端显示 "VITE ready"
-2. 终端显示 "Local: http://localhost:5173/"
-3. 浏览器能成功打开 http://localhost:5173
+- [ ] 终端显示 "VITE ready"
+- [ ] 终端显示 "Local: http://localhost:5173/"
+- [ ] 浏览器能成功打开 http://localhost:5173
+- [ ] 页面样式正常显示
 
-### ✅ 功能测试
-1. 在前端页面填写旅行信息
-2. 点击 "Generate Plan" 按钮
-3. 等待几秒后应该看到 AI 生成的旅行计划
+### ✅ 核心功能测试
+- [ ] 首页正常展示（Hero、功能卡片、教程）
+- [ ] 点击"立即开始规划"能跳转到规划页面
+- [ ] 填写表单后点击"生成旅行方案"能成功生成
+- [ ] 方案详情页左侧显示行程，右侧显示地图
+- [ ] 点击时间轴活动能在地图上定位
+- [ ] 登录后能保存方案
+- [ ] "我的计划"页面能查看已保存的方案
 
-如果遇到任何问题，请查看上方的"常见问题"部分或检查终端的错误日志。
+## 🎯 使用流程
+
+1. **访问首页**：了解产品功能和特色
+2. **点击"立即开始规划"**：进入智能规划页面
+3. **填写旅行信息**：
+   - 目的地（支持语音输入）
+   - 旅行天数
+   - 预算金额
+   - 同行人数
+   - 偏好与需求
+4. **生成方案**：AI 自动生成个性化旅行计划
+5. **查看详情**：
+   - 左侧：日程安排、预算分解、旅行提示
+   - 右侧：地图可视化
+   - 点击活动查看地图位置
+6. **保存方案**：登录后保存到云端
+7. **管理计划**：在"我的计划"中查看和管理所有方案
 
 ## 🔗 相关链接
 
+### 官方文档
 - [阿里云百炼控制台](https://bailian.console.aliyun.com/)
 - [阿里云百炼 API 文档](https://help.aliyun.com/zh/model-studio/developer-reference/api-details)
 - [Supabase 官网](https://supabase.com/)
-- [Vue.js 文档](https://vuejs.org/)
+- [高德地图开放平台](https://lbs.amap.com/)
+
+### 技术文档
+- [Vue.js 3 文档](https://vuejs.org/)
+- [TDesign Vue Next](https://tdesign.tencent.com/vue-next/overview)
+- [Vite 文档](https://vitejs.dev/)
 - [Express.js 文档](https://expressjs.com/)
+- [Pinia 文档](https://pinia.vuejs.org/)
 
-## 📝 更多信息
+### 项目文档
+- [阿里百炼配置说明](./backend/阿里百炼配置说明.md)
+- [高德地图配置说明](./frontend/高德地图配置说明.md)
+- [快速开始指南](./QUICKSTART.md)
+- [变更日志](./CHANGELOG_DOCS.md)
 
-- 详细的阿里百炼配置说明请查看：`backend/阿里百炼配置说明.md`
-- 详细的高德地图配置说明请查看：`frontend/高德地图配置说明.md`
-- 后端架构说明请查看：`backend/README.md`
-- 如需修改 AI 模型，请编辑 `backend/src/index.js` 中的 `model` 参数
-- 可用模型：`qwen3-max-preview`（当前）、`qwen-max`、`qwen-plus`、`qwen-turbo`
+## 📝 开发说明
+
+### 目录结构说明
+
+- `components/`：可复用的 Vue 组件
+- `views/`：页面级组件，对应路由
+- `router/`：Vue Router 配置
+- `stores/`：Pinia 状态管理
+- `config/`：配置文件（如高德地图配置）
+- `styles/`：全局样式文件
+
+### 添加新页面
+
+1. 在 `views/` 中创建新的页面组件
+2. 在 `router/index.js` 中添加路由配置
+3. 在 `App.vue` 的导航菜单中添加链接
+
+### 修改 AI 模型
+
+编辑 `backend/src/index.js`：
+
+```javascript
+const model = 'qwen3-max-preview';  // 修改为其他模型
+```
+
+### 自定义样式
+
+全局样式在 `frontend/src/styles/custom.css` 中定义，包括：
+- CSS 变量（颜色、字体等）
+- 全局组件样式覆盖
+- 通用工具类
+
+## 🤝 贡献指南
+
+欢迎贡献代码、报告问题或提出建议！
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+## 📄 许可证
+
+本项目仅供学习和研究使用。
+
+## 👥 作者
+
+- 项目作者：[Your Name]
+- 联系方式：[Your Email]
+
+---
+
+**Made with ❤️ using Vue.js, Node.js, and AI**
