@@ -31,6 +31,38 @@ export default {
     const mapReady = ref(false);
     const markers = ref([]);
     const drivingRoute = ref(null);
+    const geocoder = ref(null);
+
+    // 确保加载高德地理编码服务
+    const ensureGeocoder = () => new Promise((resolve) => {
+      if (geocoder.value) return resolve(geocoder.value);
+      AMap.plugin('AMap.Geocoder', () => {
+        geocoder.value = new AMap.Geocoder({ city: '全国' });
+        resolve(geocoder.value);
+      });
+    });
+
+    const geocodeByAMap = async (keyword) => {
+      if (!keyword) return null;
+      try {
+        await ensureGeocoder();
+        return await new Promise((resolve) => {
+          geocoder.value.getLocation(keyword, (status, result) => {
+            if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
+              const gc = result.geocodes[0];
+              const lng = gc.location.lng;
+              const lat = gc.location.lat;
+              resolve([lat, lng]);
+            } else {
+              resolve(null);
+            }
+          });
+        });
+      } catch (e) {
+        console.warn('AMap geocode failed:', e);
+        return null;
+      }
+    };
 
     // 初始化高德地图
     const initMap = () => {
@@ -147,7 +179,7 @@ export default {
       }
     };
 
-    // 绘制路线规划
+    // 绘制路线规划（需要全部坐标）
     const drawRoute = (locations) => {
       if (!map.value || locations.length === 0) {
         console.warn('⚠️ 地图未初始化或无位置数据,无法绘制路线');
@@ -222,11 +254,27 @@ export default {
       drivingRoute.value = driving;
     };
 
-    // 监听 locations 变化
-    watch(() => props.locations, (newLocations) => {
+    // 监听 locations 变化，优先按 order 排序，并为缺失坐标的点进行本地地理编码
+    watch(() => props.locations, async (newLocations) => {
       if (newLocations && newLocations.length > 0 && map.value) {
-        console.log(`📍 更新地图,共 ${newLocations.length} 个位置点`, newLocations);
-        drawRoute(newLocations);
+        const ordered = [...newLocations].sort((a, b) => {
+          const ao = typeof a.order === 'number' ? a.order : Number.POSITIVE_INFINITY;
+          const bo = typeof b.order === 'number' ? b.order : Number.POSITIVE_INFINITY;
+          return ao - bo;
+        });
+
+        // 依次为缺失坐标的地点进行地理编码
+        for (const loc of ordered) {
+          if (!loc.coords || loc.coords.length !== 2) {
+            const coords = await geocodeByAMap(loc.name);
+            if (coords) {
+              loc.coords = coords;
+            }
+          }
+        }
+
+        console.log(`📍 更新地图,共 ${ordered.length} 个位置点`, ordered);
+        drawRoute(ordered);
       }
     }, { deep: true, immediate: true });
 

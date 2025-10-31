@@ -46,7 +46,7 @@ app.post('/api/plan', async (req, res) => {
 
     console.log(`📝 正在为 ${destination} 生成 ${duration} 天的旅行计划...`);
 
-    const systemPrompt = `你是一个专业的旅行规划助手。你必须严格按照以下 JSON 格式返回旅行计划,不要添加任何额外的文字说明、标题或格式化标记。
+  const systemPrompt = `你是一个专业的旅行规划助手。你必须严格按照以下 JSON 格式返回旅行计划,不要添加任何额外的文字说明、标题或格式化标记。
 
 返回格式示例：
 {
@@ -58,16 +58,12 @@ app.post('/api/plan', async (req, res) => {
         {
           "time": "09:00",
           "location": "成田国际机场",
-          "description": "抵达成田机场,办理入境手续",
-          "latitude": 35.7648,
-          "longitude": 140.3860
+          "description": "抵达成田机场,办理入境手续"
         },
         {
           "time": "12:00",
           "location": "秋叶原",
-          "description": "参观动漫街区,逛动漫商店",
-          "latitude": 35.6984,
-          "longitude": 139.7731
+          "description": "参观动漫街区,逛动漫商店"
         }
       ]
     }
@@ -88,10 +84,10 @@ app.post('/api/plan', async (req, res) => {
 
 重要规则：
 1. 必须严格返回 JSON 格式,不要有任何额外文字
-2. 每个活动必须包含经纬度坐标(latitude, longitude)
-3. 每天的活动数量要合理(3-6个)
-4. 时间要符合逻辑顺序
-5. 景点名称要准确,方便地图定位`;
+2. 严禁包含经纬度坐标(latitude, longitude)等地理坐标字段
+3. 仅提供可用于搜索定位的地点名称(location)与描述(description),如可提供详细地址可额外给出 "address" 字段（可选）
+4. 每天的活动数量要合理(3-6个)，时间要符合逻辑顺序
+5. 景点名称要准确，便于后续进行地图定位`;
 
     const userPrompt = `请为我制定一个${duration}天的${destination}旅行计划：
 
@@ -104,7 +100,7 @@ app.post('/api/plan', async (req, res) => {
 
 要求：
 1. 每天安排3-6个具体景点或活动
-2. 每个景点必须提供准确的经纬度坐标
+2. 不要输出经纬度坐标（latitude/longitude），只给出地点名称与可选地址
 3. 活动时间要符合实际(考虑交通时间、游览时间)
 4. 预算分配要合理
 5. 如果偏好中提到动漫、美食等,优先安排相关景点

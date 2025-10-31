@@ -3,13 +3,14 @@
     <t-row :gutter="24">
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="planner-section">
-          <t-card class="planner-card book-left" :bordered="false">
+          <!-- 移除外层 t-card 包裹，避免左右边界/阴影贯穿头部与快捷输入之间的间隔 -->
+          <div class="planner-card">
             <Planner 
               @locations-updated="(locations) => $emit('locations-updated', locations)" 
               @fly-to="(coords) => $emit('fly-to', coords)"
               @plan-generated="$emit('plan-generated')" 
             />
-          </t-card>
+          </div>
         </div>
       </t-col>
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
@@ -103,58 +104,21 @@ defineEmits(['locations-updated', 'fly-to', 'plan-generated']);
   min-height: 600px;
 }
 
-/* 全局 t-card 圆角设置 - 书本翻页效果 */
-.planner-section :deep(.t-card),
+/* 仅右侧介绍卡片使用 t-card 的圆角与过渡，左侧已移除 t-card 包裹 */
 .intro-section :deep(.t-card) {
   border-radius: 24px !important;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: none !important;
   transition: all 0.3s ease;
   overflow: visible !important;
 }
 
-/* 左页圆角 */
-.book-left :deep(.t-card) {
-  border-top-right-radius: 8px !important;
-  border-bottom-right-radius: 8px !important;
-  box-shadow: 
-    8px 0 16px rgba(0, 0, 0, 0.08),
-    0 4px 24px rgba(0, 0, 0, 0.06) !important;
-  position: relative;
-}
-
-.book-left :deep(.t-card)::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 5%;
-  bottom: 5%;
-  width: 2px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgba(102, 126, 234, 0.1) 10%,
-    rgba(102, 126, 234, 0.2) 50%,
-    rgba(102, 126, 234, 0.1) 90%,
-    transparent
-  );
-  z-index: 1;
-  pointer-events: none;
-}
-
-.book-left:hover :deep(.t-card) {
-  transform: translateX(-4px);
-  box-shadow: 
-    12px 0 24px rgba(102, 126, 234, 0.12),
-    0 8px 32px rgba(0, 0, 0, 0.1) !important;
-}
+/* 删除左侧书页装饰线，避免产生贯穿效果 */
 
 /* 右页圆角 */
 .book-right :deep(.t-card) {
   border-top-left-radius: 8px !important;
   border-bottom-left-radius: 8px !important;
-  box-shadow: 
-    -8px 0 16px rgba(0, 0, 0, 0.08),
-    0 4px 24px rgba(0, 0, 0, 0.06) !important;
+  box-shadow: none !important;
   position: relative;
 }
 
@@ -179,15 +143,13 @@ defineEmits(['locations-updated', 'fly-to', 'plan-generated']);
 
 .book-right:hover :deep(.t-card) {
   transform: translateX(4px);
-  box-shadow: 
-    -12px 0 24px rgba(102, 126, 234, 0.12),
-    0 8px 32px rgba(0, 0, 0, 0.1) !important;
+  box-shadow: none !important;
 }
 
-/* 移除 t-card 内部的默认 padding，让 Planner 组件自己控制 */
-.planner-card :deep(.t-card__body) {
-  padding: 0 !important;
-  overflow: visible !important;
+/* 左侧 Planner 容器基础样式（不产生边框与阴影） */
+.planner-card {
+  padding: 0;
+  background: transparent;
 }
 
 /* 右侧卡片保持 padding */
@@ -337,18 +299,15 @@ defineEmits(['locations-updated', 'fly-to', 'plan-generated']);
     min-height: 600px;
   }
 
-  .book-left :deep(.t-card),
   .book-right :deep(.t-card) {
     border-radius: 20px !important;
     margin-bottom: 24px;
   }
 
-  .book-left :deep(.t-card)::after,
   .book-right :deep(.t-card)::before {
     display: none;
   }
 
-  .book-left:hover :deep(.t-card),
   .book-right:hover :deep(.t-card) {
     transform: translateY(-4px);
   }

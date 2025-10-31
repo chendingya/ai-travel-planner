@@ -1,6 +1,6 @@
 <template>
   <div class="plan-detail-container">
-    <div class="plan-detail-header">
+    <div class="plan-detail-header" ref="headerRef">
       <div>
         <h2 class="plan-detail-title">
           <t-icon name="check-circle" />
@@ -14,12 +14,14 @@
           icon="save"
           @click="handleSavePlan"
           :loading="saving"
+          size="sm"
         >
           保存计划
         </GlassButton>
         <GlassButton 
           icon="arrow-left"
           @click="handleBackToPlanner"
+          size="sm"
         >
           重新规划
         </GlassButton>
@@ -144,7 +146,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, nextTick, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { supabase } from '../supabase';
@@ -152,13 +154,14 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import SimplePieChart from './SimplePieChart.vue';
 import GlassButton from './GlassButton.vue';
 
-const emit = defineEmits(['fly-to', 'back-to-planner']);
+const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset']);
 const route = useRoute();
 const store = usePlannerStore();
 
 const plan = ref(null);
 const form = ref({});
 const saving = ref(false);
+const headerRef = ref(null);
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -169,6 +172,27 @@ onMounted(() => {
   // 从store加载方案和表单数据
   plan.value = store.plan;
   form.value = store.form;
+
+  // 计算并上报头部高度用于右侧地图对齐
+  const reportHeaderOffset = () => {
+    if (!headerRef.value) return;
+    const el = headerRef.value;
+    const styles = window.getComputedStyle(el);
+    const mb = parseFloat(styles.marginBottom || '0');
+    const offset = el.offsetHeight + mb;
+    emit('header-offset', offset);
+  };
+
+  nextTick(() => {
+    reportHeaderOffset();
+  });
+
+  window.addEventListener('resize', reportHeaderOffset);
+
+  // 清理监听
+  onBeforeUnmount(() => {
+    window.removeEventListener('resize', reportHeaderOffset);
+  });
 });
 
 const flyToLocation = (coords) => {
@@ -325,6 +349,13 @@ const calculateTotal = (budget) => {
 
 .plan-collapse :deep(.t-collapse-panel__body) {
   background: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* 某些主题可能在 header/body 上使用伪元素绘制分割线，统一移除 */
+.plan-collapse :deep(.t-collapse-panel__header::after),
+.plan-collapse :deep(.t-collapse::after),
+.plan-collapse :deep(.t-collapse::before) {
+  display: none !important;
 }
 
 .day-timeline {

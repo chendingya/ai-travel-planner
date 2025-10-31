@@ -416,9 +416,8 @@ const getPlan = async () => {
           activities: day.activities.map(activity => ({
             time: activity.time || '',
             description: `${activity.location || ''} - ${activity.description || ''}`.trim(),
-            coords: activity.latitude && activity.longitude 
-              ? [activity.latitude, activity.longitude] 
-              : null
+            // 忽略模型返回的经纬度，统一后期自行定位
+            coords: null
           }))
         })),
         budget_breakdown: data.plan.budget_breakdown,
@@ -489,8 +488,9 @@ const getPlan = async () => {
     plan.value = parsedPlan;
     MessagePlugin.success('旅行方案生成成功！');
 
-    // 收集地图坐标
-    const mapLocations = [];
+  // 构建地图位置（只携带顺序与名称，坐标交由地图组件按需定位）
+  const mapLocations = [];
+  let seq = 1;
     const geocode = async (query) => {
       if (!query) return null;
       try {
@@ -510,16 +510,7 @@ const getPlan = async () => {
 
     for (const day of parsedPlan.daily_itinerary) {
       for (const activity of day.activities) {
-        if (activity.coords) {
-          mapLocations.push({ name: activity.description, coords: activity.coords });
-        } else {
-          const query = form.value.destination ? `${form.value.destination} ${activity.description}` : activity.description;
-          const coords = await geocode(query);
-          if (coords) {
-            activity.coords = coords;
-            mapLocations.push({ name: activity.description, coords });
-          }
-        }
+        mapLocations.push({ name: activity.description, coords: null, order: seq++ });
       }
     }
 

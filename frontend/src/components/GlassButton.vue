@@ -1,5 +1,5 @@
 <template>
-  <button class="glass-button" @click="handleClick">
+  <button :class="['glass-button', size]" @click="handleClick">
     <t-icon v-if="icon" :name="icon" />
     <slot></slot>
   </button>
@@ -10,6 +10,11 @@ defineProps({
   icon: {
     type: String,
     default: ''
+  },
+  size: {
+    type: String,
+    default: 'md', // sm | md | lg
+    validator: (v) => ['sm', 'md', 'lg'].includes(v)
   }
 });
 
@@ -26,10 +31,8 @@ const handleClick = (e) => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 18px;
-  padding: 16px 48px;
   height: auto;
-  border-radius: 50px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -39,6 +42,22 @@ const handleClick = (e) => {
   transition: all 0.3s ease;
   font-weight: 500;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* size variants */
+.glass-button.sm {
+  font-size: 14px;
+  padding: 8px 16px;
+}
+
+.glass-button.md {
+  font-size: 16px;
+  padding: 12px 28px;
+}
+
+.glass-button.lg {
+  font-size: 18px;
+  padding: 16px 48px;
 }
 
 .glass-button:hover {
