@@ -80,6 +80,11 @@ body {
   box-shadow: var(--shadow-medium);
 }
 
+/* TDesign 卡片全局圆角设置 */
+.t-card {
+  border-radius: 20px !important;
+}
+
 /* 响应式布局 */
 @media (max-width: 768px) {
   :root {

@@ -13,23 +13,28 @@
         <div class="header-menu">
           <t-menu 
             mode="horizontal" 
-            :value="view"
-            @change="handleMenuChange"
+            :value="currentRoute"
             theme="light"
           >
-            <t-menu-item value="planner">
+            <t-menu-item value="/" @click="handleNavigate('/')">
+              <template #icon>
+                <t-icon name="home" />
+              </template>
+              首页
+            </t-menu-item>
+            <t-menu-item value="/planner" @click="handleNavigate('/planner')">
               <template #icon>
                 <t-icon name="compass" />
               </template>
               智能规划
             </t-menu-item>
-            <t-menu-item value="saved">
+            <t-menu-item value="/saved" @click="handleNavigate('/saved')">
               <template #icon>
                 <t-icon name="bookmark" />
               </template>
               我的计划
             </t-menu-item>
-            <t-menu-item value="expense">
+            <t-menu-item value="/expense" @click="handleNavigate('/expense')">
               <template #icon>
                 <t-icon name="chart-bar" />
               </template>
@@ -47,67 +52,37 @@
     <!-- 主内容区 -->
     <div class="app-container">
       <transition name="fade" mode="out-in">
-        <!-- 规划页面 - 只显示表单 -->
-        <div v-if="view === 'planner'" class="content-wrapper content-page" key="planner">
-          <div class="planner-page">
-            <Planner 
-              @locations-updated="updateLocations" 
-              @fly-to="flyTo"
-              @plan-generated="handlePlanGenerated" 
-            />
-          </div>
-        </div>
-
-        <!-- 方案详情页 -->
-        <div v-else-if="view === 'plan-detail'" class="content-wrapper" key="plan-detail">
-          <t-row :gutter="24">
-            <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
-              <div class="plan-detail-section">
-                <PlanDetail 
-                  @fly-to="flyTo"
-                  @back-to-planner="handleBackToPlanner"
-                />
-              </div>
-            </t-col>
-            <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
-              <div class="map-section">
-                <MapView :locations="store.locations" ref="mapView" />
-              </div>
-            </t-col>
-          </t-row>
-        </div>
-
-        <!-- 已保存计划 -->
-        <div v-else-if="view === 'saved'" class="content-wrapper content-page" key="saved">
-          <SavedPlans @view-plan="handleViewSavedPlan" />
-        </div>
-
-        <!-- 费用统计 -->
-        <div v-else-if="view === 'expense'" class="content-wrapper content-page" key="expense">
-          <ExpenseTracker />
-        </div>
+        <router-view
+          :class="{ 'no-padding': currentRoute === '/' }"
+          @locations-updated="updateLocations"
+          @fly-to="flyTo"
+          @plan-generated="handlePlanGenerated"
+          @back-to-planner="handleBackToPlanner"
+          @view-plan="handleViewSavedPlan"
+          @start-plan="handleStartPlan"
+        />
       </transition>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import Auth from './components/Auth.vue';
-import Planner from './components/Planner.vue';
-import PlanDetail from './components/PlanDetail.vue';
 import MapView from './components/MapView.vue';
-import SavedPlans from './components/SavedPlans.vue';
-import ExpenseTracker from './components/ExpenseTracker.vue';
 import { usePlannerStore } from './stores/planner';
 
-const view = ref('planner');
+const router = useRouter();
+const route = useRoute();
 const mapView = ref(null);
 const store = usePlannerStore();
 store.initFromStorage();
 
-const handleMenuChange = (value) => {
-  view.value = value;
+const currentRoute = computed(() => route.path);
+
+const handleNavigate = (path) => {
+  router.push(path);
 };
 
 const updateLocations = (newLocations) => {
@@ -122,17 +97,22 @@ const flyTo = (coords) => {
 
 const handlePlanGenerated = () => {
   // 方案生成成功后，跳转到方案详情页
-  view.value = 'plan-detail';
+  router.push('/plan-detail');
 };
 
 const handleBackToPlanner = () => {
   // 返回规划页面
-  view.value = 'planner';
+  router.push('/planner');
 };
 
 const handleViewSavedPlan = () => {
   // 从已保存计划查看详情，跳转到方案详情页
-  view.value = 'plan-detail';
+  router.push('/plan-detail');
+};
+
+const handleStartPlan = () => {
+  // 从首页点击"开始规划"，跳转到智能规划页面
+  router.push('/planner');
 };
 </script>
 
@@ -298,12 +278,21 @@ const handleViewSavedPlan = () => {
 }
 
 .app-container {
+  width: 100%;
+  flex: 1;
+}
+
+.app-container > * {
   padding: 24px;
   max-width: 1440px;
   margin-left: auto;
   margin-right: auto;
   width: 100%;
-  flex: 1;
+}
+
+.app-container .no-padding {
+  padding: 0 !important;
+  max-width: 100% !important;
 }
 
 .content-wrapper {
@@ -381,22 +370,153 @@ const handleViewSavedPlan = () => {
   min-height: auto;
 }
 
-.planner-page {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 48px 32px;
-  min-height: calc(100vh - var(--header-height) - 48px);
+.intro-section {
+  background: var(--card-bg);
+  border-radius: 0;
+  box-shadow: none;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
 }
 
-@media (max-width: 768px) {
-  .planner-page {
-    padding: 24px 16px;
-  }
+.intro-container {
+  padding: 32px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.intro-header {
+  text-align: center;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.intro-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.intro-icon {
+  font-size: 28px;
+}
+
+.intro-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+}
+
+.intro-block {
+  background: linear-gradient(135deg, #f6f9ff 0%, #ffffff 100%);
+  border-radius: 12px;
+  padding: 24px;
+  border: 1px solid #e3e8f7;
+  flex: 1;
+}
+
+.tips-block {
+  background: linear-gradient(135deg, #fffbf0 0%, #ffffff 100%);
+  border-color: #ffe7ba;
+}
+
+.block-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.block-title .t-icon {
+  color: #0084ff;
+  font-size: 18px;
+}
+
+.block-content {
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.step-item-simple {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: white;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.step-item-simple:hover {
+  background: #f0f5ff;
+  transform: translateX(4px);
+}
+
+.step-num {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #0084ff, #00b8ff);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.tips-simple {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tip-item-simple {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  background: white;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.6;
+  transition: all 0.2s;
+}
+
+.tip-item-simple:hover {
+  background: #fffbf0;
+  transform: translateX(4px);
+}
+
+.tip-check {
+  color: #52c41a;
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 /* 响应式设计 */
 @media (max-width: 1024px) {
-  .app-container {
+  .app-container > * {
     padding: 16px;
   }
   
@@ -434,15 +554,25 @@ const handleViewSavedPlan = () => {
   }
   
   .planner-section,
-  .map-section {
+  .map-section,
+  .intro-section {
     height: auto;
     min-height: 400px;
     margin-bottom: 16px;
   }
   
-  .map-section {
+  .map-section,
+  .intro-section {
     position: relative;
     top: 0;
+  }
+  
+  .intro-container {
+    padding: 24px 16px;
+  }
+  
+  .intro-title {
+    font-size: 20px;
   }
 }
 </style>

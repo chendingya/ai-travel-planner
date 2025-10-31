@@ -239,12 +239,9 @@ const savePlan = async () => {
 <style scoped>
 .plan-detail-container {
   width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
+  padding: 32px;
 }
 
 .plan-detail-header {
@@ -254,6 +251,7 @@ const savePlan = async () => {
   margin-bottom: 32px;
   padding-bottom: 20px;
   border-bottom: 2px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .plan-detail-title {
@@ -280,7 +278,7 @@ const savePlan = async () => {
 }
 
 .plan-content {
-  flex: 1;
+  margin-bottom: 0;
 }
 
 .plan-collapse {

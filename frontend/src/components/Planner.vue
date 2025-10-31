@@ -324,12 +324,9 @@ const getPlan = async () => {
 <style scoped>
 .planner-container {
   width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
+  padding: 32px;
 }
 
 .planner-header {
@@ -355,7 +352,7 @@ const getPlan = async () => {
 }
 
 .planner-form {
-  margin-bottom: 24px;
+  margin-bottom: 0;
 }
 
 /* 按钮内图标与文字水平垂直居中对齐 */
