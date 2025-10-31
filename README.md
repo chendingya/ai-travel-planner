@@ -6,7 +6,8 @@
 
 ## 核心功能
 
-- **智能行程规划**: 用户可以通过文字或语音输入旅行目的地、日期、预算、同行人数和偏好（例如："我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子"）。AI 将生成个性化的行程，包括交通、住宿、景点和餐饮建议。
+- **智能行程规划**: 用户可以通过文字或语音输入旅行目的地、日期、预算、同行人数和偏好（例如："我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子"）。AI 将生成个性化的行程，包括交通、住宿、景点和餐饮建议，并自动提供每个景点的经纬度坐标。
+- **智能路线规划**: 基于高德地图 API，自动规划景点之间的最优路线，显示详细的路线图和导航信息。
 - **费用预算与管理**: AI 为规划的行程提供预算分析。用户还可以在旅途中记录开销，并支持语音输入。
 - **用户管理与数据存储**:
   - **注册与登录**: 用户可以创建账户以保存、查看和管理多个旅行计划。
@@ -14,12 +15,12 @@
 
 ## 技术栈
 
-- **前端**: **Vue.js 3** (使用 Vite) 以实现快速、现代化的用户界面。
+- **前端**: **Vue.js 3** (使用 Vite) 以实现快速、现代化的用户界面，使用 **TDesign Vue Next** UI 组件库。
 - **后端**: **Node.js** 与 **Express** 用于构建健壮且可扩展的 REST API。
 - **数据库与认证**: **Supabase** 将用于用户管理、认证和数据存储 (PostgreSQL)。
-- **大语言模型 (LLM)**: 核心的行程规划和预算生成将由**阿里云百炼（通义千问）**大模型驱动，通过 OpenAI SDK 兼容模式调用。
+- **大语言模型 (LLM)**: 核心的行程规划和预算生成由**阿里云百炼（通义千问 qwen3-max-preview）**大模型驱动，通过 OpenAI SDK 兼容模式调用，生成结构化 JSON 格式的旅行计划。
 - **语音识别**: 将使用浏览器内置的 **Web Speech API** 来实现语音转文本功能，从而简化架构并避免额外的 API 密钥。
-- **地图服务**: 将使用 **Leaflet** 和 **OpenStreetMap** 来显示地图和位置，因为它不需要 API 密钥。
+- **地图服务**: 使用 **高德地图 API**，提供精准的路线规划、导航、POI 搜索等功能，对中国境内旅行优化。
 - **容器化**: **Docker** 和 **Docker Compose** 将用于容器化应用程序，以便于部署和扩展。
 
 ## 项目结构
@@ -59,6 +60,8 @@ SUPABASE_KEY=你的_SUPABASE_ANON_KEY
 ```bash
 VITE_SUPABASE_URL=你的_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY=你的_SUPABASE_ANON_KEY
+VITE_AMAP_KEY=你的_高德地图_API_KEY
+VITE_AMAP_SECURITY_CODE=你的_高德安全密钥（可选）
 ```
 
 ## 如何运行应用程序
@@ -80,6 +83,13 @@ VITE_SUPABASE_ANON_KEY=你的_SUPABASE_ANON_KEY
 3. 在项目设置 → API 中找到：
    - **Project URL** (`SUPABASE_URL`)
    - **anon public key** (`SUPABASE_ANON_KEY`)
+
+#### 3. 高德地图 API Key
+1. 访问 [高德开放平台](https://console.amap.com/)
+2. 注册并登录账号
+3. 创建应用（选择 **Web端(JS API)**）
+4. 获取 API Key 和安全密钥（可选）
+5. 详细配置说明见：`frontend/高德地图配置说明.md`
 
 ### 方式一：本地开发（推荐）
 
@@ -128,6 +138,8 @@ cp .env.example .env
 # 编辑 .env 文件，填入以下内容：
 # VITE_SUPABASE_URL=你的Supabase项目URL
 # VITE_SUPABASE_ANON_KEY=你的Supabase匿名密钥
+# VITE_AMAP_KEY=你的高德地图API密钥
+# VITE_AMAP_SECURITY_CODE=你的高德安全密钥（可选）
 ```
 
 #### 第三步：启动项目
@@ -240,6 +252,12 @@ taskkill /PID <PID> /F
 - 确认 `.env` 文件中的 Supabase URL 和 Key 正确
 - 检查 Supabase 项目是否正常运行
 
+**Q: 地图不显示或显示空白？**
+- 确认高德地图 API Key 已配置在 `frontend/.env` 中
+- 检查浏览器控制台是否有地图加载错误
+- 确认 API Key 类型为 "Web端(JS API)"
+- 详见：`frontend/高德地图配置说明.md`
+
 ## 安全说明
 
 本项目高度重视安全性，采取以下措施保护敏感信息:
@@ -287,5 +305,7 @@ taskkill /PID <PID> /F
 ## 📝 更多信息
 
 - 详细的阿里百炼配置说明请查看：`backend/阿里百炼配置说明.md`
+- 详细的高德地图配置说明请查看：`frontend/高德地图配置说明.md`
+- 后端架构说明请查看：`backend/README.md`
 - 如需修改 AI 模型，请编辑 `backend/src/index.js` 中的 `model` 参数
-- 可用模型：`qwen-max`、`qwen-plus`、`qwen-turbo`
+- 可用模型：`qwen3-max-preview`（当前）、`qwen-max`、`qwen-plus`、`qwen-turbo`

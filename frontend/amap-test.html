@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高德地图测试</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        #container { width: 100%; height: 600px; }
+        .info { padding: 20px; background: #f5f5f5; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h2>高德地图 API 测试</h2>
+        <p id="status">正在加载...</p>
+    </div>
+    <div id="container"></div>
+
+    <script>
+        // 请替换为你的高德地图 API Key
+        const AMAP_KEY = 'YOUR_AMAP_KEY_HERE';
+        
+        // 设置安全密钥（如果有）
+        window._AMapSecurityConfig = {
+            securityJsCode: 'YOUR_SECURITY_CODE_HERE', // 可选
+        };
+
+        // 动态加载高德地图脚本
+        const script = document.createElement('script');
+        script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}&plugin=AMap.Driving,AMap.Marker,AMap.InfoWindow`;
+        
+        script.onload = () => {
+            document.getElementById('status').innerHTML = '<span class="success">✅ 高德地图 API 加载成功！</span>';
+            initMap();
+        };
+        
+        script.onerror = () => {
+            document.getElementById('status').innerHTML = '<span class="error">❌ 高德地图 API 加载失败！请检查 API Key 是否正确。</span>';
+        };
+        
+        document.head.appendChild(script);
+
+        function initMap() {
+            // 创建地图
+            const map = new AMap.Map('container', {
+                zoom: 13,
+                center: [116.397428, 39.90923], // 北京天安门
+                mapStyle: 'amap://styles/fresh',
+            });
+
+            // 测试数据：北京景点
+            const testLocations = [
+                { name: '天安门广场', lng: 116.397428, lat: 39.90923 },
+                { name: '故宫博物院', lng: 116.403119, lat: 39.918058 },
+                { name: '颐和园', lng: 116.275198, lat: 39.999943 },
+            ];
+
+            // 添加标记
+            const markers = [];
+            testLocations.forEach((loc, index) => {
+                const marker = new AMap.Marker({
+                    position: new AMap.LngLat(loc.lng, loc.lat),
+                    title: loc.name,
+                    label: {
+                        content: `<div style="background: #0084ff; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${index + 1}</div>`,
+                        offset: new AMap.Pixel(0, -35),
+                    },
+                });
+
+                marker.on('click', () => {
+                    const infoWindow = new AMap.InfoWindow({
+                        content: `<div style="padding: 8px;"><h4 style="margin: 0;">${loc.name}</h4></div>`,
+                        offset: new AMap.Pixel(0, -30),
+                    });
+                    infoWindow.open(map, marker.getPosition());
+                });
+
+                markers.push(marker);
+                map.add(marker);
+            });
+
+            // 路线规划
+            const driving = new AMap.Driving({
+                map: map,
+                policy: AMap.DrivingPolicy.LEAST_TIME,
+                hideMarkers: true,
+            });
+
+            const start = new AMap.LngLat(testLocations[0].lng, testLocations[0].lat);
+            const end = new AMap.LngLat(testLocations[2].lng, testLocations[2].lat);
+            const waypoint = new AMap.LngLat(testLocations[1].lng, testLocations[1].lat);
+
+            driving.search(start, end, { waypoints: [waypoint] }, (status, result) => {
+                if (status === 'complete') {
+                    document.getElementById('status').innerHTML += '<br><span class="success">✅ 路线规划成功！</span>';
+                } else {
+                    document.getElementById('status').innerHTML += '<br><span class="error">⚠️ 路线规划失败</span>';
+                }
+            });
+
+            map.setFitView(markers, true, [50, 50, 50, 50]);
+        }
+    </script>
+</body>
+</html>
