@@ -98,6 +98,86 @@ body {
   border-color: var(--primary-hover) !important;
 }
 
+/* 全局按钮图标与文字对齐（所有按钮统一） */
+/* 最高优先级 - 直接作用于 TDesign 按钮的 __text 容器 */
+.t-button .t-button__text,
+.t-button__text,
+button .t-button__text {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+}
+
+/* 按钮内的所有图标 - 确保不被任何样式覆盖 */
+.t-button .t-icon,
+.t-button__text .t-icon,
+button .t-icon,
+.t-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  vertical-align: middle !important;
+  margin: 0 !important;
+  line-height: 1 !important;
+}
+
+/* 确保按钮内的文本节点也对齐 */
+.t-button__text > *,
+button .t-button__text > * {
+  display: inline-flex !important;
+  align-items: center !important;
+  vertical-align: middle !important;
+}
+
+/* SVG 图标元素 */
+.t-button .t-icon svg,
+.t-button__text .t-icon svg,
+.t-icon svg {
+  display: inline-block !important;
+  vertical-align: middle !important;
+}
+
+/* 确保下拉菜单项的图标也对齐 */
+.t-dropdown-item .t-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  vertical-align: middle !important;
+  margin-right: 6px !important;
+}
+
+/* 卡片操作区按钮特殊处理 */
+.t-card__actions .t-button,
+.t-card__actions button {
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+.t-card__actions .t-button .t-button__text,
+.t-card__actions button .t-button__text {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+
+/* 修复可能的内联样式冲突 - 包括所有 z-index 样式 */
+.t-button__text[style*="z-index"],
+.t-button__text[style] {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+/* 页面头部按钮 */
+.page-header .t-button .t-button__text {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
 /* 知乎风格的输入框 */
 .t-input__inner,
 .t-textarea__inner {

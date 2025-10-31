@@ -224,86 +224,93 @@ const getPlan = async () => {
     
     const data = await response.json();
     
-        // 更健壮的解析：只解析真实的行程 Day 段，过滤元数据和后续预算/交通等区块
-    const raw = data.plan || '';
+    let parsedPlan;
     
-    // 第一步：去掉后面的描述性区块（例如【交通】【住宿】等）
-    let mainText = raw;
-    const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
-    if (cutoffMatch) {
-      mainText = raw.slice(0, cutoffMatch.index).trim();
-    }
-
-    // 第二步：以 "Day N" 或 "第 N 天" 为分隔符拆分成日程块
-    const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
-
-    const daily_itinerary = dayBlocks.map((block, idx) => {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-      let theme = `第 ${idx + 1} 天`;
-      let contentLines = lines;
-
-      // 如果首行是 Day 标题，提取主题并去掉首行
-      if (/^Day\s*\d+/i.test(lines[0]) || /^第\s*\d+\s*天/.test(lines[0])) {
-        theme = lines[0];
-        contentLines = lines.slice(1);
+    // 判断后端返回的是结构化 JSON 还是原始文本
+    if (data.isStructured && data.plan.daily_itinerary) {
+      // 后端已返回结构化 JSON，直接使用
+      parsedPlan = {
+        daily_itinerary: data.plan.daily_itinerary.map(day => ({
+          theme: day.theme || `第 ${day.day} 天`,
+          activities: day.activities.map(activity => ({
+            time: activity.time || '',
+            description: `${activity.location || ''} - ${activity.description || ''}`.trim(),
+            coords: activity.latitude && activity.longitude 
+              ? [activity.latitude, activity.longitude] 
+              : null
+          }))
+        })),
+        budget_breakdown: data.plan.budget_breakdown,
+        tips: data.plan.tips
+      };
+    } else {
+      // 降级处理：后端返回原始文本（兼容旧版或 AI 未按格式输出）
+      const raw = data.plan || '';
+      let mainText = raw;
+      const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
+      if (cutoffMatch) {
+        mainText = raw.slice(0, cutoffMatch.index).trim();
       }
 
-      // 第三步：过滤掉元数据行（如 "- 旅行天数"、"- 目的地"、"2天"、"日本东京" 等单行元数据）
-      const metaKeywords = ['旅行天数', '目的地', '预算', '团队人数', '人数', '偏好', '喜欢', '元人民币', '天', '人'];
-      const filtered = contentLines.filter(line => {
-        // 如果是纯列表项（以 - 开头且后面是元数据关键词），跳过
-        if (/^-\s*/.test(line)) {
-          const stripped = line.replace(/^-\s*/, '');
-          if (metaKeywords.some(kw => stripped.includes(kw))) return false;
+      const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
+
+      const daily_itinerary = dayBlocks.map((block, idx) => {
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+        let theme = `第 ${idx + 1} 天`;
+        let contentLines = lines;
+
+        if (/^Day\s*\d+/i.test(lines[0]) || /^第\s*\d+\s*天/.test(lines[0])) {
+          theme = lines[0];
+          contentLines = lines.slice(1);
         }
-        // 如果行很短且包含元数据关键词（例如 "2天" "10人" "10000元人民币"），跳过
-        if (line.length < 20 && metaKeywords.some(kw => line.includes(kw))) return false;
-        // 如果整行只是数字+单位（如 "2天"），跳过
-        if (/^\d+\s*[天人元]/.test(line)) return false;
-        return true;
+
+        const metaKeywords = ['旅行天数', '目的地', '预算', '团队人数', '人数', '偏好', '喜欢', '元人民币', '天', '人', '签证', '机票', '交通卡', '语言'];
+        const filtered = contentLines.filter(line => {
+          if (/^-\s*/.test(line)) {
+            const stripped = line.replace(/^-\s*/, '');
+            if (metaKeywords.some(kw => stripped.includes(kw))) return false;
+          }
+          if (line.length < 20 && metaKeywords.some(kw => line.includes(kw))) return false;
+          if (/^\d+\s*[天人元]/.test(line)) return false;
+          if (/^[#*]+/.test(line)) return false; // 过滤 markdown 标题
+          return true;
+        });
+
+        const activities = [];
+        for (const line of filtered) {
+          if (/^【|^\[|^\{/.test(line)) continue;
+          if (!line || line.length < 3) continue;
+
+          const parts = line.split(/[-–—]/).map(p => p.trim()).filter(Boolean);
+          if (parts.length > 1 && !line.includes(':') && !line.includes('：')) {
+            for (const part of parts) {
+              if (part.length < 3 || metaKeywords.some(kw => part.includes(kw))) continue;
+              activities.push({ time: '', description: part, coords: null });
+            }
+          } else {
+            if (line.includes(':')) {
+              const [time, ...desc] = line.split(':');
+              activities.push({ time: time.trim(), description: desc.join(':').trim(), coords: null });
+            } else if (line.includes('：')) {
+              const [time, ...desc] = line.split('：');
+              activities.push({ time: time.trim(), description: desc.join('：').trim(), coords: null });
+            } else {
+              activities.push({ time: '', description: line, coords: null });
+            }
+          }
+        }
+
+        return { theme, activities };
       });
 
-      // 第四步：将每一行按分隔符拆成若干活动（例如 a-b-c）
-      const activities = [];
-      for (const line of filtered) {
-        // 跳过可能的元数据行（以【或[ 开头）
-        if (/^【|^\[|^\{/.test(line)) continue;
-        if (!line) continue;
-
-        // 如果有多个分隔符（-、,、/ 等），拆成多个活动
-        const parts = line.split(/[-–—,，、；;\/\\]/).map(p => p.trim()).filter(Boolean);
-        if (parts.length > 1) {
-          for (const part of parts) {
-            // 再次过滤短元数据片段
-            if (part.length < 3 || metaKeywords.some(kw => part.includes(kw))) continue;
-            activities.push({ time: '', description: part });
-          }
-        } else {
-          // 如果含有冒号 time: description 则分离
-          if (line.includes(':')) {
-            const [time, ...desc] = line.split(':');
-            activities.push({ time: time.trim(), description: desc.join(':').trim() });
-          } else if (line.includes('：')) {
-            const [time, ...desc] = line.split('：');
-            activities.push({ time: time.trim(), description: desc.join('：').trim() });
-          } else {
-            activities.push({ time: '', description: line });
-          }
-        }
-      }
-
-      return { theme, activities };
-    });
-
-    const parsedPlan = { daily_itinerary };
+      parsedPlan = { daily_itinerary };
+    }
     
     plan.value = parsedPlan;
     MessagePlugin.success('旅行方案生成成功！');
 
-    // 尝试收集活动坐标：优先使用已有 coords 字段，若无则调用 Nominatim 进行地理编码
+    // 收集地图坐标
     const mapLocations = [];
-
-    // 简单的地理编码函数（使用 OpenStreetMap Nominatim）
     const geocode = async (query) => {
       if (!query) return null;
       try {
@@ -321,25 +328,22 @@ const getPlan = async () => {
       }
     };
 
-    // 为每个活动获取坐标（若活动已有 coords 则直接使用）
     for (const day of parsedPlan.daily_itinerary) {
       for (const activity of day.activities) {
         if (activity.coords) {
           mapLocations.push({ name: activity.description, coords: activity.coords });
         } else {
-          // 尝试根据描述地名进行地理编码，优先加上目的地上下文以提高命中率
           const query = form.value.destination ? `${form.value.destination} ${activity.description}` : activity.description;
           const coords = await geocode(query);
           if (coords) {
+            activity.coords = coords; // 更新活动坐标
             mapLocations.push({ name: activity.description, coords });
           }
         }
       }
     }
 
-    emit('locations-updated', mapLocations);
-
-  } catch (error) {
+    emit('locations-updated', mapLocations);  } catch (error) {
     console.error('Error generating plan:', error);
     MessagePlugin.error('生成旅行方案时出错，请稍后重试');
   } finally {

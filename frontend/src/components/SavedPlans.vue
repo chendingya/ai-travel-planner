@@ -36,21 +36,24 @@
           :bordered="true"
           hover-shadow
           class="plan-card"
+          @click="viewPlan(plan)"
         >
           <template #actions>
             <t-button
               variant="text"
               theme="default"
-              @click="viewPlan(plan)"
+              @click.stop="viewPlan(plan)"
             >
               <t-icon name="view" />
+              查看
             </t-button>
             <t-button
               variant="text"
               theme="danger"
-              @click="confirmDelete(plan.id)"
+              @click.stop="confirmDelete(plan.id)"
             >
               <t-icon name="delete" />
+              删除
             </t-button>
           </template>
 
@@ -82,8 +85,10 @@
     <t-dialog
       v-model:visible="showDetailDialog"
       :header="`${selectedPlan?.destination} - 旅行计划`"
-      width="800px"
+      width="80%"
+      max-height="80vh"
       :footer="false"
+      placement="center"
     >
       <div v-if="selectedPlan" class="plan-detail">
         <div class="detail-header">
@@ -92,17 +97,18 @@
             <t-tag theme="success">¥ {{ selectedPlan.budget.toLocaleString() }}</t-tag>
             <t-tag theme="warning">{{ selectedPlan.travelers }} 人</t-tag>
           </t-space>
+          <p class="created-time">创建于：{{ new Date(selectedPlan.created_at).toLocaleString('zh-CN') }}</p>
         </div>
 
         <t-divider />
 
         <div v-if="selectedPlan.preferences" class="detail-section">
-          <h4>偏好需求</h4>
+          <h4><t-icon name="heart" /> 偏好需求</h4>
           <p>{{ selectedPlan.preferences }}</p>
         </div>
 
-        <div v-if="selectedPlan.plan_details" class="detail-section">
-          <h4>行程详情</h4>
+        <div v-if="selectedPlan.plan_details && selectedPlan.plan_details.daily_itinerary" class="detail-section">
+          <h4><t-icon name="calendar" /> 行程详情</h4>
           <t-collapse :default-value="['0']">
             <t-collapse-panel
               v-for="(day, index) in selectedPlan.plan_details.daily_itinerary"
@@ -110,20 +116,26 @@
               :value="String(index)"
               :header="`第 ${index + 1} 天：${day.theme || '精彩行程'}`"
             >
-              <t-timeline>
+              <t-timeline v-if="day.activities && day.activities.length">
                 <t-timeline-item
                   v-for="(activity, i) in day.activities"
                   :key="i"
-                  :label="activity.time"
+                  :label="activity.time || ''"
                 >
                   {{ activity.description }}
                 </t-timeline-item>
               </t-timeline>
+              <t-empty v-else description="暂无活动安排" size="small" />
             </t-collapse-panel>
           </t-collapse>
         </div>
 
-        <ExpenseTracker :plan-id="selectedPlan.id" />
+        <div v-if="selectedPlan.plan_details && selectedPlan.plan_details.tips" class="detail-section">
+          <h4><t-icon name="tips" /> 旅行建议</h4>
+          <ul class="tips-list">
+            <li v-for="(tip, idx) in selectedPlan.plan_details.tips" :key="idx">{{ tip }}</li>
+          </ul>
+        </div>
       </div>
     </t-dialog>
 
@@ -250,10 +262,12 @@ onMounted(fetchPlans);
 .plan-card {
   height: 100%;
   transition: all 0.3s ease;
+  cursor: pointer;
 }
 
 .plan-card:hover {
   transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .plan-info {
@@ -292,11 +306,52 @@ onMounted(fetchPlans);
   font-weight: 600;
   margin-bottom: 12px;
   color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .detail-section p {
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.created-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.tips-list {
+  list-style: none;
+  padding: 0;
+}
+
+.tips-list li {
+  padding: 8px 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.tips-list li::before {
+  content: "💡 ";
+  margin-right: 8px;
+}
+
+/* 强制按钮对齐 - 本地兜底方案 */
+.page-header :deep(.t-button__text),
+.t-card__actions :deep(.t-button__text) {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  line-height: 1 !important;
+}
+
+.page-header :deep(.t-icon),
+.t-card__actions :deep(.t-icon) {
+  display: inline-flex !important;
+  align-items: center !important;
+  margin: 0 !important;
 }
 
 @media (max-width: 768px) {
