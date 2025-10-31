@@ -523,8 +523,7 @@ const model = 'qwen3-max-preview';  // 修改为其他模型
 
 ## 👥 作者
 
-- 项目作者：[Your Name]
-- 联系方式：[Your Email]
+- 项目作者：[chendingya]
 
 ---
 
