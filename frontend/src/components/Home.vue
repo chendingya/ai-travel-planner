@@ -30,7 +30,7 @@
             <t-icon name="rocket" />
             立即开始规划
           </t-button>
-          <GlassButton icon="play-circle">
+          <GlassButton icon="play-circle" @click="gotoDemo">
             观看演示
           </GlassButton>
         </div>
@@ -264,6 +264,10 @@
 import GlassButton from './GlassButton.vue';
 
 defineEmits(['start-plan']);
+
+const gotoDemo = () => {
+  window.open('https://github.com/chendingya/ai-travel-planner', '_blank');
+};
 </script>
 
 <style scoped>
