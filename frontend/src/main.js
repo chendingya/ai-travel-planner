@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import TDesign from 'tdesign-vue-next'
 import 'tdesign-vue-next/es/style/index.css'
 import App from './App.vue'
@@ -6,6 +7,8 @@ import './styles/custom.css'
 import { loadAmapScript } from './config/amap.js'
 
 const app = createApp(App)
+const pinia = createPinia()
+app.use(pinia)
 app.use(TDesign)
 
 // 先加载高德地图,再挂载应用

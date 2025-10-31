@@ -28,7 +28,6 @@
         <t-form-item label="邮箱">
           <t-input
             v-model="email"
-            type="email"
             placeholder="请输入您的邮箱"
             clearable
             required

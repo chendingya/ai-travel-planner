@@ -56,14 +56,14 @@
         <!-- 规划页面 -->
         <div v-if="view === 'planner'" class="content-wrapper" key="planner">
           <t-row :gutter="24">
-            <t-col :xs="12" :sm="12" :md="8" :lg="8" :xl="8">
+            <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
               <div class="planner-section">
                 <Planner @locations-updated="updateLocations" @fly-to="flyTo" />
               </div>
             </t-col>
-            <t-col :xs="12" :sm="12" :md="4" :lg="4" :xl="4">
+            <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
               <div class="map-section">
-                <MapView :locations="locations" ref="mapView" />
+                <MapView :locations="store.locations" ref="mapView" />
               </div>
             </t-col>
           </t-row>
@@ -96,17 +96,19 @@ import MapView from './components/MapView.vue';
 import SavedPlans from './components/SavedPlans.vue';
 import ExpenseTracker from './components/ExpenseTracker.vue';
 import Settings from './components/Settings.vue';
+import { usePlannerStore } from './stores/planner';
 
 const view = ref('planner');
-const locations = ref([]);
 const mapView = ref(null);
+const store = usePlannerStore();
+store.initFromStorage();
 
 const handleMenuChange = (value) => {
   view.value = value;
 };
 
 const updateLocations = (newLocations) => {
-  locations.value = newLocations;
+  store.setLocations(newLocations)
 };
 
 const flyTo = (coords) => {
@@ -291,6 +293,35 @@ const flyTo = (coords) => {
   height: 100%;
 }
 
+.content-wrapper :deep(.t-row) {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  margin-left: -12px !important;
+  margin-right: -12px !important;
+}
+
+.content-wrapper :deep(.t-col) {
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+/* 中等及以上屏幕：每列占50% */
+@media (min-width: 992px) {
+  .content-wrapper :deep(.t-col-6) {
+    flex: 0 0 50% !important;
+    max-width: 50% !important;
+  }
+}
+
+/* 小屏幕：每列占100% */
+@media (max-width: 991px) {
+  .content-wrapper :deep(.t-col) {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -319,6 +350,7 @@ const flyTo = (coords) => {
 .map-section {
   position: sticky;
   top: calc(var(--header-height) + 24px);
+  height: calc(100vh - var(--header-height) - 48px);
 }
 
 .content-page {

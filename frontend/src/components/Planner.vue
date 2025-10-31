@@ -157,25 +157,107 @@
           </t-timeline>
         </t-collapse-panel>
       </t-collapse>
+
+      <!-- 预算分解 -->
+      <div v-if="plan.budget_breakdown" class="budget-section">
+        <h4 class="section-title">
+          <t-icon name="money-circle" />
+          预算分解
+        </h4>
+        <div class="budget-grid-wrapper">
+          <div v-if="plan.budget_breakdown.transportation" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">🚗</div>
+              <div class="budget-label">交通</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.transportation }}</div>
+            </div>
+          </div>
+          <div v-if="plan.budget_breakdown.accommodation" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">🏨</div>
+              <div class="budget-label">住宿</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.accommodation }}</div>
+            </div>
+          </div>
+          <div v-if="plan.budget_breakdown.meals" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">🍴</div>
+              <div class="budget-label">餐饮</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.meals }}</div>
+            </div>
+          </div>
+          <div v-if="plan.budget_breakdown.attractions" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">🎭</div>
+              <div class="budget-label">景点</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.attractions }}</div>
+            </div>
+          </div>
+          <div v-if="plan.budget_breakdown.shopping" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">🛍️</div>
+              <div class="budget-label">购物</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.shopping }}</div>
+            </div>
+          </div>
+          <div v-if="plan.budget_breakdown.other" class="budget-col">
+            <div class="budget-item">
+              <div class="budget-icon">💡</div>
+              <div class="budget-label">其他</div>
+              <div class="budget-value">¥{{ plan.budget_breakdown.other }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="budget-total">
+          <span>总计</span>
+          <span class="total-value">¥{{ calculateTotal(plan.budget_breakdown) }}</span>
+        </div>
+        <!-- 图表区域 -->
+        <div class="budget-charts">
+          <t-card title="预算分布图" style="margin-bottom: 16px;">
+            <SimplePieChart :data="[
+                { name: '交通', value: plan.budget_breakdown.transportation || 0 },
+                { name: '住宿', value: plan.budget_breakdown.accommodation || 0 },
+                { name: '餐饮', value: plan.budget_breakdown.meals || 0 },
+                { name: '景点', value: plan.budget_breakdown.attractions || 0 },
+                { name: '购物', value: plan.budget_breakdown.shopping || 0 },
+                { name: '其他', value: plan.budget_breakdown.other || 0 }
+              ]" />
+          </t-card>
+        </div>
+      </div>
+
+      <!-- 旅行提示 -->
+      <div v-if="plan.tips && plan.tips.length > 0" class="tips-section">
+        <h4 class="section-title">
+          <t-icon name="lightbulb" />
+          旅行提示
+        </h4>
+        <t-list :split="false">
+          <t-list-item v-for="(tip, index) in plan.tips" :key="index">
+            <t-icon name="check-circle" class="tip-icon" />
+            {{ tip }}
+          </t-list-item>
+        </t-list>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { useSpeechRecognition } from '@vueuse/core';
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
+import { usePlannerStore } from '../stores/planner';
+import SimpleBarChart from './SimpleBarChart.vue';
+import SimplePieChart from './SimplePieChart.vue';
 
 const emit = defineEmits(['locations-updated', 'fly-to']);
+const store = usePlannerStore();
 
-const form = ref({
-  destination: '',
-  duration: 5,
-  budget: 10000,
-  travelers: 1,
-  preferences: '',
-});
+// local reactive refs, but initialized from store
+const form = ref(Object.assign({}, store.form))
 
 const formRules = {
   destination: [{ required: true, message: '请输入目的地', type: 'error' }],
@@ -184,10 +266,18 @@ const formRules = {
   travelers: [{ required: true, message: '请输入人数', type: 'error' }],
 };
 
-const plan = ref(null);
+const plan = ref(store.plan || null);
 const loading = ref(false);
 const saving = ref(false);
 const targetField = ref(null);
+
+onMounted(() => {
+  // ensure store loaded from localStorage
+  store.initFromStorage()
+  // sync local form/plan with store
+  Object.assign(form.value, store.form)
+  if (store.plan) plan.value = store.plan
+});
 
 const { isSupported, isListening, result, start, stop } = useSpeechRecognition();
 
@@ -196,6 +286,15 @@ watch(result, (newResult) => {
     form.value[targetField.value] = newResult;
   }
 });
+
+// watch form and plan and persist to store
+watch(form, (v) => {
+  store.setForm(v)
+}, { deep: true })
+
+watch(plan, (v) => {
+  store.setPlan(v)
+}, { deep: true })
 
 const startRecognition = (field) => {
   if (!isSupported.value) {
@@ -306,7 +405,7 @@ const getPlan = async () => {
       parsedPlan = { daily_itinerary };
     }
     
-    plan.value = parsedPlan;
+  plan.value = parsedPlan;
     MessagePlugin.success('旅行方案生成成功！');
 
     // 收集地图坐标
@@ -343,7 +442,10 @@ const getPlan = async () => {
       }
     }
 
-    emit('locations-updated', mapLocations);  } catch (error) {
+    // persist locations to store and emit
+    store.setLocations(mapLocations)
+    emit('locations-updated', mapLocations);
+    } catch (error) {
     console.error('Error generating plan:', error);
     MessagePlugin.error('生成旅行方案时出错，请稍后重试');
   } finally {
@@ -410,6 +512,11 @@ const flyToLocation = (coords) => {
     emit('fly-to', coords);
   }
 };
+
+const calculateTotal = (budget) => {
+  if (!budget) return 0;
+  return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
+};
 </script>
 
 <style scoped>
@@ -419,6 +526,8 @@ const flyToLocation = (coords) => {
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .planner-header {
@@ -545,6 +654,127 @@ const flyToLocation = (coords) => {
   line-height: 1.6;
 }
 
+/* 预算分解 */
+.budget-section {
+  margin-top: 24px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f6f9ff 0%, #f0f5ff 100%);
+  border-radius: 8px;
+  border: 1px solid #d6e4ff;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.budget-grid-wrapper {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 12px;
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.budget-col {
+  width: 100%;
+  min-width: 0;
+}
+
+.budget-item {
+  background: white;
+  padding: 16px;
+  border-radius: 6px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s;
+  height: 100%;
+}
+
+.budget-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 132, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+.budget-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+
+.budget-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.budget-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.budget-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: white;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 16px;
+  box-shadow: 0 2px 8px rgba(0, 132, 255, 0.1);
+}
+
+.total-value {
+  font-size: 24px;
+  color: #0084ff;
+}
+
+.budget-charts {
+  margin-top: 24px;
+}
+
+/* 旅行提示 */
+.tips-section {
+  margin-top: 24px;
+  padding: 20px;
+  background: linear-gradient(135deg, #fffbf0 0%, #fff7e6 100%);
+  border-radius: 8px;
+  border: 1px solid #ffe7ba;
+}
+
+.tips-section :deep(.t-list) {
+  background: transparent;
+}
+
+.tips-section :deep(.t-list-item) {
+  padding: 12px;
+  background: white;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.tips-section :deep(.t-list-item:last-child) {
+  margin-bottom: 0;
+}
+
+.tip-icon {
+  color: #faad14;
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 @media (max-width: 768px) {
   .planner-container {
     padding: 16px;
@@ -558,6 +788,14 @@ const flyToLocation = (coords) => {
     flex-direction: column;
     gap: 12px;
     align-items: flex-start;
+  }
+  
+  .budget-grid-wrapper {
+    grid-template-columns: 1fr;
+  }
+  
+  .budget-item {
+    margin-bottom: 12px;
   }
 }
 </style>
