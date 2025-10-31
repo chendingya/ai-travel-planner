@@ -558,15 +558,9 @@ const getPlan = async () => {
   border-radius: 20px;
   box-shadow: var(--glass-shadow);
   flex-shrink: 0;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
   text-align: center;
-}
-
-.planner-header:hover {
-  box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 .planner-title {
@@ -594,12 +588,6 @@ const getPlan = async () => {
   border-radius: 20px;
   box-shadow: var(--glass-shadow);
   padding: 32px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.planner-form:hover {
-  box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 /* 快捷输入区域 */
@@ -632,22 +620,14 @@ const getPlan = async () => {
 
 .quick-input :deep(.t-textarea__inner) {
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   font-size: 14px;
-  transition: all 0.3s ease;
 }
 
-.quick-input :deep(.t-textarea__inner:hover) {
-  border-color: rgba(0, 0, 0, 0.12);
-}
-
-.quick-input :deep(.t-textarea__inner:focus) {
-  border-color: rgba(0, 0, 0, 0.15);
-  box-shadow: none;
-  outline: none;
+.quick-input :deep(.t-textarea__inner:focus),
+.quick-input :deep(.t-textarea:focus-within),
+.quick-input :deep(.t-textarea.t-is-focused) {
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 .input-actions {
@@ -747,25 +727,24 @@ const getPlan = async () => {
 .form-input :deep(.t-textarea__inner),
 .form-input :deep(.t-input-number) {
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  transition: all 0.3s ease;
-}
-
-.form-input :deep(.t-input:hover),
-.form-input :deep(.t-textarea__inner:hover),
-.form-input :deep(.t-input-number:hover) {
-  border-color: rgba(0, 0, 0, 0.12);
 }
 
 .form-input :deep(.t-input:focus),
+.form-input :deep(.t-input__inner:focus),
 .form-input :deep(.t-textarea__inner:focus),
-.form-input :deep(.t-input-number:focus) {
-  border-color: rgba(0, 0, 0, 0.15);
-  box-shadow: none;
-  outline: none;
+.form-input :deep(.t-input-number:focus-within),
+.form-input :deep(.t-input__wrap:focus-within),
+.form-input :deep(.t-input.t-is-focused),
+.form-input :deep(.t-input-number.t-is-focused),
+.form-input :deep(.t-textarea.t-is-focused) {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 确保所有内部元素也没有阴影 */
+.form-input :deep(.t-input:focus-within .t-input__inner),
+.form-input :deep(.t-input-number:focus-within .t-input__inner) {
+  box-shadow: none !important;
 }
 
 .form-tip {

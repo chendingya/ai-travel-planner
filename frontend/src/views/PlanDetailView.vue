@@ -69,7 +69,6 @@ onMounted(() => {
 .map-section :deep(.t-card) {
   border-radius: 24px !important;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08) !important;
-  transition: all 0.3s ease;
   overflow: visible !important;
 }
 
@@ -102,13 +101,6 @@ onMounted(() => {
   pointer-events: none;
 }
 
-.book-left:hover :deep(.t-card) {
-  transform: translateX(-4px);
-  box-shadow: 
-    12px 0 24px rgba(102, 126, 234, 0.12),
-    0 8px 32px rgba(0, 0, 0, 0.1) !important;
-}
-
 /* 右页圆角 */
 .book-right :deep(.t-card) {
   border-top-left-radius: 8px !important;
@@ -136,13 +128,6 @@ onMounted(() => {
   );
   z-index: 1;
   pointer-events: none;
-}
-
-.book-right:hover :deep(.t-card) {
-  transform: translateX(4px);
-  box-shadow: 
-    -12px 0 24px rgba(102, 126, 234, 0.12),
-    0 8px 32px rgba(0, 0, 0, 0.1) !important;
 }
 
 /* 移除 t-card 内部的默认 padding，让组件自己控制 */
@@ -180,11 +165,6 @@ onMounted(() => {
   .book-left :deep(.t-card)::after,
   .book-right :deep(.t-card)::before {
     display: none;
-  }
-
-  .book-left:hover :deep(.t-card),
-  .book-right:hover :deep(.t-card) {
-    transform: translateY(-4px);
   }
 
   .map-card :deep(.t-card__body) {

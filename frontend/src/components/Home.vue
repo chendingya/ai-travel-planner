@@ -562,7 +562,6 @@ defineEmits(['start-plan']);
   height: 200%;
   background: radial-gradient(circle, rgba(0, 82, 217, 0.08) 0%, transparent 70%);
   opacity: 0;
-  transition: opacity 0.4s ease;
   pointer-events: none;
 }
 
@@ -635,14 +634,14 @@ defineEmits(['start-plan']);
   border-radius: 20px;
   padding: 36px 28px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
-  transition: all 0.3s ease;
   border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
 }
 
 .tutorial-card:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 12px 40px rgba(0, 82, 217, 0.12);
-  border-color: var(--td-brand-color-focus);
+  transform: translateY(-6px);
+  box-shadow: 0 12px 32px rgba(0, 82, 217, 0.12);
+  border-color: var(--td-brand-color-light);
 }
 
 .tutorial-number {
@@ -698,15 +697,15 @@ defineEmits(['start-plan']);
   background: white;
   border-radius: 16px;
   padding: 32px 28px;
-  transition: all 0.3s ease;
   border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  transition: all 0.3s ease;
 }
 
 .tip-card:hover {
-  transform: translateY(-6px);
-  box-shadow: 0 12px 32px rgba(0, 82, 217, 0.1);
-  border-color: var(--td-brand-color-focus);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 82, 217, 0.1);
+  border-color: var(--td-brand-color-light);
 }
 
 .tip-icon-wrapper {

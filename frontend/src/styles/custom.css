@@ -113,12 +113,6 @@ body::before {
   box-shadow: var(--glass-shadow);
   padding: 20px;
   margin-bottom: 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.card:hover {
-  box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 /* TDesign 卡片全局圆角设置和玻璃态效果 */
@@ -129,12 +123,6 @@ body::before {
   -webkit-backdrop-filter: var(--glass-blur) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-shadow) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.t-card:hover {
-  box-shadow: var(--glass-shadow-hover) !important;
-  transform: translateY(-4px) !important;
 }
 
 /* 响应式布局 */
@@ -151,21 +139,12 @@ body::before {
   box-shadow: 0 4px 16px rgba(0, 132, 255, 0.3) !important;
   backdrop-filter: blur(10px) !important;
   -webkit-backdrop-filter: blur(10px) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.t-button--primary:hover {
-  background: linear-gradient(135deg, var(--primary-hover), #0052a3) !important;
-  border-color: rgba(255, 255, 255, 0.5) !important;
-  box-shadow: 0 8px 24px rgba(0, 132, 255, 0.4) !important;
-  transform: translateY(-2px) !important;
 }
 
 /* 其他按钮的玻璃态效果 */
 .t-button {
   backdrop-filter: blur(8px) !important;
   -webkit-backdrop-filter: blur(8px) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .t-button--default {
@@ -174,25 +153,12 @@ body::before {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
 }
 
-.t-button--default:hover {
-  background: rgba(255, 255, 255, 0.8) !important;
-  border-color: rgba(0, 132, 255, 0.3) !important;
-  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15) !important;
-  transform: translateY(-1px) !important;
-}
-
 .t-button[variant="outline"] {
   background: rgba(255, 255, 255, 0.5) !important;
   backdrop-filter: blur(10px) !important;
   -webkit-backdrop-filter: blur(10px) !important;
   border: 1px solid rgba(0, 132, 255, 0.3) !important;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
-}
-
-.t-button[variant="outline"]:hover {
-  background: rgba(255, 255, 255, 0.7) !important;
-  border-color: rgba(0, 132, 255, 0.5) !important;
-  box-shadow: 0 4px 20px rgba(0, 132, 255, 0.2) !important;
 }
 
 /* 全局按钮图标与文字对齐（所有按钮统一） */
@@ -283,7 +249,6 @@ button .t-button__text > * {
   background: rgba(255, 255, 255, 0.6) !important;
   backdrop-filter: blur(8px) !important;
   -webkit-backdrop-filter: blur(8px) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
 }
 
@@ -292,12 +257,6 @@ button .t-button__text > * {
   border-color: var(--primary-color) !important;
   background: rgba(255, 255, 255, 0.8) !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
-}
-
-.t-input__inner:hover,
-.t-textarea__inner:hover {
-  border-color: rgba(0, 132, 255, 0.3) !important;
-  background: rgba(255, 255, 255, 0.7) !important;
 }
 
 /* 下拉框、选择器等组件的玻璃态效果 */

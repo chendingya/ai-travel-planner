@@ -380,12 +380,6 @@ const handleStartPlan = () => {
   box-shadow: var(--glass-shadow);
   min-height: auto;
   padding: 32px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.content-page:hover {
-  box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 .intro-section {
@@ -397,12 +391,6 @@ const handleStartPlan = () => {
   box-shadow: var(--glass-shadow);
   display: flex;
   flex-direction: column;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.intro-section:hover {
-  box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 .intro-container {
@@ -450,13 +438,6 @@ const handleStartPlan = () => {
   border: 1px solid rgba(227, 232, 247, 0.5);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   flex: 1;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.intro-block:hover {
-  box-shadow: 0 8px 24px rgba(0, 132, 255, 0.15);
-  transform: translateY(-4px);
-  border-color: rgba(0, 132, 255, 0.3);
 }
 
 .tips-block {
@@ -464,10 +445,6 @@ const handleStartPlan = () => {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border-color: rgba(255, 231, 186, 0.5);
-}
-
-.tips-block:hover {
-  box-shadow: 0 8px 24px rgba(250, 173, 20, 0.15);
 }
 
 .block-title {
@@ -508,14 +485,6 @@ const handleStartPlan = () => {
   border-radius: 12px;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.step-item-simple:hover {
-  background: rgba(240, 245, 255, 0.8);
-  border-color: rgba(0, 132, 255, 0.3);
-  transform: translateX(8px);
-  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15);
 }
 
 .step-num {
@@ -551,14 +520,6 @@ const handleStartPlan = () => {
   font-size: 14px;
   line-height: 1.6;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.tip-item-simple:hover {
-  background: rgba(255, 251, 240, 0.8);
-  border-color: rgba(250, 173, 20, 0.3);
-  transform: translateX(8px);
-  box-shadow: 0 4px 16px rgba(250, 173, 20, 0.15);
 }
 
 .tip-check {
