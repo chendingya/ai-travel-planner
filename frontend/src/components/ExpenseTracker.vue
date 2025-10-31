@@ -2,8 +2,8 @@
   <div class="expense-tracker-container">
     <div class="page-header">
       <h2 class="page-title">
-        <t-icon name="wallet" size="28px" />
-        费用管理
+        <t-icon name="chart-bar" size="28px" />
+        费用统计
       </h2>
       <t-button theme="primary" @click="showAddDialog = true">
         <t-icon name="add" />

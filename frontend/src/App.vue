@@ -31,15 +31,9 @@
             </t-menu-item>
             <t-menu-item value="expense">
               <template #icon>
-                <t-icon name="wallet" />
+                <t-icon name="chart-bar" />
               </template>
-              费用管理
-            </t-menu-item>
-            <t-menu-item value="settings">
-              <template #icon>
-                <t-icon name="setting" />
-              </template>
-              设置
+              费用统计
             </t-menu-item>
           </t-menu>
         </div>
@@ -53,12 +47,26 @@
     <!-- 主内容区 -->
     <div class="app-container">
       <transition name="fade" mode="out-in">
-        <!-- 规划页面 -->
-        <div v-if="view === 'planner'" class="content-wrapper" key="planner">
+        <!-- 规划页面 - 只显示表单 -->
+        <div v-if="view === 'planner'" class="content-wrapper content-page" key="planner">
+          <div class="planner-page">
+            <Planner 
+              @locations-updated="updateLocations" 
+              @fly-to="flyTo"
+              @plan-generated="handlePlanGenerated" 
+            />
+          </div>
+        </div>
+
+        <!-- 方案详情页 -->
+        <div v-else-if="view === 'plan-detail'" class="content-wrapper" key="plan-detail">
           <t-row :gutter="24">
             <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
-              <div class="planner-section">
-                <Planner @locations-updated="updateLocations" @fly-to="flyTo" />
+              <div class="plan-detail-section">
+                <PlanDetail 
+                  @fly-to="flyTo"
+                  @back-to-planner="handleBackToPlanner"
+                />
               </div>
             </t-col>
             <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
@@ -71,17 +79,12 @@
 
         <!-- 已保存计划 -->
         <div v-else-if="view === 'saved'" class="content-wrapper content-page" key="saved">
-          <SavedPlans />
+          <SavedPlans @view-plan="handleViewSavedPlan" />
         </div>
 
-        <!-- 费用管理 -->
+        <!-- 费用统计 -->
         <div v-else-if="view === 'expense'" class="content-wrapper content-page" key="expense">
           <ExpenseTracker />
-        </div>
-
-        <!-- 设置 -->
-        <div v-else-if="view === 'settings'" class="content-wrapper content-page" key="settings">
-          <Settings />
         </div>
       </transition>
     </div>
@@ -92,10 +95,10 @@
 import { ref } from 'vue';
 import Auth from './components/Auth.vue';
 import Planner from './components/Planner.vue';
+import PlanDetail from './components/PlanDetail.vue';
 import MapView from './components/MapView.vue';
 import SavedPlans from './components/SavedPlans.vue';
 import ExpenseTracker from './components/ExpenseTracker.vue';
-import Settings from './components/Settings.vue';
 import { usePlannerStore } from './stores/planner';
 
 const view = ref('planner');
@@ -115,6 +118,21 @@ const flyTo = (coords) => {
   if (mapView.value) {
     mapView.value.flyTo(coords);
   }
+};
+
+const handlePlanGenerated = () => {
+  // 方案生成成功后，跳转到方案详情页
+  view.value = 'plan-detail';
+};
+
+const handleBackToPlanner = () => {
+  // 返回规划页面
+  view.value = 'planner';
+};
+
+const handleViewSavedPlan = () => {
+  // 从已保存计划查看详情，跳转到方案详情页
+  view.value = 'plan-detail';
 };
 </script>
 
@@ -334,7 +352,8 @@ const flyTo = (coords) => {
 }
 
 .planner-section,
-.map-section {
+.map-section,
+.plan-detail-section {
   min-height: calc(100vh - var(--header-height) - 48px);
   background: var(--card-bg);
   border-radius: 0;
@@ -343,7 +362,8 @@ const flyTo = (coords) => {
   border: 1px solid var(--border-color);
 }
 
-.planner-section {
+.planner-section,
+.plan-detail-section {
   padding: 32px;
 }
 
@@ -359,6 +379,19 @@ const flyTo = (coords) => {
   box-shadow: none;
   border: 1px solid var(--border-color);
   min-height: auto;
+}
+
+.planner-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 48px 32px;
+  min-height: calc(100vh - var(--header-height) - 48px);
+}
+
+@media (max-width: 768px) {
+  .planner-page {
+    padding: 24px 16px;
+  }
 }
 
 /* 响应式设计 */

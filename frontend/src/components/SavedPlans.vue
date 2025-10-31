@@ -41,14 +41,6 @@
           <template #actions>
             <t-button
               variant="text"
-              theme="default"
-              @click.stop="viewPlan(plan)"
-            >
-              <t-icon name="view" />
-              查看
-            </t-button>
-            <t-button
-              variant="text"
               theme="danger"
               @click.stop="confirmDelete(plan.id)"
             >
@@ -72,72 +64,17 @@
             </div>
           </div>
 
-          <div v-if="plan.preferences" class="plan-preferences">
-            <t-tag theme="primary" variant="light" size="small">
+          <div class="plan-preferences">
+            <t-tag v-if="plan.preferences" theme="primary" variant="light" size="small">
               {{ plan.preferences.slice(0, 20) }}{{ plan.preferences.length > 20 ? '...' : '' }}
+            </t-tag>
+            <t-tag v-else theme="default" variant="light" size="small" class="placeholder-tag">
+              无特殊偏好
             </t-tag>
           </div>
         </t-card>
       </t-col>
     </t-row>
-
-    <!-- 查看计划详情对话框 -->
-    <t-dialog
-      v-model:visible="showDetailDialog"
-      :header="`${selectedPlan?.destination} - 旅行计划`"
-      width="80%"
-      max-height="80vh"
-      :footer="false"
-      placement="center"
-    >
-      <div v-if="selectedPlan" class="plan-detail">
-        <div class="detail-header">
-          <t-space>
-            <t-tag theme="primary">{{ selectedPlan.duration }} 天</t-tag>
-            <t-tag theme="success">¥ {{ selectedPlan.budget.toLocaleString() }}</t-tag>
-            <t-tag theme="warning">{{ selectedPlan.travelers }} 人</t-tag>
-          </t-space>
-          <p class="created-time">创建于：{{ new Date(selectedPlan.created_at).toLocaleString('zh-CN') }}</p>
-        </div>
-
-        <t-divider />
-
-        <div v-if="selectedPlan.preferences" class="detail-section">
-          <h4><t-icon name="heart" /> 偏好需求</h4>
-          <p>{{ selectedPlan.preferences }}</p>
-        </div>
-
-        <div v-if="selectedPlan.plan_details && selectedPlan.plan_details.daily_itinerary" class="detail-section">
-          <h4><t-icon name="calendar" /> 行程详情</h4>
-          <t-collapse :default-value="['0']">
-            <t-collapse-panel
-              v-for="(day, index) in selectedPlan.plan_details.daily_itinerary"
-              :key="index"
-              :value="String(index)"
-              :header="`第 ${index + 1} 天：${day.theme || '精彩行程'}`"
-            >
-              <t-timeline v-if="day.activities && day.activities.length">
-                <t-timeline-item
-                  v-for="(activity, i) in day.activities"
-                  :key="i"
-                  :label="activity.time || ''"
-                >
-                  {{ activity.description }}
-                </t-timeline-item>
-              </t-timeline>
-              <t-empty v-else description="暂无活动安排" size="small" />
-            </t-collapse-panel>
-          </t-collapse>
-        </div>
-
-        <div v-if="selectedPlan.plan_details && selectedPlan.plan_details.tips" class="detail-section">
-          <h4><t-icon name="tips" /> 旅行建议</h4>
-          <ul class="tips-list">
-            <li v-for="(tip, idx) in selectedPlan.plan_details.tips" :key="idx">{{ tip }}</li>
-          </ul>
-        </div>
-      </div>
-    </t-dialog>
 
     <!-- 删除确认对话框 -->
     <t-dialog
@@ -155,12 +92,13 @@
 import { ref, onMounted } from 'vue';
 import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
-import ExpenseTracker from './ExpenseTracker.vue';
+import { usePlannerStore } from '../stores/planner';
+
+const emit = defineEmits(['view-plan']);
+const store = usePlannerStore();
 
 const plans = ref([]);
 const loading = ref(false);
-const selectedPlan = ref(null);
-const showDetailDialog = ref(false);
 const showDeleteDialog = ref(false);
 const planToDelete = ref(null);
 
@@ -191,8 +129,33 @@ const fetchPlans = async () => {
 };
 
 const viewPlan = (plan) => {
-  selectedPlan.value = plan;
-  showDetailDialog.value = true;
+  // 将计划数据加载到 store
+  store.setForm({
+    destination: plan.destination,
+    duration: plan.duration,
+    budget: plan.budget,
+    travelers: plan.travelers,
+    preferences: plan.preferences || ''
+  });
+  store.setPlan(plan.plan_details);
+  
+  // 如果有地图坐标信息，也加载到 store
+  if (plan.plan_details && plan.plan_details.daily_itinerary) {
+    const mapLocations = [];
+    for (const day of plan.plan_details.daily_itinerary) {
+      if (day.activities) {
+        for (const activity of day.activities) {
+          if (activity.coords) {
+            mapLocations.push({ name: activity.description, coords: activity.coords });
+          }
+        }
+      }
+    }
+    store.setLocations(mapLocations);
+  }
+  
+  // 发射事件通知 App.vue 切换到方案详情页
+  emit('view-plan');
 };
 
 const confirmDelete = (id) => {
@@ -261,8 +224,16 @@ onMounted(fetchPlans);
 
 .plan-card {
   height: 100%;
+  display: flex;
+  flex-direction: column;
   transition: all 0.3s ease;
   cursor: pointer;
+}
+
+.plan-card :deep(.t-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .plan-card:hover {
@@ -275,6 +246,7 @@ onMounted(fetchPlans);
   flex-direction: column;
   gap: 12px;
   margin-bottom: 16px;
+  flex: 1;
 }
 
 .info-item {
@@ -286,56 +258,14 @@ onMounted(fetchPlans);
 }
 
 .plan-preferences {
-  margin-top: 12px;
-}
-
-.plan-detail {
-  padding: 16px 0;
-}
-
-.detail-header {
-  margin-bottom: 16px;
-}
-
-.detail-section {
-  margin: 24px 0;
-}
-
-.detail-section h4 {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: var(--text-primary);
+  margin-top: auto;
+  min-height: 32px;
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-.detail-section p {
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.created-time {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 8px;
-}
-
-.tips-list {
-  list-style: none;
-  padding: 0;
-}
-
-.tips-list li {
-  padding: 8px 0;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.tips-list li::before {
-  content: "💡 ";
-  margin-right: 8px;
+.placeholder-tag {
+  opacity: 0.6;
 }
 
 /* 强制按钮对齐 - 本地兜底方案 */
