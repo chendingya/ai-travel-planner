@@ -3,7 +3,6 @@ import HomeView from '../views/HomeView.vue';
 import PlannerView from '../views/PlannerView.vue';
 import PlanDetailView from '../views/PlanDetailView.vue';
 import SavedPlansView from '../views/SavedPlansView.vue';
-import ExpenseTrackerView from '../views/ExpenseTrackerView.vue';
 
 const routes = [
   {
@@ -29,12 +28,6 @@ const routes = [
     name: 'SavedPlans',
     component: SavedPlansView,
     meta: { title: '我的计划 - AI 旅行规划师' }
-  },
-  {
-    path: '/expense',
-    name: 'ExpenseTracker',
-    component: ExpenseTrackerView,
-    meta: { title: '费用统计 - AI 旅行规划师' }
   },
   {
     path: '/:pathMatch(.*)*',

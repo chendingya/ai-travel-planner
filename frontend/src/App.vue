@@ -34,12 +34,6 @@
               </template>
               我的计划
             </t-menu-item>
-            <t-menu-item value="/expense" @click="handleNavigate('/expense')">
-              <template #icon>
-                <t-icon name="chart-bar" />
-              </template>
-              费用统计
-            </t-menu-item>
           </t-menu>
         </div>
 
@@ -96,8 +90,8 @@ const flyTo = (coords) => {
 };
 
 const handlePlanGenerated = () => {
-  // 方案生成成功后，跳转到方案详情页
-  router.push('/plan-detail');
+  // 方案生成成功后，跳转到方案详情页，标记来源为planner
+  router.push({ path: '/plan-detail', query: { from: 'planner' } });
 };
 
 const handleBackToPlanner = () => {
@@ -106,8 +100,8 @@ const handleBackToPlanner = () => {
 };
 
 const handleViewSavedPlan = () => {
-  // 从已保存计划查看详情，跳转到方案详情页
-  router.push('/plan-detail');
+  // 从已保存计划查看详情，跳转到方案详情页，标记来源为saved
+  router.push({ path: '/plan-detail', query: { from: 'saved' } });
 };
 
 const handleStartPlan = () => {
@@ -130,9 +124,11 @@ const handleStartPlan = () => {
   left: 0;
   right: 0;
   height: var(--header-height);
-  background: #ffffff;
-  border-bottom: 1px solid var(--border-color);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: none;
   z-index: 1000;
   padding: 0 24px;
   flex-shrink: 0;
@@ -170,42 +166,46 @@ const handleStartPlan = () => {
   margin: 0 40px;
   height: 100%;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  justify-content: center;
 }
 
 .header-menu :deep(.t-default-menu) {
-  height: 100% !important;
-  width: 100% !important;
+  height: auto !important;
+  width: auto !important;
   max-width: 100% !important;
   background: transparent !important;
   border: none !important;
-  flex: 1;
 }
 
 .header-menu :deep(.t-default-menu__inner) {
-  height: 100% !important;
+  height: auto !important;
   border-bottom: none !important;
   display: flex !important;
-  align-items: stretch !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
 }
 
 .header-menu :deep(.t-menu) {
   border-bottom: none !important;
   background: transparent !important;
-  height: 100% !important;
-  width: 100% !important;
+  height: auto !important;
+  width: auto !important;
   display: flex !important;
   flex-direction: row !important;
-  align-items: stretch !important;
+  align-items: center !important;
   padding: 0 !important;
   margin: 0 !important;
+  gap: 8px !important;
 }
 
 .header-menu :deep(.t-menu--scroll) {
   overflow: visible !important;
-  width: 100% !important;
+  width: auto !important;
   display: flex !important;
-  align-items: stretch !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
 .header-menu :deep(.t-menu__operations) {
@@ -214,19 +214,22 @@ const handleStartPlan = () => {
 
 .header-menu :deep(.t-menu__item) {
   font-size: 15px;
-  padding: 0 24px !important;
-  height: 100% !important;
-  min-height: var(--header-height) !important;
-  max-height: var(--header-height) !important;
+  padding: 0 20px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  max-height: 44px !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  border-bottom: 3px solid transparent !important;
-  transition: all 0.3s ease;
+  border: none !important;
+  border-radius: 50px !important;
+  margin: 0 4px !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
   gap: 8px !important;
-  margin: 0 !important;
   box-sizing: border-box !important;
+  background: transparent !important;
+  color: var(--text-primary) !important;
 }
 
 .header-menu :deep(.t-menu__item .t-icon) {
@@ -240,27 +243,24 @@ const handleStartPlan = () => {
 
 .header-menu :deep(.t-menu__item:hover) {
   color: #0084ff !important;
-  background: rgba(0, 132, 255, 0.04) !important;
-  border-bottom-color: rgba(0, 132, 255, 0.3) !important;
+  background: rgba(0, 132, 255, 0.08) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
 }
 
 .header-menu :deep(.t-menu__item.t-is-active) {
   color: #0084ff !important;
-  border-bottom-color: #0084ff !important;
   background: transparent !important;
-  font-weight: 500;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  font-weight: 600;
   position: relative;
 }
 
 .header-menu :deep(.t-menu__item.t-is-active::after) {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, #0084ff 20%, #0084ff 80%, transparent) !important;
-  z-index: 10;
+  display: none;
 }
 
 .header-menu :deep(.t-menu__content) {
@@ -344,39 +344,65 @@ const handleStartPlan = () => {
 .map-section,
 .plan-detail-section {
   min-height: calc(100vh - var(--header-height) - 48px);
-  background: var(--card-bg);
+  background: transparent;
   border-radius: 0;
+  border: none;
   box-shadow: none;
   overflow-y: auto;
-  border: 1px solid var(--border-color);
+  padding: 0;
 }
 
 .planner-section,
 .plan-detail-section {
-  padding: 32px;
+  transition: none;
+}
+
+.planner-section:hover,
+.plan-detail-section:hover {
+  box-shadow: none;
 }
 
 .map-section {
   position: sticky;
   top: calc(var(--header-height) + 24px);
   height: calc(100vh - var(--header-height) - 48px);
+  background: linear-gradient(135deg, rgba(0, 132, 255, 0.03) 0%, rgba(168, 237, 234, 0.05) 100%);
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  padding: 32px;
 }
 
 .content-page {
-  background: var(--card-bg);
-  border-radius: 0;
-  box-shadow: none;
-  border: 1px solid var(--border-color);
+  background: linear-gradient(135deg, rgba(0, 132, 255, 0.03) 0%, rgba(168, 237, 234, 0.05) 100%);
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   min-height: auto;
+  padding: 32px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.content-page:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .intro-section {
-  background: var(--card-bg);
-  border-radius: 0;
-  box-shadow: none;
-  border: 1px solid var(--border-color);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   display: flex;
   flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.intro-section:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .intro-container {
@@ -416,16 +442,32 @@ const handleStartPlan = () => {
 }
 
 .intro-block {
-  background: linear-gradient(135deg, #f6f9ff 0%, #ffffff 100%);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 16px;
   padding: 24px;
-  border: 1px solid #e3e8f7;
+  border: 1px solid rgba(227, 232, 247, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   flex: 1;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.intro-block:hover {
+  box-shadow: 0 8px 24px rgba(0, 132, 255, 0.15);
+  transform: translateY(-4px);
+  border-color: rgba(0, 132, 255, 0.3);
 }
 
 .tips-block {
-  background: linear-gradient(135deg, #fffbf0 0%, #ffffff 100%);
-  border-color: #ffe7ba;
+  background: rgba(255, 251, 240, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-color: rgba(255, 231, 186, 0.5);
+}
+
+.tips-block:hover {
+  box-shadow: 0 8px 24px rgba(250, 173, 20, 0.15);
 }
 
 .block-title {
@@ -459,15 +501,21 @@ const handleStartPlan = () => {
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: white;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 12px;
   font-size: 14px;
-  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .step-item-simple:hover {
-  background: #f0f5ff;
-  transform: translateX(4px);
+  background: rgba(240, 245, 255, 0.8);
+  border-color: rgba(0, 132, 255, 0.3);
+  transform: translateX(8px);
+  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15);
 }
 
 .step-num {
@@ -494,17 +542,23 @@ const handleStartPlan = () => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 10px;
-  background: white;
-  border-radius: 6px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 12px;
   font-size: 14px;
   line-height: 1.6;
-  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .tip-item-simple:hover {
-  background: #fffbf0;
-  transform: translateX(4px);
+  background: rgba(255, 251, 240, 0.8);
+  border-color: rgba(250, 173, 20, 0.3);
+  transform: translateX(8px);
+  box-shadow: 0 4px 16px rgba(250, 173, 20, 0.15);
 }
 
 .tip-check {

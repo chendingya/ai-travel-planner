@@ -189,7 +189,7 @@ onMounted(fetchPlans);
 .saved-plans-container {
   max-width: 100%;
   margin: 0 auto;
-  padding: 32px;
+  padding: 0;
 }
 
 .page-header {
@@ -197,8 +197,19 @@ onMounted(fetchPlans);
   justify-content: space-between;
   align-items: center;
   margin-bottom: 32px;
-  padding-bottom: 20px;
-  border-bottom: 2px solid var(--border-color);
+  padding: 24px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-header:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .page-title {
@@ -226,8 +237,13 @@ onMounted(fetchPlans);
   height: 100%;
   display: flex;
   flex-direction: column;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }
 
 .plan-card :deep(.t-card__body) {
@@ -237,8 +253,9 @@ onMounted(fetchPlans);
 }
 
 .plan-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: var(--glass-shadow-hover);
+  border-color: rgba(0, 132, 255, 0.4);
 }
 
 .plan-info {

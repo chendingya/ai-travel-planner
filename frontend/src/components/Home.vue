@@ -30,15 +30,9 @@
             <t-icon name="rocket" />
             立即开始规划
           </t-button>
-          <t-button 
-            theme="default" 
-            variant="outline"
-            size="large" 
-            class="demo-button"
-          >
-            <t-icon name="play-circle" />
+          <GlassButton icon="play-circle">
             观看演示
-          </t-button>
+          </GlassButton>
         </div>
         <div class="hero-stats">
           <div class="stat-item">
@@ -267,6 +261,8 @@
 </template>
 
 <script setup>
+import GlassButton from './GlassButton.vue';
+
 defineEmits(['start-plan']);
 </script>
 
@@ -435,23 +431,6 @@ defineEmits(['start-plan']);
 .start-button:hover {
   transform: translateY(-3px);
   box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
-}
-
-.demo-button {
-  font-size: 18px;
-  padding: 16px 48px;
-  height: auto;
-  border-radius: 50px;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-  transition: all 0.3s ease;
-}
-
-.demo-button:hover {
-  background: rgba(255, 255, 255, 0.25);
-  transform: translateY(-3px);
 }
 
 .hero-stats {

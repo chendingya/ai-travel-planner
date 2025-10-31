@@ -151,6 +151,70 @@ app.post('/api/plan', async (req, res) => {
   }
 });
 
+// 解析旅行信息的 API
+app.post('/api/parse-travel-info', async (req, res) => {
+  if (!openai) {
+    return res.status(500).json({ 
+      error: 'AI 功能当前不可用 - 未配置 API 密钥'
+    });
+  }
+
+  try {
+    const { text } = req.body;
+
+    console.log(`🔍 正在解析旅行信息: "${text}"`);
+
+    const systemPrompt = `你是一个智能文本解析助手。请从用户输入的自然语言中提取旅行相关信息，并返回JSON格式。
+
+返回格式示例：
+{
+  "destination": "日本东京",
+  "duration": 5,
+  "budget": 10000,
+  "travelers": 2,
+  "preferences": "喜欢美食和动漫"
+}
+
+规则：
+1. 只返回JSON,不要有任何额外文字
+2. 如果某个信息未提及,该字段返回null
+3. duration(天数)、budget(预算)、travelers(人数)必须是数字
+4. preferences(偏好)提取用户提到的兴趣爱好、特殊需求等`;
+
+    const userPrompt = `请从以下文本中提取旅行信息：\n\n${text}`;
+
+    const completion = await openai.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt }, 
+        { role: 'user', content: userPrompt }
+      ],
+      model: 'qwen3-max-preview',
+      temperature: 0.3,
+    });
+
+    let resultText = completion.choices[0].message.content.trim();
+    
+    // 去除可能的 markdown 代码块标记
+    if (resultText.startsWith('```json')) {
+      resultText = resultText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (resultText.startsWith('```')) {
+      resultText = resultText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+
+    // 解析 JSON
+    const parsedData = JSON.parse(resultText);
+    console.log('✅ 文本解析成功:', parsedData);
+    
+    res.json(parsedData);
+  } catch (error) {
+    console.error('❌ Error parsing travel info:', error);
+    res.status(500).json({ 
+      error: 'Failed to parse travel info',
+      message: '解析旅行信息时发生错误'
+    });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`\n🚀 Server is running on port ${port}`);

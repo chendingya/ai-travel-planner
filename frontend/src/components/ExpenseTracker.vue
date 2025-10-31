@@ -310,7 +310,7 @@ onMounted(() => {
 .expense-tracker-container {
   max-width: 100%;
   margin: 0 auto;
-  padding: 32px;
+  padding: 0;
 }
 
 .page-header {
@@ -318,8 +318,19 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 32px;
-  padding-bottom: 20px;
-  border-bottom: 2px solid var(--border-color);
+  padding: 24px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-header:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .page-title {
@@ -349,8 +360,19 @@ onMounted(() => {
 }
 
 .stat-card {
-  border: 1px solid var(--border-color);
-  border-radius: 0;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-4px);
+  border-color: rgba(0, 132, 255, 0.3);
 }
 
 .stat-content {
@@ -375,8 +397,18 @@ onMounted(() => {
 }
 
 .expense-list-card {
-  border: 1px solid var(--border-color);
-  border-radius: 0;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.expense-list-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .card-header {

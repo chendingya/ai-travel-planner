@@ -8,25 +8,22 @@
         </h2>
         <p class="plan-detail-subtitle">点击活动可在地图上定位</p>
       </div>
-      <t-space>
-        <t-button 
-          theme="default" 
-          variant="outline"
-          @click="handleBackToPlanner"
-        >
-          <t-icon name="arrow-left" />
-          重新规划
-        </t-button>
-        <t-button 
-          theme="success" 
-          variant="outline"
-          @click="savePlan"
+      <div class="header-actions">
+        <GlassButton 
+          v-if="showSaveButton"
+          icon="save"
+          @click="handleSavePlan"
           :loading="saving"
         >
-          <t-icon name="save" />
-          保存方案
-        </t-button>
-      </t-space>
+          保存计划
+        </GlassButton>
+        <GlassButton 
+          icon="arrow-left"
+          @click="handleBackToPlanner"
+        >
+          重新规划
+        </GlassButton>
+      </div>
     </div>
 
     <div v-if="!plan" class="empty-state">
@@ -147,18 +144,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
+import { useRoute } from 'vue-router';
+import { usePlannerStore } from '../stores/planner';
 import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
-import { usePlannerStore } from '../stores/planner';
 import SimplePieChart from './SimplePieChart.vue';
+import GlassButton from './GlassButton.vue';
 
 const emit = defineEmits(['fly-to', 'back-to-planner']);
+const route = useRoute();
 const store = usePlannerStore();
 
 const plan = ref(null);
-const saving = ref(false);
 const form = ref({});
+const saving = ref(false);
+
+// 根据路由来源判断是否显示保存按钮
+const showSaveButton = computed(() => {
+  return route.query.from === 'planner';
+});
 
 onMounted(() => {
   // 从store加载方案和表单数据
@@ -176,63 +181,48 @@ const handleBackToPlanner = () => {
   emit('back-to-planner');
 };
 
-const calculateTotal = (budget) => {
-  if (!budget) return 0;
-  return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
-};
+const handleSavePlan = async () => {
+  if (!plan.value || !form.value) {
+    MessagePlugin.warning('没有可保存的计划');
+    return;
+  }
 
-const savePlan = async () => {
   saving.value = true;
   try {
-    // 获取用户信息
-    let user = null;
-    try {
-      const userRes = await supabase.auth.getUser();
-      if (userRes && userRes.data && userRes.data.user) user = userRes.data.user;
-    } catch (e) {
-      // ignore
-    }
-    if (!user) {
-      try {
-        const sess = await supabase.auth.getSession();
-        if (sess && sess.data && sess.data.session && sess.data.session.user) user = sess.data.session.user;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    if (!user) {
-      MessagePlugin.warning('请先登录以保存您的方案');
-      saving.value = false;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      MessagePlugin.warning('请先登录以保存计划');
       return;
     }
 
-    // 插入数据到 plans 表
-    const payload = {
-      user_id: user.id,
-      destination: form.value.destination,
-      duration: form.value.duration,
-      budget: form.value.budget,
-      travelers: form.value.travelers,
-      preferences: form.value.preferences,
-      plan_details: plan.value,
-    };
+    const { error } = await supabase
+      .from('plans')
+      .insert([
+        {
+          user_id: session.user.id,
+          destination: form.value.destination,
+          duration: form.value.duration,
+          budget: form.value.budget,
+          travelers: form.value.travelers,
+          preferences: form.value.preferences || '',
+          plan_details: plan.value
+        }
+      ]);
 
-    const { data: insertData, error } = await supabase.from('plans').insert([payload]);
-    if (error) {
-      console.error('Supabase insert error:', error);
-      MessagePlugin.error(error.message || '保存方案失败，请确认您已登录');
-      saving.value = false;
-      return;
-    }
+    if (error) throw error;
 
-    MessagePlugin.success('方案保存成功！');
+    MessagePlugin.success('计划已保存！');
   } catch (error) {
     console.error('Error saving plan:', error);
-    MessagePlugin.error(error.message || '保存方案失败，请确认您已登录');
+    MessagePlugin.error('保存计划失败，请稍后再试');
   } finally {
     saving.value = false;
   }
+};
+
+const calculateTotal = (budget) => {
+  if (!budget) return 0;
+  return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
 };
 </script>
 
@@ -241,7 +231,8 @@ const savePlan = async () => {
   width: 100%;
   overflow: visible;
   box-sizing: border-box;
-  padding: 32px;
+  padding: 0;
+  background: transparent;
 }
 
 .plan-detail-header {
@@ -249,15 +240,34 @@ const savePlan = async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 32px;
-  padding-bottom: 20px;
-  border-bottom: 2px solid var(--border-color);
+  padding: 24px;
+  background: linear-gradient(135deg, var(--td-brand-color-8) 0%, var(--td-brand-color-6) 30%, var(--td-brand-color-4) 70%, var(--td-brand-color-2) 100%);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: none;
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
   flex-shrink: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.plan-detail-header:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .plan-detail-title {
   font-size: 28px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: white;
   margin: 0 0 8px 0;
   display: flex;
   align-items: center;
@@ -266,7 +276,7 @@ const savePlan = async () => {
 
 .plan-detail-subtitle {
   font-size: 14px;
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.9);
   margin: 0;
 }
 
@@ -279,11 +289,42 @@ const savePlan = async () => {
 
 .plan-content {
   margin-bottom: 0;
+  padding-bottom: 0;
 }
 
 .plan-collapse {
   background: transparent;
   margin-bottom: 24px;
+}
+
+/* 玻璃态折叠面板 */
+.plan-collapse :deep(.t-collapse-panel) {
+  background: var(--glass-bg) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: none !important;
+  border-radius: 16px !important;
+  box-shadow: var(--glass-shadow) !important;
+  margin-bottom: 16px !important;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.plan-collapse :deep(.t-collapse-panel:hover) {
+  box-shadow: var(--glass-shadow-hover) !important;
+  transform: translateY(-2px);
+}
+
+.plan-collapse :deep(.t-collapse-panel__header) {
+  background: rgba(255, 255, 255, 0.4) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  font-weight: 600;
+  padding: 16px 20px !important;
+}
+
+.plan-collapse :deep(.t-collapse-panel__body) {
+  background: rgba(255, 255, 255, 0.2) !important;
 }
 
 .day-timeline {
@@ -295,15 +336,21 @@ const savePlan = async () => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: 12px 16px;
+  border-radius: 12px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   position: relative;
 }
 
 .activity-item:hover {
-  background-color: #f6f9ff;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15);
   transform: translateX(4px);
 }
 
@@ -334,17 +381,26 @@ const savePlan = async () => {
 /* 预算分解 */
 .budget-section {
   margin-top: 24px;
-  padding: 20px;
-  background: linear-gradient(135deg, #f6f9ff 0%, #f0f5ff 100%);
-  border-radius: 8px;
-  border: 1px solid #d6e4ff;
+  padding: 24px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: none;
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.budget-section:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
 .section-title {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 16px 0;
+  margin-bottom: 20px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -364,18 +420,22 @@ const savePlan = async () => {
 }
 
 .budget-item {
-  background: white;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   padding: 16px;
-  border-radius: 6px;
+  border-radius: 16px;
+  border: none;
   text-align: center;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   height: 100%;
 }
 
 .budget-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 132, 255, 0.15);
-  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 132, 255, 0.2);
+  transform: translateY(-4px) scale(1.02);
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .budget-icon {
@@ -400,12 +460,21 @@ const savePlan = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
-  background: white;
-  border-radius: 6px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: none;
+  border-radius: 16px;
   font-weight: 600;
   font-size: 16px;
-  box-shadow: 0 2px 8px rgba(0, 132, 255, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 132, 255, 0.15);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.budget-total:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 132, 255, 0.25);
 }
 
 .total-value {
@@ -420,10 +489,20 @@ const savePlan = async () => {
 /* 旅行提示 */
 .tips-section {
   margin-top: 24px;
-  padding: 20px;
-  background: linear-gradient(135deg, #fffbf0 0%, #fff7e6 100%);
-  border-radius: 8px;
-  border: 1px solid #ffe7ba;
+  margin-bottom: 0;
+  padding: 24px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border-radius: 20px;
+  border: none;
+  box-shadow: 0 4px 20px rgba(250, 173, 20, 0.15);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tips-section:hover {
+  box-shadow: 0 8px 32px rgba(250, 173, 20, 0.25);
+  transform: translateY(-2px);
 }
 
 .tips-section :deep(.t-list) {
@@ -431,14 +510,21 @@ const savePlan = async () => {
 }
 
 .tips-section :deep(.t-list-item) {
-  padding: 12px;
-  background: white;
-  border-radius: 6px;
-  margin-bottom: 8px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  border-radius: 12px;
+  margin-bottom: 10px;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.tips-section :deep(.t-list-item:hover) {
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .tips-section :deep(.t-list-item:last-child) {

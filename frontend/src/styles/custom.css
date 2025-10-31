@@ -1,4 +1,4 @@
-/* 全局自定义样式 - 知乎风格 */
+/* 全局自定义样式 - 玻璃态设计风格 */
 
 :root {
   --primary-color: #0084ff;
@@ -13,6 +13,15 @@
   --shadow-medium: 0 2px 8px rgba(26, 26, 26, 0.12);
   --border-radius: 8px;
   --header-height: 56px;
+  
+  /* 玻璃态效果变量 */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-bg-dark: rgba(255, 255, 255, 0.5);
+  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  --glass-shadow-hover: 0 12px 48px rgba(0, 132, 255, 0.2);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
 }
 
 * {
@@ -32,12 +41,38 @@ html, body {
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  background-color: var(--bg-color);
+  background: linear-gradient(135deg, #f6f9fc 0%, #eef2f7 50%, #e8f0f8 100%);
+  background-attachment: fixed;
   color: var(--text-primary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  position: relative;
+}
+
+/* 添加动态背景装饰 */
+body::before {
+  content: '';
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 30% 50%, rgba(0, 132, 255, 0.05) 0%, transparent 50%),
+              radial-gradient(circle at 70% 80%, rgba(168, 237, 234, 0.08) 0%, transparent 50%);
+  animation: backgroundMove 20s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes backgroundMove {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate(5%, 5%) rotate(5deg);
+  }
 }
 
 #app {
@@ -45,6 +80,8 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 1;
 }
 
 /* 滚动条样式 */
@@ -66,23 +103,38 @@ body {
   background-color: transparent;
 }
 
-/* 卡片样式 */
+/* 卡片样式 - 玻璃态效果 */
 .card {
-  background: var(--card-bg);
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-light);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   padding: 20px;
   margin-bottom: 16px;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .card:hover {
-  box-shadow: var(--shadow-medium);
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
 }
 
-/* TDesign 卡片全局圆角设置 */
+/* TDesign 卡片全局圆角设置和玻璃态效果 */
 .t-card {
   border-radius: 20px !important;
+  background: var(--glass-bg) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-shadow) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.t-card:hover {
+  box-shadow: var(--glass-shadow-hover) !important;
+  transform: translateY(-4px) !important;
 }
 
 /* 响应式布局 */
@@ -92,15 +144,55 @@ body {
   }
 }
 
-/* TDesign 组件自定义 */
+/* TDesign 组件自定义 - 玻璃态按钮 */
 .t-button--primary {
-  background-color: var(--primary-color) !important;
-  border-color: var(--primary-color) !important;
+  background: linear-gradient(135deg, var(--primary-color), #0066cc) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.3) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 .t-button--primary:hover {
-  background-color: var(--primary-hover) !important;
-  border-color: var(--primary-hover) !important;
+  background: linear-gradient(135deg, var(--primary-hover), #0052a3) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  box-shadow: 0 8px 24px rgba(0, 132, 255, 0.4) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* 其他按钮的玻璃态效果 */
+.t-button {
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.t-button--default {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+}
+
+.t-button--default:hover {
+  background: rgba(255, 255, 255, 0.8) !important;
+  border-color: rgba(0, 132, 255, 0.3) !important;
+  box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15) !important;
+  transform: translateY(-1px) !important;
+}
+
+.t-button[variant="outline"] {
+  background: rgba(255, 255, 255, 0.5) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  border: 1px solid rgba(0, 132, 255, 0.3) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+.t-button[variant="outline"]:hover {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: rgba(0, 132, 255, 0.5) !important;
+  box-shadow: 0 4px 20px rgba(0, 132, 255, 0.2) !important;
 }
 
 /* 全局按钮图标与文字对齐（所有按钮统一） */
@@ -183,16 +275,52 @@ button .t-button__text > * {
   gap: 6px !important;
 }
 
-/* 知乎风格的输入框 */
+/* 知乎风格的输入框 - 玻璃态增强 */
 .t-input__inner,
 .t-textarea__inner {
-  border-radius: 4px !important;
-  border-color: var(--border-color) !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--glass-border) !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
 }
 
 .t-input__inner:focus,
 .t-textarea__inner:focus {
   border-color: var(--primary-color) !important;
+  background: rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+}
+
+.t-input__inner:hover,
+.t-textarea__inner:hover {
+  border-color: rgba(0, 132, 255, 0.3) !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* 下拉框、选择器等组件的玻璃态效果 */
+.t-select__input,
+.t-select-input,
+.t-input-number {
+  background: rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  border-radius: 12px !important;
+}
+
+/* 下拉菜单玻璃态效果 */
+.t-popup,
+.t-select-popup,
+.t-dropdown,
+.t-menu {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: var(--glass-blur-strong) !important;
+  -webkit-backdrop-filter: var(--glass-blur-strong) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12) !important;
+  border-radius: 16px !important;
 }
 
 /* 动画效果 */

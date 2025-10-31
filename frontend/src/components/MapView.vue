@@ -289,8 +289,10 @@ export default {
   min-height: 600px;
   position: relative;
   overflow: hidden;
-  border-radius: var(--border-radius);
-  background: #f5f5f5;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(0, 132, 255, 0.05) 0%, rgba(168, 237, 234, 0.08) 100%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }
 
 .amap-map {
@@ -298,6 +300,8 @@ export default {
   height: 100%;
   min-height: 600px;
   z-index: 1;
+  border-radius: 20px;
+  overflow: hidden;
 }
 
 .map-loading {
@@ -306,6 +310,13 @@ export default {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 10;
+  padding: 24px 32px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
 }
 
 .map-empty {
@@ -315,6 +326,13 @@ export default {
   transform: translate(-50%, -50%);
   text-align: center;
   z-index: 10;
+  padding: 32px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
 }
 
 /* 高德地图版权信息样式调整 */
