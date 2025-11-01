@@ -114,7 +114,7 @@ const fetchPlans = async () => {
 
     const { data, error } = await supabase
       .from('plans')
-      .select('*')
+      .select('id, user_id, destination, duration, budget, travelers, preferences, plan_details, created_at, updated_at')
       .eq('user_id', session.user.id)
       .order('created_at', { ascending: false });
 
@@ -128,34 +128,72 @@ const fetchPlans = async () => {
   }
 };
 
-const viewPlan = (plan) => {
-  // 将计划数据加载到 store
-  store.setForm({
-    destination: plan.destination,
-    duration: plan.duration,
-    budget: plan.budget,
-    travelers: plan.travelers,
-    preferences: plan.preferences || ''
-  });
-  store.setPlan(plan.plan_details);
-  
-  // 如果有地图坐标信息，也加载到 store
-  if (plan.plan_details && plan.plan_details.daily_itinerary) {
-    const mapLocations = [];
-    for (const day of plan.plan_details.daily_itinerary) {
-      if (day.activities) {
-        for (const activity of day.activities) {
-          if (activity.coords) {
-            mapLocations.push({ name: activity.description, coords: activity.coords });
+const viewPlan = async (plan) => {
+  // 为避免使用到旧缓存，进入详情前按 ID 强制拉取最新记录
+  try {
+    loading.value = true;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      MessagePlugin.warning('请先登录');
+      return;
+    }
+
+    const { data: fresh, error } = await supabase
+      .from('plans')
+      .select('id, user_id, destination, duration, budget, travelers, preferences, plan_details, updated_at')
+      .eq('id', plan.id)
+      .eq('user_id', session.user.id)
+      .single();
+
+    if (error) {
+      console.warn('获取计划最新数据失败，使用本地列表项作为兜底', error);
+    }
+
+    const p = fresh || plan;
+
+    // 将计划数据加载到 store，并保存计划 ID
+    store.setForm({
+      destination: p.destination,
+      duration: p.duration,
+      budget: p.budget,
+      travelers: p.travelers,
+      preferences: p.preferences || ''
+    });
+
+    // 解析计划详情（兼容字符串/JSONB）
+    let planDetails = p.plan_details || {};
+    if (typeof planDetails === 'string') {
+      try { planDetails = JSON.parse(planDetails); } catch { planDetails = {}; }
+    }
+    store.setPlan(planDetails);
+
+    // 如果有地图坐标信息，也加载到 store（仅已有坐标，地图组件会自行定位缺失点）
+    if (planDetails.daily_itinerary) {
+      const mapLocations = [];
+      for (const day of planDetails.daily_itinerary) {
+        if (day.activities) {
+          for (const activity of day.activities) {
+            if (activity && activity.coords) {
+              mapLocations.push({ name: activity.description, coords: activity.coords });
+            }
           }
         }
       }
+      store.setLocations(mapLocations);
     }
-    store.setLocations(mapLocations);
+
+    // 将计划 ID 存储到 localStorage，供 PlanDetail 组件读取
+    try {
+      localStorage.setItem('current_plan_id', p.id);
+    } catch (e) {
+      console.warn('无法保存计划 ID 到 localStorage', e);
+    }
+
+    // 发射事件通知 App.vue 切换到方案详情页
+    emit('view-plan');
+  } finally {
+    loading.value = false;
   }
-  
-  // 发射事件通知 App.vue 切换到方案详情页
-  emit('view-plan');
 };
 
 const confirmDelete = (id) => {

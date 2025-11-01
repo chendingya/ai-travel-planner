@@ -8,6 +8,17 @@
     </div>
     
     <template v-else>
+      <!-- 规划状态提示（组件内唯一实例，避免重复弹窗） -->
+      <transition name="fade">
+        <div v-if="routeStatus === 'planning'" class="route-status route-status--planning">
+          <t-icon name="loading" size="16px" class="spin" /> 路线规划中…
+        </div>
+      </transition>
+      <transition name="fade">
+        <div v-if="routeStatus === 'success'" class="route-status route-status--success">
+          <t-icon name="check-circle" size="16px" /> 路线规划成功
+        </div>
+      </transition>
       <!-- 天数切换按钮 -->
       <div v-if="dayCount > 1 && mapReady" class="day-switcher">
         <t-button
@@ -61,6 +72,7 @@ export default {
     const map = ref(null);
   const mapReady = ref(false);
   const routeLoading = ref(false);
+  const routeStatus = ref('idle'); // idle | planning | success
     const markers = ref([]);
     const drivingRoute = ref(null);
     const geocoder = ref(null);
@@ -202,15 +214,29 @@ export default {
       return false;
     };
 
-    const geocodeByAMap = async (keyword) => {
+    const geocodeByAMap = async (keyword, depth = 0) => {
       const base = normalizePlaceName(keyword);
       if (!base) return null;
+      
+      // 防止无限递归
+      if (depth > 2) {
+        console.warn(`❌ 地理编码递归深度超限: ${keyword}`);
+        return null;
+      }
+      
       const city = extractCity();
       try {
         await ensureGeocoder(city);
-        console.log(`🔍[Geocoder] 在 "${city}" 搜索 "${base}"`);
+        console.log(`🔍[Geocoder] 在 "${city}" 搜索 "${base}" (深度: ${depth})`);
         const geoRes = await new Promise((resolve) => {
+          // 添加超时保护
+          const timer = setTimeout(() => {
+            console.warn(`⏱️ Geocoder 超时: ${base}`);
+            resolve(null);
+          }, 5000);
+          
           geocoder.value.getLocation(base, (status, result) => {
+            clearTimeout(timer);
             if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
               const gc = result.geocodes[0];
               if (gc.location) {
@@ -231,9 +257,16 @@ export default {
 
         // 回退：PlaceSearch
         await ensurePlaceSearch(city);
-        console.log(`🔎[PlaceSearch] 在 "${city}" 搜索 "${base}"`);
+        console.log(`🔎[PlaceSearch] 在 "${city}" 搜索 "${base}" (深度: ${depth})`);
         const poiRes = await new Promise((resolve) => {
+          // 添加超时保护
+          const timer = setTimeout(() => {
+            console.warn(`⏱️ PlaceSearch 超时: ${base}`);
+            resolve(null);
+          }, 5000);
+          
           placeSearch.value.search(base, (status, result) => {
+            clearTimeout(timer);
             if (status === 'complete' && result && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
               // 优先选择与城市/区县匹配的 POI
               const pois = result.poiList.pois;
@@ -249,15 +282,17 @@ export default {
         });
         if (poiRes) return poiRes;
 
-        // 进一步弱化：尝试去除常见尾缀，比如“历史街区/景区/风景区/广场/公园等”
-        const softened = base.replace(/(历史街区|风景区|景区|广场|公园|老街|古城|景点)$/g, '');
-        if (softened && softened !== base) {
-          console.log(`🔁 弱化关键词再次检索: "${softened}"`);
-          return await geocodeByAMap(softened);
+        // 进一步弱化：尝试去除常见尾缀，比如"历史街区/景区/风景区/广场/公园等"
+        const softened = base.replace(/(历史街区|风景区|景区|广场|公园|老街|古城|景点|餐厅|饭店|酒店|宾馆)$/g, '');
+        if (softened && softened !== base && depth < 2) {
+          console.log(`🔁 弱化关键词再次检索: "${softened}" (深度: ${depth + 1})`);
+          return await geocodeByAMap(softened, depth + 1);
         }
+        
+        console.warn(`❌ 所有地理编码方法均失败: ${keyword}`);
         return null;
       } catch (e) {
-        console.warn('AMap geocode/search failed:', e);
+        console.error(`❌ AMap geocode/search 异常: ${keyword}`, e);
         return null;
       }
     };
@@ -482,9 +517,16 @@ export default {
         console.warn('⚠️ 没有位置数据，跳过更新');
         return;
       }
-      routeLoading.value = true;
-      // 页面顶部提示(而非仅地图内部)
-      MessagePlugin.info({ content: '路线计算中…', duration: 2000, placement: 'top' });
+      
+      // 防止重复更新：如果正在更新中，直接返回
+      if (routeLoading.value) {
+        console.log('⚠️ 路线正在规划中，跳过重复请求');
+        return;
+      }
+      
+  routeLoading.value = true;
+  // 仅在组件内部显示唯一的规划提示，避免全局重复
+  routeStatus.value = 'planning';
       const failed = [];
       const geocodedCache = new Set(); // 防止重复地理编码
       
@@ -549,26 +591,47 @@ export default {
         MessagePlugin.error('地图更新失败，请稍后重试');
       } finally {
         routeLoading.value = false;
+        // 路线规划完成提示（若无失败）
+        if (failed.length === 0) {
+          routeStatus.value = 'success';
+          // 1.5s 后自动消失
+          setTimeout(() => {
+            if (!routeLoading.value) routeStatus.value = 'idle';
+          }, 1500);
+        } else {
+          routeStatus.value = 'idle';
+        }
       }
     };
 
-    // 监听位置变化
-    watch(() => props.locations, async (newLocations) => {
-      console.log('📍 监听到 locations 变化:', newLocations.length, '个位置');
-      if (newLocations && newLocations.length > 0 && map.value && isDomestic.value) {
-        currentDay.value = 1; // 重置到第一天
-        await updateMapForCurrentDay();
-      }
-    }, { deep: true, immediate: true });
+    // 标记防止重复更新
+    const updateDebounce = ref(null);
     
-    // 监听行程数据变化
-    watch(() => props.dailyItinerary, (newItinerary) => {
-      console.log('📅 监听到行程数据变化:', newItinerary?.length, '天');
-      if (map.value && isDomestic.value && newItinerary && newItinerary.length > 0) {
-        currentDay.value = 1;
-        updateMapForCurrentDay();
-      }
-    }, { deep: true, immediate: true });
+    // 监听位置和行程数据变化（合并为一个监听器）
+    watch(
+      () => [props.locations, props.dailyItinerary],
+      ([newLocations, newItinerary]) => {
+        console.log('📍 监听到数据变化');
+        console.log('  - locations:', newLocations?.length || 0, '个');
+        console.log('  - dailyItinerary:', newItinerary?.length || 0, '天');
+        
+        // 防抖处理：避免短时间内多次触发
+        if (updateDebounce.value) {
+          clearTimeout(updateDebounce.value);
+        }
+        
+        updateDebounce.value = setTimeout(async () => {
+          const hasLocations = newLocations && newLocations.length > 0;
+          const hasItinerary = newItinerary && newItinerary.length > 0;
+          
+          if ((hasLocations || hasItinerary) && map.value && isDomestic.value) {
+            currentDay.value = 1; // 重置到第一天
+            await updateMapForCurrentDay();
+          }
+        }, 300); // 300ms 防抖延迟
+      },
+      { deep: true }
+    );
     
     // 监听目的地变化
     watch(() => props.destination, (newDest) => {
@@ -648,6 +711,9 @@ export default {
     });
 
     onBeforeUnmount(() => {
+      if (updateDebounce.value) {
+        clearTimeout(updateDebounce.value);
+      }
       if (map.value) {
         map.value.destroy();
       }
@@ -657,6 +723,7 @@ export default {
       map, 
       mapReady,
       routeLoading,
+      routeStatus,
       flyTo,
       isDomestic,
       dayCount,
@@ -754,6 +821,44 @@ export default {
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   box-shadow: var(--glass-shadow);
+}
+
+/* 组件内的路线状态气泡，避免全局重复弹窗 */
+.route-status {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 120;
+  padding: 8px 12px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.route-status--planning {
+  background: rgba(0, 132, 255, 0.15);
+  color: #0066cc;
+  border: 1px solid rgba(0, 132, 255, 0.25);
+}
+
+.route-status--success {
+  background: rgba(82, 196, 26, 0.15);
+  color: #1f8b24;
+  border: 1px solid rgba(82, 196, 26, 0.25);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* 高德地图版权信息样式调整 */

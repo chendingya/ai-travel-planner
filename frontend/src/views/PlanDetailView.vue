@@ -35,6 +35,20 @@
               />
             </t-card>
           </div>
+
+          <!-- 旅行提示卡片：移动到地图卡片下方显示 -->
+          <t-card v-if="store.plan?.tips && store.plan.tips.length" class="tips-card" :bordered="false">
+            <h4 class="section-title">
+              <t-icon name="lightbulb" />
+              旅行提示
+            </h4>
+            <t-list :split="false">
+              <t-list-item v-for="(tip, index) in store.plan.tips" :key="index">
+                <t-icon name="check-circle" class="tip-icon" />
+                {{ tip }}
+              </t-list-item>
+            </t-list>
+          </t-card>
         </div>
       </t-col>
     </t-row>
@@ -206,6 +220,40 @@ const rebuildLocationsFromPlan = async () => {
   height: 100%;
   border-radius: 0;
   overflow: hidden;
+}
+
+/* 旅行提示卡片放在地图卡片下方，间距与全局卡片一致 */
+.tips-card {
+  margin-top: 16px;
+}
+
+.tips-card :deep(.t-list) {
+  background: transparent;
+}
+
+.tips-card :deep(.t-list-item) {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.tips-card :deep(.t-list-item:last-child) {
+  margin-bottom: 0;
+}
+
+.tip-icon {
+  color: #faad14;
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 /* 响应式设计 */

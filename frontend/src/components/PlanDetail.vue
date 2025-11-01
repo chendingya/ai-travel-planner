@@ -65,8 +65,8 @@
               >
                 <template v-if="editMode">
                   <div class="activity-edit-row">
-                    <t-input v-model="activity.time" placeholder="时间 如 09:00" size="small" style="width: 110px;" @change="persistPlan" />
-                    <t-input v-model="activity.description" placeholder="地点/描述" size="small" style="flex:1;" @change="persistPlan" />
+                    <t-input v-model="activity.time" placeholder="时间 如 09:00" size="small" style="width: 110px;" />
+                    <t-input v-model="activity.description" placeholder="地点/描述" size="small" style="flex:1;" />
                     <div class="edit-actions">
                       <t-button size="small" variant="outline" @click.stop="moveActivity(index, i, -1)">上移</t-button>
                       <t-button size="small" variant="outline" @click.stop="moveActivity(index, i, 1)">下移</t-button>
@@ -155,25 +155,13 @@
         </div>
       </div>
 
-      <!-- 旅行提示 -->
-      <div v-if="plan.tips && plan.tips.length > 0" class="tips-section">
-        <h4 class="section-title">
-          <t-icon name="lightbulb" />
-          旅行提示
-        </h4>
-        <t-list :split="false">
-          <t-list-item v-for="(tip, index) in plan.tips" :key="index">
-            <t-icon name="check-circle" class="tip-icon" />
-            {{ tip }}
-          </t-list-item>
-        </t-list>
-      </div>
+      <!-- 提示卡片迁移到右侧地图下方渲染（见 PlanDetailView.vue） -->
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick, onBeforeUnmount } from 'vue';
+import { ref, onMounted, computed, nextTick, onBeforeUnmount, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { supabase } from '../supabase';
@@ -190,6 +178,7 @@ const form = ref({});
 const saving = ref(false);
 const headerRef = ref(null);
 const editMode = ref(false);
+const planId = ref(null); // 存储从数据库加载的计划ID
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -198,8 +187,38 @@ const showSaveButton = computed(() => {
 
 onMounted(() => {
   // 从store加载方案和表单数据
-  plan.value = store.plan;
+  plan.value = JSON.parse(JSON.stringify(store.plan));
   form.value = store.form;
+  
+  // 如果是从 Planner 新生成的计划，清除旧的计划 ID
+  if (route.query.from === 'planner') {
+    try {
+      localStorage.removeItem('current_plan_id');
+      planId.value = null;
+      console.log('🆕 新生成的计划，已清除旧的计划 ID');
+    } catch (e) {
+      console.warn('无法清除计划 ID', e);
+    }
+  } else {
+    // 尝试从 localStorage 获取计划ID（从"我的计划"进入时）
+    try {
+      const savedPlanId = localStorage.getItem('current_plan_id');
+      if (savedPlanId) {
+        planId.value = savedPlanId;
+        console.log('📝 加载已保存的计划 ID:', savedPlanId);
+      }
+    } catch (e) {
+      console.warn('无法从 localStorage 读取计划 ID', e);
+    }
+  }
+
+  // 监听 store.plan 变化,同步到本地
+  watch(() => store.plan, (newPlan) => {
+    if (newPlan && newPlan !== plan.value) {
+      plan.value = JSON.parse(JSON.stringify(newPlan));
+      console.log('📋 从 store 同步最新计划');
+    }
+  }, { deep: true });
 
   // 计算并上报头部高度用于右侧地图对齐
   const reportHeaderOffset = () => {
@@ -230,6 +249,13 @@ const flyToLocation = (coords) => {
 };
 
 const handleBackToPlanner = () => {
+  // 返回规划页面时清除计划 ID
+  try {
+    localStorage.removeItem('current_plan_id');
+    planId.value = null;
+  } catch (e) {
+    console.warn('无法清除计划 ID', e);
+  }
   emit('back-to-planner');
 };
 
@@ -277,13 +303,51 @@ const calculateTotal = (budget) => {
   return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
 };
 
-const toggleEdit = () => {
-  editMode.value = !editMode.value;
-  if (editMode.value) {
+const toggleEdit = async () => {
+  if (!editMode.value) {
+    // 进入编辑模式
+    editMode.value = true;
     MessagePlugin.info('已进入编辑模式：可修改时间/地点或添加/删除活动');
   } else {
-    MessagePlugin.success('已退出编辑模式');
+    // 退出编辑模式，保存修改
+    editMode.value = false;
     persistPlan();
+    
+    // 如果是从数据库加载的计划，同时更新数据库
+    if (planId.value) {
+      await updatePlanInDatabase();
+    }
+    
+    MessagePlugin.success('已保存编辑并退出编辑模式');
+  }
+};
+
+// 更新数据库中的计划
+const updatePlanInDatabase = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.warn('用户未登录，无法更新数据库');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('plans')
+      .update({
+        plan_details: plan.value,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', planId.value)
+      .eq('user_id', session.user.id); // 确保只更新自己的计划
+
+    if (error) {
+      console.error('更新数据库失败:', error);
+      MessagePlugin.warning('编辑已保存到本地，但同步到云端失败');
+    } else {
+      console.log('✅ 计划已同步到数据库');
+    }
+  } catch (error) {
+    console.error('更新数据库出错:', error);
   }
 };
 
@@ -295,7 +359,9 @@ const persistPlan = () => {
     p.daily_itinerary.forEach(d => {
       d.activities = (d.activities || []).filter(a => a && (a.description || a.time));
     });
-    store.setPlan({ ...p });
+    // 深拷贝以触发 store 更新
+    store.setPlan(JSON.parse(JSON.stringify(p)));
+    console.log('✅ 计划已保存到 store');
   } catch (e) {
     console.warn('Failed to persist plan', e);
   }
@@ -306,7 +372,8 @@ const addActivity = (dayIndex) => {
   if (!p || !p.daily_itinerary || !p.daily_itinerary[dayIndex]) return;
   p.daily_itinerary[dayIndex].activities = p.daily_itinerary[dayIndex].activities || [];
   p.daily_itinerary[dayIndex].activities.push({ time: '', description: '' });
-  persistPlan();
+  // 添加活动时不立即保存到 store,避免触发地图更新
+  MessagePlugin.success('已添加活动,请填写后点击"完成编辑"保存');
 };
 
 const removeActivity = (dayIndex, actIndex) => {
@@ -315,7 +382,8 @@ const removeActivity = (dayIndex, actIndex) => {
   const list = p.daily_itinerary[dayIndex].activities || [];
   if (actIndex >= 0 && actIndex < list.length) {
     list.splice(actIndex, 1);
-    persistPlan();
+    // 删除活动时不立即保存到 store,避免触发地图更新
+    MessagePlugin.success('已删除活动,请点击"完成编辑"保存');
   }
 };
 
@@ -328,7 +396,7 @@ const moveActivity = (dayIndex, actIndex, dir) => {
   const tmp = list[actIndex];
   list[actIndex] = list[target];
   list[target] = tmp;
-  persistPlan();
+  // 移动活动时不立即保存到 store,避免触发地图更新
 };
 </script>
 
