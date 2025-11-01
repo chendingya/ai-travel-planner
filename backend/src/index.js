@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
@@ -28,8 +29,23 @@ if (process.env.DASHSCOPE_API_KEY) {
 app.use(cors());
 app.use(express.json());
 
+// 静态资源（前端打包产物）
+const staticDir = path.join(__dirname, '..', 'public');
+app.use(express.static(staticDir));
+
+// 根路径：优先返回前端 index.html，若不存在则返回文本
 app.get('/', (req, res) => {
-  res.send('Hello from AI Travel Planner Backend! 🚀');
+  const indexPath = path.join(staticDir, 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      res.send('Hello from AI Travel Planner Backend! 🚀');
+    }
+  });
+});
+
+// 健康检查端点供 CI/CD 与监控使用
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
 });
 
 app.post('/api/plan', async (req, res) => {
@@ -225,6 +241,11 @@ app.post('/api/parse-travel-info', async (req, res) => {
       message: '解析旅行信息时发生错误'
     });
   }
+});
+
+// SPA 回退：将除 /api 与 /health 外的 GET 请求指向前端 index.html
+app.get(/^(?!\/api|\/health).*/, (req, res) => {
+  res.sendFile(path.join(staticDir, 'index.html'));
 });
 
 
