@@ -18,6 +18,7 @@
               @fly-to="handleFlyTo"
               @back-to-planner="$emit('back-to-planner')"
               @header-offset="onHeaderOffset"
+              @select-day="onSelectDay"
             />
           </div>
         </div>
@@ -103,6 +104,13 @@ const onRouteFailedPlaces = (list) => {
       show: true,
       message: `以下地点未能定位：${sample}${more}。已临时从路线排除，请在左侧“编辑行程”中修正地点名称后重试。`
     };
+  }
+};
+
+// 来自左侧：用户切换折叠的“第N天”，地图切换到对应天数
+const onSelectDay = (day) => {
+  if (mapViewRef.value && typeof mapViewRef.value.switchDay === 'function') {
+    mapViewRef.value.switchDay(day);
   }
 };
 

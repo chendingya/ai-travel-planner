@@ -45,7 +45,7 @@
 
     <div v-else class="plan-content">
       <!-- 日程安排 -->
-      <t-collapse :default-value="['0']" class="plan-collapse">
+      <t-collapse v-model:value="activePanels" class="plan-collapse" @change="onCollapseChange">
         <t-collapse-panel 
           v-for="(day, index) in plan.daily_itinerary" 
           :key="index"
@@ -53,6 +53,12 @@
           :header="`第 ${index + 1} 天：${day.theme || '精彩行程'}`"
         >
           <t-timeline class="day-timeline">
+            <!-- 起点：住宿地（仅展示模式） -->
+            <t-timeline-item v-if="!editMode" :label="''">
+              <div class="activity-item">
+                <div class="activity-content">出发：{{ lodgingName }}</div>
+              </div>
+            </t-timeline-item>
             <t-timeline-item 
               v-for="(activity, i) in day.activities" 
               :key="i"
@@ -77,6 +83,12 @@
                 <template v-else>
                   <div class="activity-content">{{ activity.description }}</div>
                 </template>
+              </div>
+            </t-timeline-item>
+            <!-- 终点：住宿地（仅展示模式） -->
+            <t-timeline-item v-if="!editMode" :label="''">
+              <div class="activity-item">
+                <div class="activity-content">返回：{{ lodgingName }}</div>
               </div>
             </t-timeline-item>
           </t-timeline>
@@ -158,7 +170,7 @@
       <!-- 提示卡片迁移到右侧地图下方渲染（见 PlanDetailView.vue） -->
     </div>
   </div>
-</template>
+ </template>
 
 <script setup>
 import { ref, onMounted, computed, nextTick, onBeforeUnmount, watch } from 'vue';
@@ -169,7 +181,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import SimplePieChart from './SimplePieChart.vue';
 import GlassButton from './GlassButton.vue';
 
-const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset']);
+const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset', 'select-day']);
 const route = useRoute();
 const store = usePlannerStore();
 
@@ -179,6 +191,11 @@ const saving = ref(false);
 const headerRef = ref(null);
 const editMode = ref(false);
 const planId = ref(null); // 存储从数据库加载的计划ID
+const lodgingName = computed(() => {
+  const d = (store.form?.destination || '').toString().trim();
+  return d ? `${d} 酒店` : '住宿地点';
+});
+const activePanels = ref(['0']); // 折叠面板当前展开的天
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -397,6 +414,19 @@ const moveActivity = (dayIndex, actIndex, dir) => {
   list[actIndex] = list[target];
   list[target] = tmp;
   // 移动活动时不立即保存到 store,避免触发地图更新
+};
+
+// 折叠面板切换 -> 同步右侧地图天数
+const onCollapseChange = (vals) => {
+  // vals 可能是数组（多开）或字符串（单开），此处统一成数组处理
+  const arr = Array.isArray(vals) ? vals : (vals ? [vals] : []);
+  activePanels.value = arr;
+  // 选择最近一次用户操作的天：优先取最后一个展开的；若为空则不处理
+  const v = arr.length ? arr[arr.length - 1] : null;
+  if (v != null) {
+    const day = parseInt(v, 10) + 1; // 地图使用从1开始
+    if (!Number.isNaN(day)) emit('select-day', day);
+  }
 };
 </script>
 
@@ -742,6 +772,28 @@ const moveActivity = (dayIndex, actIndex, dir) => {
   font-size: 16px;
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+/* 编辑输入框样式优化：移除内部蓝色强调框与阴影 */
+.activity-edit-row :deep(.t-input),
+.activity-edit-row :deep(.t-input__inner),
+.activity-edit-row :deep(.t-input-number) {
+  border-radius: 12px;
+}
+
+.activity-edit-row :deep(.t-input:focus),
+.activity-edit-row :deep(.t-input__inner:focus),
+.activity-edit-row :deep(.t-input__wrap:focus-within),
+.activity-edit-row :deep(.t-input-number:focus-within),
+.activity-edit-row :deep(.t-input.t-is-focused),
+.activity-edit-row :deep(.t-input-number.t-is-focused) {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 某些主题会在内部再画一层强调边框，统一移除 */
+.activity-edit-row :deep(.t-input__inner) {
+  box-shadow: none !important;
 }
 
 @media (max-width: 768px) {

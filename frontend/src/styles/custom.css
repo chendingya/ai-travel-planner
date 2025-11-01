@@ -252,11 +252,29 @@ button .t-button__text > * {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
 }
 
+/* 统一移除输入组件的内部蓝色强调框（焦点态不再高亮） */
 .t-input__inner:focus,
-.t-textarea__inner:focus {
-  border-color: var(--primary-color) !important;
+.t-input__inner:focus-visible,
+.t-input:focus-within .t-input__inner,
+.t-input.t-is-focused .t-input__inner,
+.t-input-number:focus-within .t-input__inner,
+.t-textarea__inner:focus,
+.t-textarea__inner:focus-visible,
+.t-textarea.t-is-focused .t-textarea__inner {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: var(--glass-border) !important;
   background: rgba(255, 255, 255, 0.8) !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* 某些主题使用伪元素绘制强调框，这里统一移除 */
+.t-input__inner::before,
+.t-input__inner::after,
+.t-textarea__inner::before,
+.t-textarea__inner::after {
+  box-shadow: none !important;
+  outline: none !important;
+  border: none !important;
 }
 
 /* 下拉框、选择器等组件的玻璃态效果 */

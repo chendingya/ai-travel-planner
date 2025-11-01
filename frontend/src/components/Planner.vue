@@ -67,9 +67,9 @@
                 shape="circle"
                 @click="startFieldRecognition('destination')"
                 :disabled="!isSupported"
-                :class="['voice-btn', { 'listening': isFieldListening && currentField === 'destination' }]"
+                :class="['voice-btn', { 'listening': isFieldListening && targetField === 'destination' }]"
               >
-                <t-icon :name="isFieldListening && currentField === 'destination' ? 'stop-circle-1' : 'microphone'" />
+                <t-icon :name="isFieldListening && targetField === 'destination' ? 'stop-circle-1' : 'microphone'" />
               </t-button>
             </div>
           </div>
@@ -166,6 +166,9 @@ const form = ref({
 // 快捷输入
 const quickInput = ref('');
 const parsing = ref(false);
+// 语音会话增量缓存
+const quickPrevResult = ref('');
+const fieldPrevResult = ref('');
 
 const plan = ref(store.plan || null);
 const loading = ref(false);
@@ -180,6 +183,7 @@ const {
   stop: stopQuick
 } = useSpeechRecognition({ 
   continuous: true,
+  interimResults: true,
   lang: 'zh-CN' // 设置为中文
 });
 
@@ -190,6 +194,8 @@ const {
   start: startField,
   stop: stopField
 } = useSpeechRecognition({
+  continuous: true,
+  interimResults: true,
   lang: 'zh-CN' // 设置为中文
 });
 
@@ -207,19 +213,50 @@ onMounted(() => {
   if (store.plan) plan.value = store.plan;
 });
 
+// 简单的增量合并算法：尽量不覆盖，优先拼接新增部分
+const appendDelta = (current, prev, next) => {
+  const cur = current || '';
+  const oldR = prev || '';
+  const neu = next || '';
+  if (!neu) return cur;
+  // 已包含 -> 不处理
+  if (cur.includes(neu)) return cur;
+  // 新结果包含旧结果 -> 追加新差量
+  if (oldR && neu.startsWith(oldR)) {
+    return cur + neu.slice(oldR.length);
+  }
+  // 旧结果包含新结果（可能是临时结果回退）-> 忽略
+  if (oldR && oldR.startsWith(neu)) {
+    return cur;
+  }
+  // 计算 current 末尾与 neu 开头的最大重叠
+  const max = Math.min(cur.length, neu.length);
+  for (let k = max; k > 0; k--) {
+    if (cur.slice(-k) === neu.slice(0, k)) {
+      return cur + neu.slice(k);
+    }
+  }
+  // 无重叠，追加并加空格
+  const sep = cur && !/\s$/.test(cur) ? ' ' : '';
+  return cur + sep + neu;
+};
+
 // 监听快捷输入语音结果
 watch(quickResult, (newResult) => {
-  if (newResult) {
-    quickInput.value = newResult;
+  if (!newResult) return;
+  if (isQuickListening.value) {
+    quickInput.value = appendDelta(quickInput.value, quickPrevResult.value, newResult);
+    quickPrevResult.value = newResult;
   }
 });
 
 // 监听单字段语音结果
 watch(fieldResult, (newResult) => {
-  if (targetField.value && newResult) {
-    form.value[targetField.value] = newResult;
-    stopField();
-    targetField.value = null;
+  if (!newResult || !targetField.value) return;
+  if (isFieldListening.value) {
+    const field = targetField.value;
+    form.value[field] = appendDelta(form.value[field], fieldPrevResult.value, newResult);
+    fieldPrevResult.value = newResult;
   }
 });
 
@@ -240,11 +277,15 @@ const startQuickRecognition = () => {
   }
   
   if (isQuickListening.value) {
-    // 如果正在录音，则停止
+    // 正在录音 -> 停止，不清空已有文本
     stopQuick();
     MessagePlugin.info('语音识别已停止');
+    // 结束会话，重置增量缓存
+    quickPrevResult.value = '';
   } else {
-    // 开始新的录音
+    // 开启新会话：覆盖前面的内容（需求）
+    quickInput.value = '';
+    quickPrevResult.value = '';
     startQuick();
     MessagePlugin.info('开始语音识别，请说话...（支持中文）');
   }
@@ -256,7 +297,18 @@ const startFieldRecognition = (field) => {
     MessagePlugin.warning('您的浏览器不支持语音识别功能');
     return;
   }
+  // 同一字段再次点击 -> 停止当前录音
+  if (isFieldListening.value && targetField.value === field) {
+    stopField();
+    MessagePlugin.info('语音识别已停止');
+    targetField.value = null;
+    fieldPrevResult.value = '';
+    return;
+  }
+  // 开启新会话：覆盖该字段原有内容
   targetField.value = field;
+  form.value[field] = '';
+  fieldPrevResult.value = '';
   startField();
   MessagePlugin.info('开始语音识别，请说话...（支持中文）');
 };
@@ -292,28 +344,37 @@ const parseQuickInput = async () => {
     const data = await response.json();
     console.log('✅ 解析结果:', data);
     
-    // 填充表单
+    // 标记提取情况
     let filledCount = 0;
+    let hasDestination = false, hasDuration = false, hasBudget = false, hasTravelers = false, hasPreferences = false;
+
     if (data.destination) {
       form.value.destination = data.destination;
-      filledCount++;
+      hasDestination = true; filledCount++;
     }
     if (data.duration) {
       form.value.duration = parseInt(data.duration);
-      filledCount++;
+      hasDuration = true; filledCount++;
     }
     if (data.budget) {
       form.value.budget = parseInt(data.budget);
-      filledCount++;
+      hasBudget = true; filledCount++;
     }
     if (data.travelers) {
       form.value.travelers = parseInt(data.travelers);
-      filledCount++;
+      hasTravelers = true; filledCount++;
     }
     if (data.preferences) {
       form.value.preferences = data.preferences;
-      filledCount++;
+      hasPreferences = true; filledCount++;
     }
+
+    // 未提取到的字段清空（按你的需求）
+    if (!hasDestination) form.value.destination = '';
+    if (!hasDuration) form.value.duration = null;
+    if (!hasBudget) form.value.budget = null;
+    if (!hasTravelers) form.value.travelers = null;
+    if (!hasPreferences) form.value.preferences = '';
 
     if (filledCount > 0) {
       MessagePlugin.success(`解析成功！已自动填写 ${filledCount} 个字段`);
@@ -326,20 +387,21 @@ const parseQuickInput = async () => {
     
     // 降级方案：简单正则匹配
     const text = quickInput.value;
-    let matchCount = 0;
+  let matchCount = 0;
+  let hasDestination = false, hasDuration = false, hasBudget = false, hasTravelers = false, hasPreferences = false;
     
     // 提取目的地
     const destMatch = text.match(/(?:去|到|想去|想到)([^\s，,。.]+?)(?:玩|旅游|旅行|游玩)/);
     if (destMatch) {
       form.value.destination = destMatch[1].trim();
-      matchCount++;
+      hasDestination = true; matchCount++;
     }
     
     // 提取天数
     const durationMatch = text.match(/(\d+)(?:天|日)/);
     if (durationMatch) {
       form.value.duration = parseInt(durationMatch[1]);
-      matchCount++;
+      hasDuration = true; matchCount++;
     }
     
     // 提取预算
@@ -348,14 +410,14 @@ const parseQuickInput = async () => {
       let budget = parseInt(budgetMatch[1]);
       if (text.includes('万')) budget *= 10000;
       form.value.budget = budget;
-      matchCount++;
+      hasBudget = true; matchCount++;
     }
     
     // 提取人数
     const travelersMatch = text.match(/(\d+)(?:个)?人/);
     if (travelersMatch) {
       form.value.travelers = parseInt(travelersMatch[1]);
-      matchCount++;
+      hasTravelers = true; matchCount++;
     }
     
     // 提取偏好
@@ -364,11 +426,17 @@ const parseQuickInput = async () => {
       const idx = text.indexOf(keyword);
       if (idx !== -1) {
         form.value.preferences = text.substring(idx).trim();
-        matchCount++;
+        hasPreferences = true; matchCount++;
         break;
       }
     }
-    
+    // 未提取到的字段清空
+    if (!hasDestination) form.value.destination = '';
+    if (!hasDuration) form.value.duration = null;
+    if (!hasBudget) form.value.budget = null;
+    if (!hasTravelers) form.value.travelers = null;
+    if (!hasPreferences) form.value.preferences = '';
+
     if (matchCount > 0) {
       MessagePlugin.warning(`使用简单匹配填写了 ${matchCount} 个字段，请检查并补充信息`);
     } else {
