@@ -45,17 +45,20 @@
 
     <!-- 主内容区 -->
     <div class="app-container">
-      <transition name="fade" mode="out-in">
-        <router-view
-          :class="{ 'no-padding': currentRoute === '/' }"
-          @locations-updated="updateLocations"
-          @fly-to="flyTo"
-          @plan-generated="handlePlanGenerated"
-          @back-to-planner="handleBackToPlanner"
-          @view-plan="handleViewSavedPlan"
-          @start-plan="handleStartPlan"
-        />
-      </transition>
+      <router-view v-slot="{ Component }">
+        <transition name="fade" mode="out-in">
+          <component
+            :is="Component"
+            :class="{ 'no-padding': currentRoute === '/' }"
+            @locations-updated="updateLocations"
+            @fly-to="flyTo"
+            @plan-generated="handlePlanGenerated"
+            @back-to-planner="handleBackToPlanner"
+            @view-plan="handleViewSavedPlan"
+            @start-plan="handleStartPlan"
+          />
+        </transition>
+      </router-view>
     </div>
   </div>
 </template>
@@ -293,6 +296,11 @@ const handleStartPlan = () => {
 .app-container .no-padding {
   padding: 0 !important;
   max-width: 100% !important;
+}
+
+.app-container .full-width {
+  max-width: 100% !important;
+  padding: 0 !important;
 }
 
 .content-wrapper {

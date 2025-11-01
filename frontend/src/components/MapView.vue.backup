@@ -25,7 +25,7 @@
       <div v-if="!mapReady" class="map-loading">
         <t-loading text="地图加载中..." />
       </div>
-      <div v-if="currentLocations.length === 0 && mapReady" class="map-empty">
+      <div v-if="locations.length === 0 && mapReady" class="map-empty">
         <t-icon name="location" size="48px" style="color: #ccc; margin-bottom: 12px;" />
         <p style="color: #999;">生成旅行计划后,这里将显示路线地图</p>
       </div>
@@ -35,7 +35,7 @@
 
 <script>
 import { ref, watch, onMounted, onBeforeUnmount, computed } from "vue";
-import { Loading as TLoading, Icon as TIcon, Button as TButton, MessagePlugin } from 'tdesign-vue-next';
+import { Loading as TLoading, Icon as TIcon, Button as TButton } from 'tdesign-vue-next';
 
 export default {
   components: {
@@ -57,16 +57,12 @@ export default {
       default: () => [],
     },
   },
-  setup(props, { emit }) {
+  setup(props) {
     const map = ref(null);
-  const mapReady = ref(false);
-  const routeLoading = ref(false);
+    const mapReady = ref(false);
     const markers = ref([]);
     const drivingRoute = ref(null);
     const geocoder = ref(null);
-  const placeSearch = ref(null);
-  const lastGeocoderCity = ref(null);
-  const lastPlaceSearchCity = ref(null);
     const currentDay = ref(1);
     
     // 中国省市列表（用于判断是否国内）
@@ -85,6 +81,7 @@ export default {
     // 判断是否国内
     const isDomestic = computed(() => {
       if (!props.destination) return true; // 默认国内
+      const dest = props.destination.toLowerCase();
       return chineseCities.some(city => props.destination.includes(city));
     });
     
@@ -98,12 +95,7 @@ export default {
     
     // 按天分组的位置数据
     const locationsByDay = computed(() => {
-      console.log('🔢 计算 locationsByDay...');
-      console.log('📅 dailyItinerary:', props.dailyItinerary?.length || 0, '天');
-      console.log('📍 locations:', props.locations.length, '个');
-      
       if (!props.dailyItinerary || props.dailyItinerary.length === 0) {
-        console.log('⚠️ 没有行程数据，返回全部 locations');
         return [props.locations];
       }
       
@@ -111,7 +103,6 @@ export default {
       let globalIndex = 0;
       
       props.dailyItinerary.forEach((day, dayIndex) => {
-        console.log(`📅 处理第 ${dayIndex + 1} 天:`, day.theme || '无主题', '活动数:', day.activities?.length || 0);
         const dayLocations = [];
         if (day.activities) {
           day.activities.forEach((activity) => {
@@ -136,11 +127,9 @@ export default {
             }
           });
         }
-        console.log(`  ✅ 第 ${dayIndex + 1} 天提取了 ${dayLocations.length} 个位置`);
         grouped.push(dayLocations);
       });
       
-      console.log('📊 总共分组:', grouped.length, '天');
       return grouped.length > 0 ? grouped : [props.locations];
     });
     
@@ -149,115 +138,33 @@ export default {
       return locationsByDay.value[currentDay.value - 1] || [];
     });
 
-    // 提取城市名（尽量标准化为 *市/*州/*县/*区），否则退回目的地原文或“全国”
-    const extractCity = () => {
-      const d = (props.destination || '').trim();
-      if (!d) return '全国';
-      const m = d.match(/[\u4e00-\u9fa5]{2,10}(市|州|县|区)/);
-      if (m) return m[0];
-      return d;
-    };
-
-    // 规范化地名，去除“ - ”后缀、括号内内容与常见标点
-    const normalizePlaceName = (raw) => {
-      let name = (raw || '').toString();
-      name = name.split(' - ')[0];
-      name = name.replace(/（.*?）|\(.*?\)/g, '');
-      name = name.replace(/[，。、“”"'·]/g, '');
-      name = name.trim();
-      return name;
-    };
-
-    // 确保加载/更新 Geocoder（按城市复用，城市变更时重建）
-    const ensureGeocoder = (cityParam) => new Promise((resolve) => {
-      const city = cityParam || extractCity();
-      if (geocoder.value && lastGeocoderCity.value === city) return resolve(geocoder.value);
+    // 确保加载高德地理编码服务
+    const ensureGeocoder = () => new Promise((resolve) => {
+      if (geocoder.value) return resolve(geocoder.value);
       AMap.plugin('AMap.Geocoder', () => {
-        console.log('🔧 初始化地理编码器，城市范围:', city);
-        geocoder.value = new AMap.Geocoder({ city });
-        lastGeocoderCity.value = city;
+        geocoder.value = new AMap.Geocoder({ city: '全国' });
         resolve(geocoder.value);
       });
     });
 
-    // 确保加载/更新 PlaceSearch（城市限定）
-    const ensurePlaceSearch = (cityParam) => new Promise((resolve) => {
-      const city = cityParam || extractCity();
-      if (placeSearch.value && lastPlaceSearchCity.value === city) return resolve(placeSearch.value);
-      AMap.plugin('AMap.PlaceSearch', () => {
-        console.log('🔧 初始化地点搜索，城市范围:', city);
-        placeSearch.value = new AMap.PlaceSearch({ city, pageSize: 5 });
-        lastPlaceSearchCity.value = city;
-        resolve(placeSearch.value);
-      });
-    });
-
-    // 先用 Geocoder，失败则回退到 PlaceSearch
-    const cityMatches = (gc, city) => {
-      const cityNorm = city.replace(/[省市州县区]$/,'');
-      const f = (s) => (s || '').toString().replace(/[省市州县区]$/,'');
-      const fields = [gc.city, gc.province, gc.district];
-      if (fields.some(x => f(x).includes(cityNorm) || cityNorm.includes(f(x)))) return true;
-      if ((gc.formattedAddress || '').includes(city)) return true;
-      return false;
-    };
-
     const geocodeByAMap = async (keyword) => {
-      const base = normalizePlaceName(keyword);
-      if (!base) return null;
-      const city = extractCity();
+      if (!keyword) return null;
       try {
-        await ensureGeocoder(city);
-        console.log(`🔍[Geocoder] 在 "${city}" 搜索 "${base}"`);
-        const geoRes = await new Promise((resolve) => {
-          geocoder.value.getLocation(base, (status, result) => {
+        await ensureGeocoder();
+        return await new Promise((resolve) => {
+          geocoder.value.getLocation(keyword, (status, result) => {
             if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
               const gc = result.geocodes[0];
-              if (gc.location) {
-                // 校验城市是否匹配，不匹配则触发 PlaceSearch 兜底
-                if (!cityMatches(gc, city)) {
-                  console.warn(`  ⚠️[Geocoder] 城市不匹配: ${gc.formattedAddress}，期望包含:${city}`);
-                  return resolve(null);
-                }
-                const { lng, lat } = gc.location;
-                console.log(`  ✅[Geocoder] ${gc.formattedAddress} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
+              const lng = gc.location.lng;
+              const lat = gc.location.lat;
+              resolve([lat, lng]);
+            } else {
+              resolve(null);
             }
-            resolve(null);
           });
         });
-        if (geoRes) return geoRes;
-
-        // 回退：PlaceSearch
-        await ensurePlaceSearch(city);
-        console.log(`🔎[PlaceSearch] 在 "${city}" 搜索 "${base}"`);
-        const poiRes = await new Promise((resolve) => {
-          placeSearch.value.search(base, (status, result) => {
-            if (status === 'complete' && result && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
-              // 优先选择与城市/区县匹配的 POI
-              const pois = result.poiList.pois;
-              const preferred = pois.find(p => (p.cityname && city.includes(p.cityname)) || (p.adname && city.includes(p.adname)) || (p.pname && city.includes(p.pname)) || (p.cityname && city.includes(p.cityname.replace(/[市州县区]$/,'')))) || pois[0];
-              if (preferred && preferred.location) {
-                const { lng, lat } = preferred.location;
-                console.log(`  ✅[PlaceSearch] ${preferred.name} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
-            }
-            resolve(null);
-          });
-        });
-        if (poiRes) return poiRes;
-
-        // 进一步弱化：尝试去除常见尾缀，比如“历史街区/景区/风景区/广场/公园等”
-        const softened = base.replace(/(历史街区|风景区|景区|广场|公园|老街|古城|景点)$/g, '');
-        if (softened && softened !== base) {
-          console.log(`🔁 弱化关键词再次检索: "${softened}"`);
-          return await geocodeByAMap(softened);
-        }
-        return null;
       } catch (e) {
-        console.warn('AMap geocode/search failed:', e);
+        console.warn('AMap geocode failed:', e);
         return null;
       }
     };
@@ -269,6 +176,430 @@ export default {
         return;
       }
       
+      if (typeof AMap === 'undefined') {
+        console.error('❌ 高德地图 API 未加载');
+        mapReady.value = false;
+        return;
+      }
+
+      try {
+        console.log('🗺️ 正在初始化高德地图...');
+        
+        const container = document.getElementById('amap-container');
+        if (!container) {
+          console.error('❌ 地图容器不存在');
+          return;
+        }
+        
+        console.log('📏 容器尺寸:', container.offsetWidth, 'x', container.offsetHeight);
+        
+        map.value = new AMap.Map('amap-container', {
+          zoom: 13,
+          center: [116.397428, 39.90923],
+          mapStyle: 'amap://styles/fresh',
+          viewMode: '2D',
+          features: ['bg', 'road', 'building', 'point'],
+        });
+
+        mapReady.value = true;
+        console.log('✅ 高德地图初始化成功');
+        
+        map.value.on('complete', () => {
+          console.log('✅ 高德地图渲染完成');
+        });
+      } catch (error) {
+        console.error('❌ 高德地图初始化失败:', error);
+        mapReady.value = false;
+      }
+    };
+
+    // 清除所有标记和路线
+    const clearMap = () => {
+      markers.value.forEach(marker => {
+        map.value.remove(marker);
+      });
+      markers.value = [];
+
+      if (drivingRoute.value) {
+        map.value.remove(drivingRoute.value);
+        drivingRoute.value = null;
+      }
+    };
+
+    // 添加标记点
+    const addMarkers = (locations) => {
+      if (!map.value || locations.length === 0) {
+        console.warn('⚠️ 地图未初始化或无位置数据');
+        return;
+      }
+
+      clearMap();
+      console.log('🗺️ 开始添加标记点:', locations);
+
+      locations.forEach((location, index) => {
+        if (!location.coords || location.coords.length !== 2) {
+          console.warn(`⚠️ 位置 ${location.name} 缺少有效坐标`);
+          return;
+        }
+
+        const lat = location.coords[0];
+        const lng = location.coords[1];
+        
+        console.log(`📍 添加标记 ${index + 1}: ${location.name} [${lat}, ${lng}]`);
+
+        const marker = new AMap.Marker({
+          position: new AMap.LngLat(lng, lat),
+          title: location.name,
+          label: {
+            content: `<div style="background: #0084ff; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${index + 1}</div>`,
+            offset: new AMap.Pixel(0, -35),
+          },
+          extData: {
+            index: index,
+            name: location.name,
+          },
+        });
+
+        marker.on('click', () => {
+          const infoWindow = new AMap.InfoWindow({
+            content: `<div style="padding: 8px;">
+              <h4 style="margin: 0 0 8px 0; color: #0084ff;">站点 ${index + 1}</h4>
+              <p style="margin: 0; font-size: 14px;">${location.name}</p>
+            </div>`,
+            offset: new AMap.Pixel(0, -30),
+          });
+          infoWindow.open(map.value, marker.getPosition());
+        });
+
+        markers.value.push(marker);
+        map.value.add(marker);
+      });
+
+      if (markers.value.length > 0) {
+        console.log(`✅ 成功添加 ${markers.value.length} 个标记点`);
+        map.value.setFitView(markers.value, true, [50, 50, 50, 50]);
+      }
+    };
+
+    // 绘制路线规划
+    const drawRoute = (locations) => {
+      if (!map.value || locations.length === 0) {
+        console.warn('⚠️ 地图未初始化或无位置数据,无法绘制路线');
+        return;
+      }
+
+      if (locations.length === 1) {
+        console.log('📍 只有一个位置点,仅显示标记');
+        addMarkers(locations);
+        return;
+      }
+
+      addMarkers(locations);
+
+      console.log(`🚗 开始规划路线,共 ${locations.length} 个点`);
+
+      const driving = new AMap.Driving({
+        map: map.value,
+        policy: AMap.DrivingPolicy.LEAST_TIME,
+        hideMarkers: true,
+      });
+
+      const waypoints = [];
+      if (locations.length > 2) {
+        for (let i = 1; i < locations.length - 1; i++) {
+          const loc = locations[i];
+          if (loc.coords && loc.coords.length === 2) {
+            waypoints.push(new AMap.LngLat(loc.coords[1], loc.coords[0]));
+          }
+        }
+        console.log(`🛣️ 途经点数量: ${waypoints.length}`);
+      }
+
+      const startLoc = locations[0];
+      const endLoc = locations[locations.length - 1];
+      
+      if (!startLoc.coords || !endLoc.coords) {
+        console.error('❌ 起点或终点缺少坐标');
+        return;
+      }
+
+      const start = new AMap.LngLat(startLoc.coords[1], startLoc.coords[0]);
+      const end = new AMap.LngLat(endLoc.coords[1], endLoc.coords[0]);
+
+      console.log(`🚩 起点: ${startLoc.name} [${startLoc.coords}]`);
+      console.log(`🏁 终点: ${endLoc.name} [${endLoc.coords}]`);
+
+      if (waypoints.length > 0) {
+        driving.search(start, end, { waypoints }, (status, result) => {
+          if (status === 'complete') {
+            console.log('✅ 路线规划成功', result);
+          } else {
+            console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
+          }
+        });
+      } else {
+        driving.search(start, end, (status, result) => {
+          if (status === 'complete') {
+            console.log('✅ 路线规划成功', result);
+          } else {
+            console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
+          }
+        });
+      }
+
+      drivingRoute.value = driving;
+    };
+    
+    // 切换天数
+    const switchDay = (day) => {
+      currentDay.value = day;
+      updateMapForCurrentDay();
+    };
+    
+    // 更新当前天的地图
+    const updateMapForCurrentDay = async () => {
+      if (!map.value || !isDomestic.value) return;
+      
+      const locations = currentLocations.value;
+      if (locations.length === 0) return;
+      
+      // 为缺失坐标的地点进行地理编码
+      for (const loc of locations) {
+        if (!loc.coords || loc.coords.length !== 2) {
+          const coords = await geocodeByAMap(loc.name);
+          if (coords) {
+            loc.coords = coords;
+          }
+        }
+      }
+      
+      console.log(`📍 第 ${currentDay.value} 天，共 ${locations.length} 个位置点`, locations);
+      drawRoute(locations);
+    };
+
+    // 监听位置变化
+    watch(() => props.locations, async (newLocations) => {
+      if (newLocations && newLocations.length > 0 && map.value && isDomestic.value) {
+        currentDay.value = 1; // 重置到第一天
+        updateMapForCurrentDay();
+      }
+    }, { deep: true, immediate: true });
+    
+    // 监听行程数据变化
+    watch(() => props.dailyItinerary, () => {
+      if (map.value && isDomestic.value) {
+        currentDay.value = 1;
+        updateMapForCurrentDay();
+      }
+    }, { deep: true });
+    
+    // 监听目的地变化
+    watch(() => props.destination, (newDest) => {
+      if (!newDest) return;
+      
+      if (!isDomestic.value) {
+        console.log('🌍 切换到国外目的地，地图不可用');
+        if (map.value) {
+          map.value.destroy();
+          map.value = null;
+          mapReady.value = false;
+        }
+      } else if (!map.value) {
+        console.log('🗺️ 切换到国内目的地，初始化地图');
+        initMap();
+      }
+    });
+
+    // 飞到指定坐标
+    const flyTo = (coords) => {
+      if (map.value && coords && coords.length === 2) {
+        console.log('🛫 飞往坐标:', coords);
+        map.value.setCenter(new AMap.LngLat(coords[1], coords[0]));
+        map.value.setZoom(15);
+      }
+    };
+
+    onMounted(() => {
+      console.log('🔧 MapView 组件已挂载,准备初始化地图');
+      
+      if (!isDomestic.value) {
+        console.log('🌍 国外目的地，跳过地图初始化');
+        return;
+      }
+      
+      if (typeof AMap !== 'undefined') {
+        console.log('✅ 高德地图 API 已就绪');
+        initMap();
+      } else {
+        console.log('⏳ 等待高德地图 API 加载...');
+        let attempts = 0;
+        const maxAttempts = 50;
+        
+        const checkAMap = setInterval(() => {
+          attempts++;
+          if (typeof AMap !== 'undefined') {
+            console.log('✅ 高德地图 API 加载完成');
+            clearInterval(checkAMap);
+            initMap();
+          } else if (attempts >= maxAttempts) {
+            console.error('❌ 高德地图 API 加载超时,请检查网络或 API Key 配置');
+            clearInterval(checkAMap);
+            mapReady.value = false;
+          }
+        }, 100);
+      }
+    });
+
+    onBeforeUnmount(() => {
+      if (map.value) {
+        map.value.destroy();
+      }
+    });
+
+    return { 
+      map, 
+      mapReady,
+      flyTo,
+      isDomestic,
+      dayCount,
+      currentDay,
+      switchDay,
+    };
+  },
+};
+</script>
+
+<style scoped>
+.map-container {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(0, 132, 255, 0.05) 0%, rgba(168, 237, 234, 0.08) 100%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.map-unavailable {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 10;
+  padding: 40px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  width: 80%;
+  max-width: 400px;
+}
+
+.day-switcher {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: var(--glass-shadow);
+}
+
+.amap-map {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  z-index: 1;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.map-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  padding: 24px 32px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
+.map-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 10;
+  padding: 32px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
+/* 高德地图版权信息样式调整 */
+:deep(.amap-logo) {
+  opacity: 0.6;
+}
+
+:deep(.amap-copyright) {
+  opacity: 0.6;
+}
+</style>
+
+    // 确保加载高德地理编码服务
+    const ensureGeocoder = () => new Promise((resolve) => {
+      if (geocoder.value) return resolve(geocoder.value);
+      AMap.plugin('AMap.Geocoder', () => {
+        geocoder.value = new AMap.Geocoder({ city: '全国' });
+        resolve(geocoder.value);
+      });
+    });
+
+    const geocodeByAMap = async (keyword) => {
+      if (!keyword) return null;
+      try {
+        await ensureGeocoder();
+        return await new Promise((resolve) => {
+          geocoder.value.getLocation(keyword, (status, result) => {
+            if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
+              const gc = result.geocodes[0];
+              const lng = gc.location.lng;
+              const lat = gc.location.lat;
+              resolve([lat, lng]);
+            } else {
+              resolve(null);
+            }
+          });
+        });
+      } catch (e) {
+        console.warn('AMap geocode failed:', e);
+        return null;
+      }
+    };
+
+    // 初始化高德地图
+    const initMap = () => {
       if (typeof AMap === 'undefined') {
         console.error('❌ 高德地图 API 未加载');
         mapReady.value = false;
@@ -456,136 +787,30 @@ export default {
 
       drivingRoute.value = driving;
     };
-    
-    // 切换天数
-    const switchDay = (day) => {
-      currentDay.value = day;
-      updateMapForCurrentDay();
-    };
-    
-    // 更新当前天的地图
-    const updateMapForCurrentDay = async () => {
-      console.log('🔄 开始更新地图 - 第', currentDay.value, '天');
-      console.log('🗺️ 地图状态:', map.value ? '已初始化' : '未初始化');
-      console.log('🏠 是否国内:', isDomestic.value);
-      
-      if (!map.value || !isDomestic.value) {
-        console.warn('⚠️ 地图未初始化或非国内目的地，跳过更新');
-        return;
-      }
-      
-      const locations = currentLocations.value;
-      console.log('📍 当前天的位置数量:', locations.length);
-      console.log('📍 当前天的位置详情:', locations);
-      
-      if (locations.length === 0) {
-        console.warn('⚠️ 没有位置数据，跳过更新');
-        return;
-      }
-      routeLoading.value = true;
-      // 页面顶部提示(而非仅地图内部)
-      MessagePlugin.info({ content: '路线计算中…', duration: 2000, placement: 'top' });
-      const failed = [];
-      const geocodedCache = new Set(); // 防止重复地理编码
-      
-      try {
-        // 为缺失坐标的地点进行地理编码
-        for (const loc of locations) {
+
+    // 监听 locations 变化，优先按 order 排序，并为缺失坐标的点进行本地地理编码
+    watch(() => props.locations, async (newLocations) => {
+      if (newLocations && newLocations.length > 0 && map.value) {
+        const ordered = [...newLocations].sort((a, b) => {
+          const ao = typeof a.order === 'number' ? a.order : Number.POSITIVE_INFINITY;
+          const bo = typeof b.order === 'number' ? b.order : Number.POSITIVE_INFINITY;
+          return ao - bo;
+        });
+
+        // 依次为缺失坐标的地点进行地理编码
+        for (const loc of ordered) {
           if (!loc.coords || loc.coords.length !== 2) {
-            const placeName = normalizePlaceName(loc.name);
-            
-            // 跳过已经尝试过但失败的地点
-            if (geocodedCache.has(placeName)) {
-              console.log(`⏭️ 跳过已处理的地点: ${placeName}`);
-              continue;
-            }
-            
-            geocodedCache.add(placeName);
-            console.log(`🔍 为 "${placeName}" 进行地理编码...`);
-            
-            try {
-              const coords = await geocodeByAMap(placeName);
-              if (coords) {
-                console.log(`✅ 地理编码成功: ${placeName} -> [${coords}]`);
-                loc.coords = coords;
-              } else {
-                console.warn(`❌ 地理编码失败: ${placeName}，将从路线中排除`);
-                failed.push(placeName);
-              }
-            } catch (error) {
-              console.error(`❌ 地理编码出错: ${placeName}`, error);
-              failed.push(placeName);
+            const coords = await geocodeByAMap(loc.name);
+            if (coords) {
+              loc.coords = coords;
             }
           }
         }
-      
-      // 仅使用有坐标的点进行绘制
-      const valid = locations.filter(l => l.coords && l.coords.length === 2);
-      console.log(`📍 第 ${currentDay.value} 天，可用点 ${valid.length}/${locations.length}`, valid);
-      if (valid.length >= 2) {
-        drawRoute(valid);
-      } else if (valid.length === 1) {
-        addMarkers(valid);
-        flyTo(valid[0].coords);
-      } else {
-        console.warn('⚠️ 无有效坐标可绘制，尝试按城市居中');
-        const city = extractCity();
-        const cityCenter = await geocodeByAMap(city);
-        if (cityCenter) flyTo(cityCenter);
-      }
-        if (failed.length > 0) {
-          const sample = failed.slice(0, 3).join('、');
-          const more = failed.length > 3 ? ` 等 ${failed.length} 个` : '';
-          MessagePlugin.warning({
-            content: `以下地点未能定位：${sample}${more}。已从路线中排除。`,
-            duration: 5000,
-            placement: 'top'
-          });
-          // 告知父级(用于在页面顶部展示可关闭的告警条)
-          emit('route-failed-places', failed);
-        }
-      } catch (error) {
-        console.error('❌ 更新地图出错:', error);
-        MessagePlugin.error('地图更新失败，请稍后重试');
-      } finally {
-        routeLoading.value = false;
-      }
-    };
 
-    // 监听位置变化
-    watch(() => props.locations, async (newLocations) => {
-      console.log('📍 监听到 locations 变化:', newLocations.length, '个位置');
-      if (newLocations && newLocations.length > 0 && map.value && isDomestic.value) {
-        currentDay.value = 1; // 重置到第一天
-        await updateMapForCurrentDay();
+        console.log(`📍 更新地图,共 ${ordered.length} 个位置点`, ordered);
+        drawRoute(ordered);
       }
     }, { deep: true, immediate: true });
-    
-    // 监听行程数据变化
-    watch(() => props.dailyItinerary, (newItinerary) => {
-      console.log('📅 监听到行程数据变化:', newItinerary?.length, '天');
-      if (map.value && isDomestic.value && newItinerary && newItinerary.length > 0) {
-        currentDay.value = 1;
-        updateMapForCurrentDay();
-      }
-    }, { deep: true, immediate: true });
-    
-    // 监听目的地变化
-    watch(() => props.destination, (newDest) => {
-      if (!newDest) return;
-      
-      if (!isDomestic.value) {
-        console.log('🌍 切换到国外目的地，地图不可用');
-        if (map.value) {
-          map.value.destroy();
-          map.value = null;
-          mapReady.value = false;
-        }
-      } else if (!map.value) {
-        console.log('🗺️ 切换到国内目的地，初始化地图');
-        initMap();
-      }
-    });
 
     // 飞到指定坐标
     const flyTo = (coords) => {
@@ -599,27 +824,11 @@ export default {
 
     onMounted(() => {
       console.log('🔧 MapView 组件已挂载,准备初始化地图');
-      console.log('📍 当前 locations 数量:', props.locations.length);
-      console.log('📅 当前行程天数:', props.dailyItinerary?.length || 0);
-      console.log('🌍 目的地:', props.destination);
-      console.log('🏠 是否国内:', isDomestic.value);
-      
-      if (!isDomestic.value) {
-        console.log('🌍 国外目的地，跳过地图初始化');
-        return;
-      }
       
       // 等待高德地图 API 加载完成
       if (typeof AMap !== 'undefined') {
         console.log('✅ 高德地图 API 已就绪');
         initMap();
-        // 地图初始化后，如果有数据就立即更新
-        setTimeout(() => {
-          if (props.locations.length > 0 || (props.dailyItinerary && props.dailyItinerary.length > 0)) {
-            console.log('🔄 地图初始化完成，开始加载路线');
-            updateMapForCurrentDay();
-          }
-        }, 500);
       } else {
         console.log('⏳ 等待高德地图 API 加载...');
         let attempts = 0;
@@ -631,13 +840,6 @@ export default {
             console.log('✅ 高德地图 API 加载完成');
             clearInterval(checkAMap);
             initMap();
-            // 地图初始化后，如果有数据就立即更新
-            setTimeout(() => {
-              if (props.locations.length > 0 || (props.dailyItinerary && props.dailyItinerary.length > 0)) {
-                console.log('🔄 地图初始化完成，开始加载路线');
-                updateMapForCurrentDay();
-              }
-            }, 500);
           } else if (attempts >= maxAttempts) {
             console.error('❌ 高德地图 API 加载超时,请检查网络或 API Key 配置');
             clearInterval(checkAMap);
@@ -656,13 +858,7 @@ export default {
     return { 
       map, 
       mapReady,
-      routeLoading,
       flyTo,
-      isDomestic,
-      dayCount,
-      currentDay,
-      currentLocations,
-      switchDay,
     };
   },
 };
@@ -678,41 +874,6 @@ export default {
   border-radius: 20px;
   background: linear-gradient(135deg, rgba(0, 132, 255, 0.05) 0%, rgba(168, 237, 234, 0.08) 100%);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
-}
-
-.map-unavailable {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  z-index: 10;
-  padding: 40px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur-strong);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  box-shadow: var(--glass-shadow);
-  width: 80%;
-  max-width: 400px;
-}
-
-.day-switcher {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur-strong);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
   box-shadow: var(--glass-shadow);
 }
 

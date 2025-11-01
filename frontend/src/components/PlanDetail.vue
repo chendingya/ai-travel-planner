@@ -10,6 +10,13 @@
       </div>
       <div class="header-actions">
         <GlassButton 
+          :icon="editMode ? 'check' : 'edit'"
+          @click="toggleEdit"
+          size="sm"
+        >
+          {{ editMode ? '完成编辑' : '编辑行程' }}
+        </GlassButton>
+        <GlassButton 
           v-if="showSaveButton"
           icon="save"
           @click="handleSavePlan"
@@ -51,11 +58,31 @@
               :key="i"
               :label="activity.time"
             >
-              <div class="activity-item" @click="flyToLocation(activity.coords)">
-                <div class="activity-content">{{ activity.description }}</div>
+              <div 
+                class="activity-item" 
+                :class="{ 'edit-mode': editMode }"
+                @click="!editMode && flyToLocation(activity.coords)"
+              >
+                <template v-if="editMode">
+                  <div class="activity-edit-row">
+                    <t-input v-model="activity.time" placeholder="时间 如 09:00" size="small" style="width: 110px;" @change="persistPlan" />
+                    <t-input v-model="activity.description" placeholder="地点/描述" size="small" style="flex:1;" @change="persistPlan" />
+                    <div class="edit-actions">
+                      <t-button size="small" variant="outline" @click.stop="moveActivity(index, i, -1)">上移</t-button>
+                      <t-button size="small" variant="outline" @click.stop="moveActivity(index, i, 1)">下移</t-button>
+                      <t-button theme="danger" variant="outline" size="small" @click.stop="removeActivity(index, i)">删除</t-button>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="activity-content">{{ activity.description }}</div>
+                </template>
               </div>
             </t-timeline-item>
           </t-timeline>
+          <div v-if="editMode" class="add-activity-row">
+            <t-button size="small" theme="primary" variant="outline" @click.stop="addActivity(index)">添加活动</t-button>
+          </div>
         </t-collapse-panel>
       </t-collapse>
 
@@ -162,6 +189,7 @@ const plan = ref(null);
 const form = ref({});
 const saving = ref(false);
 const headerRef = ref(null);
+const editMode = ref(false);
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -247,6 +275,60 @@ const handleSavePlan = async () => {
 const calculateTotal = (budget) => {
   if (!budget) return 0;
   return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
+};
+
+const toggleEdit = () => {
+  editMode.value = !editMode.value;
+  if (editMode.value) {
+    MessagePlugin.info('已进入编辑模式：可修改时间/地点或添加/删除活动');
+  } else {
+    MessagePlugin.success('已退出编辑模式');
+    persistPlan();
+  }
+};
+
+const persistPlan = () => {
+  try {
+    // 去除空活动
+    const p = plan.value;
+    if (!p || !p.daily_itinerary) return;
+    p.daily_itinerary.forEach(d => {
+      d.activities = (d.activities || []).filter(a => a && (a.description || a.time));
+    });
+    store.setPlan({ ...p });
+  } catch (e) {
+    console.warn('Failed to persist plan', e);
+  }
+};
+
+const addActivity = (dayIndex) => {
+  const p = plan.value;
+  if (!p || !p.daily_itinerary || !p.daily_itinerary[dayIndex]) return;
+  p.daily_itinerary[dayIndex].activities = p.daily_itinerary[dayIndex].activities || [];
+  p.daily_itinerary[dayIndex].activities.push({ time: '', description: '' });
+  persistPlan();
+};
+
+const removeActivity = (dayIndex, actIndex) => {
+  const p = plan.value;
+  if (!p || !p.daily_itinerary || !p.daily_itinerary[dayIndex]) return;
+  const list = p.daily_itinerary[dayIndex].activities || [];
+  if (actIndex >= 0 && actIndex < list.length) {
+    list.splice(actIndex, 1);
+    persistPlan();
+  }
+};
+
+const moveActivity = (dayIndex, actIndex, dir) => {
+  const p = plan.value;
+  if (!p || !p.daily_itinerary || !p.daily_itinerary[dayIndex]) return;
+  const list = p.daily_itinerary[dayIndex].activities || [];
+  const target = actIndex + dir;
+  if (target < 0 || target >= list.length) return;
+  const tmp = list[actIndex];
+  list[actIndex] = list[target];
+  list[target] = tmp;
+  persistPlan();
 };
 </script>
 
@@ -370,7 +452,6 @@ const calculateTotal = (budget) => {
   padding: 12px 16px;
   border-radius: 12px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: pointer;
   background: rgba(255, 255, 255, 0.5);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -379,18 +460,28 @@ const calculateTotal = (budget) => {
   position: relative;
 }
 
-.activity-item:hover {
+/* 非编辑模式下才有指针和悬停效果 */
+.activity-item:not(.edit-mode) {
+  cursor: pointer;
+}
+
+.activity-item:not(.edit-mode):hover {
   background: rgba(255, 255, 255, 0.7);
   box-shadow: 0 4px 16px rgba(0, 132, 255, 0.15);
   transform: translateX(4px);
 }
 
-.activity-item:hover::before {
+.activity-item:not(.edit-mode):hover::before {
   content: "📍";
   position: absolute;
   left: -4px;
   opacity: 0.6;
   animation: pulse 1s ease-in-out infinite;
+}
+
+/* 编辑模式下的样式 */
+.activity-item.edit-mode {
+  cursor: default;
 }
 
 @keyframes pulse {
@@ -407,6 +498,22 @@ const calculateTotal = (budget) => {
   font-size: 14px;
   color: var(--text-primary);
   line-height: 1.6;
+}
+
+.activity-edit-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.add-activity-row {
+  padding: 8px 16px 0 16px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
 }
 
 /* 预算分解 */

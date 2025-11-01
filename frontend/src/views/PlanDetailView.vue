@@ -1,5 +1,14 @@
 <template>
   <div class="content-wrapper">
+    <!-- 全局路线告警 -->
+    <t-alert
+      v-if="routeAlert.show"
+      theme="warning"
+      :message="routeAlert.message"
+      close
+      @close="routeAlert.show = false"
+      style="margin-bottom: 12px;"
+    />
     <t-row :gutter="24">
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="plan-detail-section">
@@ -17,7 +26,13 @@
         <div class="map-section">
           <div class="map-card-offset" :style="{ marginTop: mapTopOffset + 'px' }">
             <t-card class="map-card book-right" :bordered="false">
-              <MapView :locations="store.locations" ref="mapViewRef" />
+              <MapView 
+                :locations="store.locations" 
+                :destination="store.form.destination"
+                :dailyItinerary="store.plan?.daily_itinerary || []"
+                ref="mapViewRef"
+                @route-failed-places="onRouteFailedPlaces"
+              />
             </t-card>
           </div>
         </div>
@@ -35,6 +50,7 @@ import { usePlannerStore } from '../stores/planner';
 const store = usePlannerStore();
 const mapViewRef = ref(null);
 const mapTopOffset = ref(0);
+const routeAlert = ref({ show: false, message: '' });
 
 defineEmits(['fly-to', 'back-to-planner']);
 
@@ -64,6 +80,22 @@ onMounted(() => {
   // 进入详情页时，根据存储的计划重建按“天+时间”顺序的地图点
   rebuildLocationsFromPlan();
 });
+
+const onRouteFailedPlaces = (list) => {
+  if (list && list.length) {
+    const sample = list.slice(0, 3).join('、');
+    const more = list.length > 3 ? ` 等 ${list.length} 个` : '';
+    routeAlert.value = {
+      show: true,
+      message: `以下地点未能定位：${sample}${more}。已临时从路线排除，请在左侧“编辑行程”中修正地点名称后重试。`
+    };
+  }
+};
+
+// 监听计划变化，自动重建 locations 并同步地图
+watch(() => store.plan, () => {
+  rebuildLocationsFromPlan();
+}, { deep: true });
 
 // 根据存储的计划，按天/时间生成顺序化的 locations
 const parseTimeToMinutes = (t) => {

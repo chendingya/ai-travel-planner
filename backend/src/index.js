@@ -46,9 +46,16 @@ app.post('/api/plan', async (req, res) => {
 
     console.log(`📝 正在为 ${destination} 生成 ${duration} 天的旅行计划...`);
 
-  const systemPrompt = `你是一个专业的旅行规划助手。你必须严格按照以下 JSON 格式返回旅行计划,不要添加任何额外的文字说明、标题或格式化标记。
+  const systemPrompt = `你是一个专业的旅行规划助手。必须严格返回纯 JSON，且遵守以下约束：
 
-返回格式示例：
+必备规则：
+1) 仅 JSON，无任何额外文字/标题/标记
+2) 严禁包含经纬度坐标（如 latitude/longitude/coords）
+3) 所有地点均应在“目的地城市及其行政区”范围内，避免跨省/跨市的同名地点
+4) 使用官方中文名称；若可能含糊，请补充区县(district)与地址(address)
+5) 每天 3-6 个活动，按时间顺序，考虑通勤/游览时长
+
+推荐结构示例：
 {
   "daily_itinerary": [
     {
@@ -58,11 +65,17 @@ app.post('/api/plan', async (req, res) => {
         {
           "time": "09:00",
           "location": "成田国际机场",
+          "city": "东京",
+          "district": "成田市",
+          "address": "日本千叶县成田市古込1-1",
           "description": "抵达成田机场,办理入境手续"
         },
         {
           "time": "12:00",
           "location": "秋叶原",
+          "city": "东京",
+          "district": "千代田区",
+          "address": "(可选)",
           "description": "参观动漫街区,逛动漫商店"
         }
       ]
@@ -76,20 +89,23 @@ app.post('/api/plan', async (req, res) => {
     "shopping": 1500,
     "other": 1000
   },
+  "transport": {
+    "in_city": "优先公共交通/打车，避开高峰",
+    "to_city": "建议的往返交通方式与大致耗时"
+  },
+  "accommodation": [
+    { "name": "示例酒店A", "city": "东京", "district": "新宿区", "address": "...", "why": "靠近主要景点，交通便捷" }
+  ],
+  "restaurants": [
+    { "name": "示例餐厅B", "city": "东京", "district": "涩谷区", "address": "...", "tags": ["美食","亲子"] }
+  ],
   "tips": [
     "购买交通卡如 Suica 或 Pasmo 方便出行",
     "提前预约热门景点门票"
   ]
-}
+}`;
 
-重要规则：
-1. 必须严格返回 JSON 格式,不要有任何额外文字
-2. 严禁包含经纬度坐标(latitude, longitude)等地理坐标字段
-3. 仅提供可用于搜索定位的地点名称(location)与描述(description),如可提供详细地址可额外给出 "address" 字段（可选）
-4. 每天的活动数量要合理(3-6个)，时间要符合逻辑顺序
-5. 景点名称要准确，便于后续进行地图定位`;
-
-    const userPrompt = `请为我制定一个${duration}天的${destination}旅行计划：
+  const userPrompt = `请为我制定一个${duration}天的${destination}旅行计划：
 
 基本信息：
 - 目的地：${destination}
@@ -99,13 +115,13 @@ app.post('/api/plan', async (req, res) => {
 - 偏好：${preferences || '无特殊偏好'}
 
 要求：
-1. 每天安排3-6个具体景点或活动
-2. 不要输出经纬度坐标（latitude/longitude），只给出地点名称与可选地址
-3. 活动时间要符合实际(考虑交通时间、游览时间)
-4. 预算分配要合理
-5. 如果偏好中提到动漫、美食等,优先安排相关景点
+1) 每天安排3-6个具体景点或活动，且活动仅限于目的地城市及其行政区
+2) 不要输出经纬度坐标，只给出 location/city/district/address(可选) 与 description
+3) 活动时间要符合实际（考虑通勤与游览时间）
+4) 预算分配合理，并给出餐饮/住宿/交通/门票等建议
+5) 偏好（如动漫/美食/亲子等）需体现在景点与餐厅选择中
 
-请严格按照 JSON 格式返回,不要有任何额外说明文字。`;
+请严格按照纯 JSON 格式返回，无任何额外说明文字或标记。`;
 
     const completion = await openai.chat.completions.create({
       messages: [

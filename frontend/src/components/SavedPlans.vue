@@ -233,6 +233,10 @@ onMounted(fetchPlans);
   margin-top: 16px;
 }
 
+.plans-grid :deep(.t-col) {
+  margin-bottom: 16px;
+}
+
 .plan-card {
   height: 100%;
   display: flex;

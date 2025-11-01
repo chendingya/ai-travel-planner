@@ -23,6 +23,8 @@
       header="登录 / 注册"
       :footer="false"
       width="400px"
+      :z-index="10000"
+      attach="body"
     >
       <t-form @submit="handleLogin">
         <t-form-item label="邮箱">
