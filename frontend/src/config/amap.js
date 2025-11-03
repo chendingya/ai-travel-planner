@@ -1,19 +1,32 @@
-// 高德地图配置
+import { loadRuntimeConfig, getRuntimeConfig } from '../runtimeConfig'
+
+// 高德地图配置（默认空，待运行时加载）
 export const AMAP_CONFIG = {
-  key: import.meta.env.VITE_AMAP_KEY || '',
-  securityJsCode: import.meta.env.VITE_AMAP_SECURITY_CODE || '',
+  key: '',
+  securityJsCode: '',
   version: '2.0',
   plugins: ['AMap.Driving', 'AMap.Marker', 'AMap.InfoWindow'],
 };
 
+loadRuntimeConfig()
+  .then(() => {
+    const { amapKey = '', amapSecurityCode = '' } = getRuntimeConfig();
+    AMAP_CONFIG.key = amapKey;
+    AMAP_CONFIG.securityJsCode = amapSecurityCode;
+  })
+  .catch((error) => {
+    console.warn('⚠️ 高德地图运行时配置加载失败:', error.message);
+  });
+
 // 检查高德地图配置
-export const checkAmapConfig = () => {
+export const checkAmapConfig = async () => {
+  await loadRuntimeConfig();
   console.log('🔍 检查高德地图配置...');
-  console.log('VITE_AMAP_KEY:', AMAP_CONFIG.key ? `${AMAP_CONFIG.key.substring(0, 10)}...` : '未配置');
-  console.log('VITE_AMAP_SECURITY_CODE:', AMAP_CONFIG.securityJsCode ? '已配置' : '未配置');
+  console.log('PUBLIC_AMAP_KEY:', AMAP_CONFIG.key ? `${AMAP_CONFIG.key.substring(0, 10)}...` : '未配置');
+  console.log('PUBLIC_AMAP_SECURITY_CODE:', AMAP_CONFIG.securityJsCode ? '已配置' : '未配置');
   
   if (!AMAP_CONFIG.key) {
-    console.warn('⚠️ 高德地图 API Key 未配置,请在 .env 文件中设置 VITE_AMAP_KEY');
+    console.warn('⚠️ 高德地图 API Key 未配置,请通过环境变量 PUBLIC_AMAP_KEY 注入');
     return false;
   }
   console.log('✅ 高德地图配置检查通过');
@@ -22,7 +35,15 @@ export const checkAmapConfig = () => {
 
 // 动态加载高德地图脚本
 export const loadAmapScript = () => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    try {
+      await loadRuntimeConfig();
+    } catch (error) {
+      console.error('❌ 高德地图配置加载失败', error);
+      reject(error);
+      return;
+    }
+
     // 如果已经加载,直接返回
     if (typeof AMap !== 'undefined') {
       console.log('✅ 高德地图 API 已加载');
@@ -31,7 +52,8 @@ export const loadAmapScript = () => {
     }
 
     // 检查配置
-    if (!checkAmapConfig()) {
+    const isConfigured = await checkAmapConfig();
+    if (!isConfigured) {
       const error = new Error('高德地图 API Key 未配置');
       console.error('❌', error.message);
       reject(error);

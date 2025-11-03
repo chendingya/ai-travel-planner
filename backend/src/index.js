@@ -7,6 +7,14 @@ const OpenAI = require('openai');
 const app = express();
 const port = process.env.PORT || 3001;
 
+// 前端运行时配置（仅暴露允许公开的密钥）
+const runtimeConfig = {
+  supabaseUrl: process.env.PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '',
+  supabaseAnonKey: process.env.PUBLIC_SUPABASE_ANON_KEY || '',
+  amapKey: process.env.PUBLIC_AMAP_KEY || '',
+  amapSecurityCode: process.env.PUBLIC_AMAP_SECURITY_CODE || ''
+};
+
 // 检查必要的环境变量
 if (!process.env.DASHSCOPE_API_KEY) {
   console.warn('警告: DASHSCOPE_API_KEY 未设置,AI 行程规划功能将不可用');
@@ -32,6 +40,18 @@ app.use(express.json());
 // 静态资源（前端打包产物）
 const staticDir = path.join(__dirname, '..', 'public');
 app.use(express.static(staticDir));
+
+// 供前端在运行时动态加载公开配置
+app.get('/config.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  const safeConfig = {
+    supabaseUrl: runtimeConfig.supabaseUrl,
+    supabaseAnonKey: runtimeConfig.supabaseAnonKey,
+    amapKey: runtimeConfig.amapKey,
+    amapSecurityCode: runtimeConfig.amapSecurityCode
+  };
+  res.send(`window.__APP_CONFIG__ = ${JSON.stringify(safeConfig)};`);
+});
 
 // 根路径：优先返回前端 index.html，若不存在则返回文本
 app.get('/', (req, res) => {
@@ -257,6 +277,8 @@ app.listen(port, () => {
   console.log('\n=== 配置状态 ===');
   console.log(`✓ 阿里百炼 API: ${openai ? '已配置 ✅' : '未配置 ❌'}`);
   console.log(`✓ Supabase: ${process.env.SUPABASE_URL ? '已配置 ✅' : '未配置 ❌'}`);
+  console.log(`✓ 前端可见 Supabase Anon Key: ${runtimeConfig.supabaseAnonKey ? '已注入 ✅' : '未注入 ❌'}`);
+  console.log(`✓ 高德地图 Key: ${runtimeConfig.amapKey ? '已注入 ✅' : '未注入 ❌'}`);
   
   // 显示安全提醒
   console.log('\n=== 🔒 安全提醒 ===');

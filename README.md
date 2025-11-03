@@ -181,9 +181,7 @@ ai-travel-planner/
    cd ai-travel-planner
    ```
 
-2. **配置环境变量**：
-   
-   **后端配置** (`backend/.env`)：
+2. **配置环境变量**（`backend/.env`）：
    ```bash
    cd backend
    cp .env.example .env
@@ -191,19 +189,14 @@ ai-travel-planner/
    # PORT=3001
    # DASHSCOPE_API_KEY=你的阿里百炼API密钥
    # SUPABASE_URL=你的Supabase项目URL
-   # SUPABASE_KEY=你的Supabase匿名密钥
+   # SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务端密钥
+   # PUBLIC_SUPABASE_URL=供前端使用的 Supabase URL
+   # PUBLIC_SUPABASE_ANON_KEY=Supabase 匿名密钥（公开）
+   # PUBLIC_AMAP_KEY=高德地图 JS API Key
+   # PUBLIC_AMAP_SECURITY_CODE=高德安全密钥（可选）
    ```
 
-   **前端配置** (`frontend/.env`)：
-   ```bash
-   cd ../frontend
-   cp .env.example .env
-   # 编辑 .env 文件填入：
-   # VITE_SUPABASE_URL=你的Supabase项目URL
-   # VITE_SUPABASE_ANON_KEY=你的Supabase匿名密钥
-   # VITE_AMAP_KEY=你的高德地图API密钥
-   # VITE_AMAP_SECURITY_CODE=你的高德安全密钥（可选）
-   ```
+   > 前端运行时会通过 `/config.js` 自动读取 `PUBLIC_*` 变量，无需再在 `frontend/.env` 中重复配置。
 
 3. **一键启动**：
    ```powershell
@@ -277,11 +270,10 @@ ai-travel-planner/
 
 1. **配置环境变量**：
    ```bash
-   # 在项目根目录创建 .env 文件
-   echo "DASHSCOPE_API_KEY=你的阿里百炼API密钥" > .env
-   echo "SUPABASE_URL=你的Supabase项目URL" >> .env
-   echo "SUPABASE_KEY=你的Supabase匿名密钥" >> .env
-   echo "VITE_AMAP_KEY=你的高德地图API密钥" >> .env
+   # 建议将密钥集中放在 backend/.env（docker run 可用 --env-file backend/.env）
+   cd backend
+   cp .env.example .env
+   # 按需填写私密变量和 PUBLIC_* 变量
    ```
 
 2. **构建并启动**：
@@ -290,8 +282,8 @@ ai-travel-planner/
    ```
 
 3. **访问应用**：
-   - 前端：`http://localhost:8080`
-   - 后端：`http://localhost:3001`
+   - 前端：`http://localhost:3001`（由 Node 后端统一提供静态资源）
+   - 健康检查：`http://localhost:3001/health`
 
 ## ⚙️ 配置说明
 
@@ -304,20 +296,20 @@ ai-travel-planner/
 #### 后端环境变量 (`backend/.env`)
 
 ```bash
-PORT=3001                          # 后端服务器端口
-DASHSCOPE_API_KEY=sk-xxx...       # 阿里云百炼 API 密钥
-SUPABASE_URL=https://xxx.supabase.co  # Supabase 项目 URL
-SUPABASE_KEY=eyJxxx...            # Supabase 匿名公开密钥
+# 私密配置（仅后端使用）
+PORT=3001                             # 后端服务器端口
+DASHSCOPE_API_KEY=sk-xxx...          # 阿里云百炼 API 密钥
+SUPABASE_URL=https://xxx.supabase.co # Supabase 项目 URL
+SUPABASE_SERVICE_ROLE_KEY=eyJxxx...  # Supabase 服务端密钥（严禁暴露给前端）
+
+# 公开配置（前端运行时读取，仍可设置访问白名单）
+PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
+PUBLIC_AMAP_KEY=xxx...
+PUBLIC_AMAP_SECURITY_CODE=xxx...
 ```
 
-#### 前端环境变量 (`frontend/.env`)
-
-```bash
-VITE_SUPABASE_URL=https://xxx.supabase.co  # Supabase 项目 URL
-VITE_SUPABASE_ANON_KEY=eyJxxx...           # Supabase 匿名公开密钥
-VITE_AMAP_KEY=xxx...                       # 高德地图 API 密钥
-VITE_AMAP_SECURITY_CODE=xxx...             # 高德安全密钥（可选）
-```
+> 前端容器运行时会向 `/config.js` 请求配置脚本，该脚本由后端用上述 `PUBLIC_*` 环境变量动态生成。
 
 ### AI 模型配置
 
