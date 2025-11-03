@@ -173,9 +173,17 @@ const viewPlan = async (plan) => {
       for (const day of planDetails.daily_itinerary) {
         if (day.activities) {
           for (const activity of day.activities) {
-            if (activity && activity.coords) {
-              mapLocations.push({ name: activity.description, coords: activity.coords });
-            }
+            if (!activity || !activity.coords) continue;
+            const displayName = activity.location || activity.description || activity.originalDescription;
+            const geocodeQuery = [activity.location, activity.district, activity.city, activity.address]
+              .filter(Boolean)
+              .join(' ');
+            mapLocations.push({
+              name: displayName,
+              coords: activity.coords,
+              order: mapLocations.length + 1,
+              geocodeQuery: geocodeQuery || displayName
+            });
           }
         }
       }

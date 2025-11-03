@@ -15,10 +15,13 @@
           <!-- 移除外层 t-card 包裹，避免左侧头部与内容之间的间隔出现贯穿边界/阴影 -->
           <div class="plan-detail-card">
             <PlanDetail 
+              ref="planDetailRef"
               @fly-to="handleFlyTo"
               @back-to-planner="$emit('back-to-planner')"
               @header-offset="onHeaderOffset"
               @select-day="onSelectDay"
+              @edit-mode-change="onEditModeChange"
+              @plan-draft-change="onPlanDraftChange"
             />
           </div>
         </div>
@@ -36,6 +39,56 @@
               />
             </t-card>
           </div>
+
+          <t-card v-if="showAccommodationCard" class="accommodation-card" :bordered="false">
+            <h4 class="section-title">
+              <t-icon name="home" />
+              住宿安排
+            </h4>
+            <template v-if="isEditing">
+              <t-list :split="false">
+                <t-list-item
+                  v-for="item in dailyHotels"
+                  :key="item.index"
+                  class="hotel-item hotel-item-edit"
+                >
+                  <div class="hotel-edit-content">
+                    <div class="hotel-edit-header">
+                      <span class="hotel-edit-day">第 {{ item.dayNumber }} 天</span>
+                      <span v-if="item.theme" class="hotel-edit-theme">· {{ item.theme }}</span>
+                    </div>
+                    <div class="hotel-edit-grid">
+                      <t-input v-model="item.hotel.name" placeholder="酒店名称" size="small" />
+                      <t-input v-model="item.hotel.city" placeholder="城市" size="small" />
+                      <t-input v-model="item.hotel.district" placeholder="区/县" size="small" />
+                      <t-input v-model="item.hotel.address" placeholder="地址" size="small" />
+                      <t-input v-model="item.hotel.price_range" placeholder="价格范围 (可选)" size="small" />
+                      <t-input v-model="item.hotel.contact" placeholder="联系方式 (可选)" size="small" />
+                    </div>
+                    <t-textarea
+                      v-model="item.hotel.notes"
+                      placeholder="备注（例如：靠近景点/交通便利）"
+                      :autosize="{ minRows: 2, maxRows: 4 }"
+                      size="small"
+                      class="hotel-edit-notes"
+                    />
+                  </div>
+                </t-list-item>
+              </t-list>
+            </template>
+            <template v-else>
+              <t-list :split="false">
+                <t-list-item v-for="(hotel, index) in accommodationSummary" :key="index" class="hotel-item">
+                  <div class="hotel-content">
+                    <div class="hotel-name">{{ hotel.name || fallbackHotelName }}</div>
+                    <div class="hotel-meta" v-if="hotelRangeLabel(hotel)">{{ hotelRangeLabel(hotel) }}</div>
+                    <div class="hotel-meta" v-if="hotelMeta(hotel)">{{ hotelMeta(hotel) }}</div>
+                    <div class="hotel-notes" v-if="hotel.notes">{{ hotel.notes }}</div>
+                  </div>
+                </t-list-item>
+              </t-list>
+            </template>
+          </t-card>
 
           <!-- 旅行提示卡片：移动到地图卡片下方显示 -->
           <t-card v-if="store.plan?.tips && store.plan.tips.length" class="tips-card" :bordered="false">
@@ -57,15 +110,124 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import PlanDetail from '../components/PlanDetail.vue';
 import MapView from '../components/MapView.vue';
 import { usePlannerStore } from '../stores/planner';
 
 const store = usePlannerStore();
+const planDetailRef = ref(null);
 const mapViewRef = ref(null);
 const mapTopOffset = ref(0);
 const routeAlert = ref({ show: false, message: '' });
+const isEditing = ref(false);
+const draftPlan = ref(store.plan);
+
+const fallbackHotelName = computed(() => {
+  const d = (store.form?.destination || '').toString().trim();
+  return d ? `${d} 酒店` : '住宿地点';
+});
+
+const activePlan = computed(() => draftPlan.value || store.plan);
+
+watch(() => store.plan, (newPlan) => {
+  if (!isEditing.value) {
+    draftPlan.value = newPlan;
+  }
+}, { deep: true });
+
+const onPlanDraftChange = (value) => {
+  draftPlan.value = value;
+};
+
+const onEditModeChange = (value) => {
+  isEditing.value = value;
+  if (!value) {
+    draftPlan.value = store.plan;
+  }
+};
+
+const ensureHotel = (dayIndex) => {
+  const plan = activePlan.value;
+  if (!plan || !Array.isArray(plan.daily_itinerary)) return null;
+  if (!plan.daily_itinerary[dayIndex]) return null;
+  if (!plan.daily_itinerary[dayIndex].hotel || typeof plan.daily_itinerary[dayIndex].hotel !== 'object') {
+    plan.daily_itinerary[dayIndex].hotel = {
+      name: '',
+      city: '',
+      district: '',
+      address: '',
+      notes: '',
+      price_range: '',
+      contact: '',
+      coords: null
+    };
+  }
+  return plan.daily_itinerary[dayIndex].hotel;
+};
+
+const dailyHotels = computed(() => {
+  const plan = activePlan.value;
+  if (!plan || !Array.isArray(plan.daily_itinerary)) return [];
+
+  return plan.daily_itinerary.map((day, idx) => {
+    let hotel = day?.hotel && typeof day.hotel === 'object' ? day.hotel : null;
+    if (isEditing.value) {
+      hotel = ensureHotel(idx);
+    }
+    return {
+      index: idx,
+      dayNumber: day?.day || idx + 1,
+      theme: day?.theme || '',
+      hotel
+    };
+  });
+});
+
+const hasHotelContent = (hotel) => {
+  if (!hotel || typeof hotel !== 'object') return false;
+  return Boolean(
+    hotel.name ||
+    hotel.city ||
+    hotel.district ||
+    hotel.address ||
+    hotel.notes ||
+    hotel.price_range ||
+    hotel.contact
+  );
+};
+
+const accommodationSummary = computed(() => {
+  const plan = activePlan.value;
+  if (!plan) return [];
+  if (Array.isArray(plan.accommodation) && plan.accommodation.length) {
+    return plan.accommodation;
+  }
+  return dailyHotels.value
+    .filter(item => hasHotelContent(item.hotel))
+    .map(item => ({
+      ...item.hotel,
+      days: item.hotel?.days || `D${item.dayNumber}`
+    }));
+});
+
+const showAccommodationCard = computed(() => {
+  return isEditing.value ? dailyHotels.value.length > 0 : accommodationSummary.value.length > 0;
+});
+
+const hotelRangeLabel = (hotel) => {
+  if (!hotel) return '';
+  const range = hotel.days || hotel.day_range || hotel.dayRange || '';
+  return range ? `适用：${range}` : '';
+};
+
+const hotelMeta = (hotel) => {
+  if (!hotel) return '';
+  const location = [hotel.city, hotel.district].filter(Boolean).join(' · ');
+  const address = hotel.address || '';
+  const extras = [hotel.price_range, hotel.contact].filter(Boolean).join(' | ');
+  return [location, address, extras].filter(Boolean).join(' | ');
+};
 
 defineEmits(['fly-to', 'back-to-planner']);
 
@@ -133,7 +295,6 @@ const parseTimeToMinutes = (t) => {
 
 const rebuildLocationsFromPlan = async () => {
   const plan = store.plan;
-  const form = store.form || {};
   if (!plan || !plan.daily_itinerary || plan.daily_itinerary.length === 0) return;
 
   const ordered = [];
@@ -149,9 +310,19 @@ const rebuildLocationsFromPlan = async () => {
     });
 
     for (const { a } of withIndex) {
-      if (!a || !a.description) continue;
+      if (!a) continue;
+      const name = a.location || a.description || a.originalDescription;
+      if (!name) continue;
+      const geocodeQuery = [a.location, a.district, a.city, a.address]
+        .filter(Boolean)
+        .join(' ');
       // 均不直接使用坐标，交由地图组件后期定位
-      ordered.push({ name: a.description, coords: null, order: seq++ });
+      ordered.push({
+        name,
+        coords: a.coords || null,
+        order: seq++,
+        geocodeQuery: geocodeQuery || name
+      });
     }
   }
 
@@ -230,7 +401,103 @@ const rebuildLocationsFromPlan = async () => {
   overflow: hidden;
 }
 
+.section-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* 旅行提示卡片放在地图卡片下方，间距与全局卡片一致 */
+.accommodation-card {
+  margin-top: 16px;
+}
+
+.accommodation-card :deep(.t-list) {
+  background: transparent;
+}
+
+.accommodation-card :deep(.t-list-item) {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.accommodation-card :deep(.hotel-item-edit) {
+  flex-direction: column;
+}
+
+.accommodation-card :deep(.t-list-item:last-child) {
+  margin-bottom: 0;
+}
+
+.hotel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hotel-edit-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.hotel-edit-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hotel-edit-day {
+  font-size: 15px;
+}
+
+.hotel-edit-theme {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.hotel-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.hotel-edit-notes {
+  margin-top: 4px;
+}
+
+.hotel-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hotel-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.hotel-notes {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .tips-card {
   margin-top: 16px;
 }

@@ -73,8 +73,8 @@ export default {
   const mapReady = ref(false);
   const routeLoading = ref(false);
   const routeStatus = ref('idle'); // idle | planning | success
-    const markers = ref([]);
-    const drivingRoute = ref(null);
+  const markers = ref([]);
+  const routePolyline = ref(null);
     const geocoder = ref(null);
   const placeSearch = ref(null);
   const lastGeocoderCity = ref(null);
@@ -127,25 +127,24 @@ export default {
         const dayLocations = [];
         if (day.activities) {
           day.activities.forEach((activity) => {
-            if (activity.description) {
-              const location = props.locations.find(loc => 
-                loc.name === activity.description || 
-                loc.order === globalIndex + 1
-              );
-              if (location) {
-                dayLocations.push({
-                  ...location,
-                  coords: activity.coords || location.coords
-                });
-              } else {
-                dayLocations.push({
-                  name: activity.description,
-                  coords: activity.coords,
-                  order: globalIndex + 1
-                });
-              }
-              globalIndex++;
-            }
+            if (!activity) return;
+            const candidates = [activity.location, activity.description, activity.originalDescription]
+              .filter(Boolean);
+            if (candidates.length === 0) return;
+            const location = props.locations.find(loc => 
+              candidates.includes(loc.name) || 
+              loc.order === globalIndex + 1
+            );
+            const fallbackName = candidates[0] || `行程点 ${globalIndex + 1}`;
+            const merged = location ? { ...location } : {
+              name: fallbackName,
+              coords: activity.coords || null,
+              order: globalIndex + 1,
+            };
+            merged.coords = activity.coords || merged.coords || null;
+            merged.geocodeQuery = merged.geocodeQuery || candidates.join(' ');
+            dayLocations.push(merged);
+            globalIndex++;
           });
         }
         console.log(`  ✅ 第 ${dayIndex + 1} 天提取了 ${dayLocations.length} 个位置`);
@@ -422,9 +421,9 @@ export default {
       markers.value = [];
 
       // 清除路线
-      if (drivingRoute.value) {
-        map.value.remove(drivingRoute.value);
-        drivingRoute.value = null;
+      if (routePolyline.value) {
+        map.value.remove(routePolyline.value);
+        routePolyline.value = null;
       }
     };
 
@@ -505,11 +504,11 @@ export default {
 
       console.log(`🚗 开始规划路线,共 ${locations.length} 个点`);
 
-      // 创建驾车路线规划
+      // 创建驾车路线服务（不直接绑定地图，避免清除自定义标记）
       const driving = new AMap.Driving({
-        map: map.value,
-        policy: AMap.DrivingPolicy.LEAST_TIME, // 最快路线
-        hideMarkers: true, // 隐藏默认标记(我们已经添加了自定义标记)
+        policy: AMap.DrivingPolicy.LEAST_TIME,
+        extensions: 'all',
+        showTraffic: false,
       });
 
       // 构建途经点数组
@@ -539,26 +538,47 @@ export default {
       console.log(`🚩 起点: ${startLoc.name} [${startLoc.coords}]`);
       console.log(`🏁 终点: ${endLoc.name} [${endLoc.coords}]`);
 
-      // 搜索路线
-      if (waypoints.length > 0) {
-        driving.search(start, end, { waypoints }, (status, result) => {
-          if (status === 'complete') {
-            console.log('✅ 路线规划成功', result);
-          } else {
-            console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
+      const handleResult = (status, result) => {
+        if (status === 'complete' && result && result.routes && result.routes.length > 0) {
+          console.log('✅ 路线规划成功');
+          const route = result.routes[0];
+          const path = [];
+          route.steps.forEach((step) => {
+            if (Array.isArray(step.path)) {
+              step.path.forEach((point) => path.push(point));
+            }
+          });
+          if (path.length > 1) {
+            if (routePolyline.value) {
+              map.value.remove(routePolyline.value);
+              routePolyline.value = null;
+            }
+            const polyline = new AMap.Polyline({
+              path,
+              strokeColor: '#0084ff',
+              strokeOpacity: 0.8,
+              strokeWeight: 5,
+              strokeStyle: 'solid',
+              lineJoin: 'round',
+              lineCap: 'round',
+            });
+            map.value.add(polyline);
+            routePolyline.value = polyline;
+            // 重新调整视野以包含所有标记和路线
+            map.value.setFitView([...markers.value, polyline], true, [50, 50, 50, 50]);
           }
-        });
-      } else {
-        driving.search(start, end, (status, result) => {
-          if (status === 'complete') {
-            console.log('✅ 路线规划成功', result);
-          } else {
-            console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
-          }
-        });
-      }
+        } else {
+          console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
+          // 失败时至少确保标记可见
+          map.value.setFitView(markers.value, true, [50, 50, 50, 50]);
+        }
+      };
 
-      drivingRoute.value = driving;
+      if (waypoints.length > 0) {
+        driving.search(start, end, { waypoints }, handleResult);
+      } else {
+        driving.search(start, end, handleResult);
+      }
     };
     
     // 切换天数
@@ -608,14 +628,31 @@ export default {
       console.log('📍 当前天的位置详情(原始):', dayBase);
 
       // 在“展示层”注入住宿地点（不修改 store）：出发和返回
-      let locations = dayBase;
+  let locations = dayBase;
+  const cityName = extractCity();
+      const itinerary = props.dailyItinerary?.[currentDay.value - 1] || {};
+      const hotel = itinerary.hotel || null;
       if (dayBase.length > 0) {
-        const city = extractCity();
-        const lodgingName = city ? `${city} 酒店` : '住宿地点';
+        const lodgingName = (hotel && hotel.name) ? hotel.name : (cityName ? `${cityName} 酒店` : '住宿地点');
+        const geocodeQuery = hotel
+          ? [hotel.name, hotel.district, hotel.city, hotel.address].filter(Boolean).join(' ')
+          : lodgingName;
+        const lodgingStart = {
+          name: lodgingName,
+          coords: hotel?.coords || null,
+          order: -1,
+          geocodeQuery
+        };
+        const lodgingEnd = {
+          name: lodgingName,
+          coords: hotel?.coords || null,
+          order: 999999,
+          geocodeQuery
+        };
         locations = [
-          { name: lodgingName, coords: null, order: -1 },
+          lodgingStart,
           ...dayBase.map(x => ({ ...x })),
-          { name: lodgingName, coords: null, order: 999999 }
+          lodgingEnd
         ];
       }
       console.log('📍 注入住宿后的数量:', locations.length);
@@ -639,8 +676,8 @@ export default {
       const geocodedCache = new Set(); // 防止重复地理编码
       
       try {
-        const city = extractCity();
-        // 先校验已有坐标是否属于目标城市，不属于则置空以触发重新定位
+  const city = cityName || extractCity();
+  // 先校验已有坐标是否属于目标城市，不属于则置空以触发重新定位
         for (const loc of locations) {
           if (loc.coords && loc.coords.length === 2) {
             const ok = await verifyCoordsInCity(loc.coords, city);
@@ -654,29 +691,34 @@ export default {
         // 为缺失坐标的地点进行地理编码（使用“城市+地名”强绑定）
         for (const loc of locations) {
           if (!loc.coords || loc.coords.length !== 2) {
-            const placeName = normalizePlaceName(loc.name);
+            const query = loc.geocodeQuery || loc.name;
+            if (!query) {
+              console.warn('⚠️ 无有效检索关键词，跳过地理编码');
+              continue;
+            }
+            const cacheKey = normalizePlaceName(query);
             
             // 跳过已经尝试过但失败的地点
-            if (geocodedCache.has(placeName)) {
-              console.log(`⏭️ 跳过已处理的地点: ${placeName}`);
+            if (geocodedCache.has(cacheKey)) {
+              console.log(`⏭️ 跳过已处理的地点: ${query}`);
               continue;
             }
             
-            geocodedCache.add(placeName);
-            console.log(`🔍 为 "${placeName}" 进行地理编码...`);
+            geocodedCache.add(cacheKey);
+            console.log(`🔍 为 "${query}" 进行地理编码...`);
             
             try {
-              const coords = await geocodeByAMap(placeName);
+              const coords = await geocodeByAMap(query);
               if (coords) {
-                console.log(`✅ 地理编码成功: ${placeName} -> [${coords}]`);
+                console.log(`✅ 地理编码成功: ${query} -> [${coords}]`);
                 loc.coords = coords;
               } else {
-                console.warn(`❌ 地理编码失败: ${placeName}，将从路线中排除`);
-                failed.push(placeName);
+                console.warn(`❌ 地理编码失败: ${query}，将从路线中排除`);
+                failed.push(query);
               }
             } catch (error) {
-              console.error(`❌ 地理编码出错: ${placeName}`, error);
-              failed.push(placeName);
+              console.error(`❌ 地理编码出错: ${query}`, error);
+              failed.push(query);
             }
           }
         }

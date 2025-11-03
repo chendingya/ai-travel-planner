@@ -365,7 +365,7 @@ taskkill /PID <PID> /F
 ### 地图相关
 
 **Q: 地图不显示或显示空白？**
-- 确认高德地图 API Key 已配置在 `frontend/.env` 中
+- 确认 `backend/.env` 中的 PUBLIC_AMAP_KEY / PUBLIC_AMAP_SECURITY_CODE 已配置
 - 检查浏览器控制台是否有地图加载错误
 - 确认 API Key 类型为 "Web端(JS API)"
 - 查看 `frontend/高德地图配置说明.md` 获取详细配置说明

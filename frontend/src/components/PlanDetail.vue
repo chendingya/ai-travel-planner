@@ -52,11 +52,33 @@
           :value="String(index)"
           :header="`第 ${index + 1} 天：${day.theme || '精彩行程'}`"
         >
+            <div v-if="editMode" class="hotel-edit-container">
+              <div class="hotel-edit-title">
+                <t-icon name="home" /> 当晚住宿
+              </div>
+              <div class="hotel-edit-grid">
+                <t-input v-model="day.hotel.name" placeholder="酒店名称" size="small" />
+                <t-input v-model="day.hotel.city" placeholder="城市" size="small" />
+                <t-input v-model="day.hotel.district" placeholder="区/县" size="small" />
+                <t-input v-model="day.hotel.address" placeholder="地址" size="small" />
+                <t-input v-model="day.hotel.price_range" placeholder="价格范围 (可选)" size="small" />
+                <t-input v-model="day.hotel.contact" placeholder="联系方式 (可选)" size="small" />
+              </div>
+              <t-textarea
+                v-model="day.hotel.notes"
+                placeholder="备注（例如：靠近景点/交通便利）"
+                :autosize="{ minRows: 2, maxRows: 4 }"
+                size="small"
+              />
+            </div>
           <t-timeline class="day-timeline">
             <!-- 起点：住宿地（仅展示模式） -->
             <t-timeline-item v-if="!editMode" :label="''">
               <div class="activity-item">
-                <div class="activity-content">出发：{{ lodgingName }}</div>
+                <div class="activity-content">
+                  出发：{{ hotelDisplay(startHotelInfo(index)) }}
+                  <div class="activity-sub" v-if="hotelSubtitle(startHotelInfo(index))">{{ hotelSubtitle(startHotelInfo(index)) }}</div>
+                </div>
               </div>
             </t-timeline-item>
             <t-timeline-item 
@@ -88,7 +110,10 @@
             <!-- 终点：住宿地（仅展示模式） -->
             <t-timeline-item v-if="!editMode" :label="''">
               <div class="activity-item">
-                <div class="activity-content">返回：{{ lodgingName }}</div>
+                <div class="activity-content">
+                  返回：{{ hotelDisplay(endHotelInfo(index)) }}
+                  <div class="activity-sub" v-if="hotelSubtitle(endHotelInfo(index))">{{ hotelSubtitle(endHotelInfo(index)) }}</div>
+                </div>
               </div>
             </t-timeline-item>
           </t-timeline>
@@ -104,65 +129,61 @@
           <t-icon name="money-circle" />
           预算分解
         </h4>
-        <div class="budget-grid-wrapper">
-          <div v-if="plan.budget_breakdown.transportation" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">🚗</div>
-              <div class="budget-label">交通</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.transportation }}</div>
+            <div class="budget-overview">
+              <div class="budget-overview-item">
+                <span class="budget-overview-label">计划总预算</span>
+                <span v-if="!editMode" class="budget-overview-value">¥{{ formatCurrency(formBudget) }}</span>
+                <t-input-number
+                  v-else
+                  v-model="formBudget"
+                  :min="0"
+                  :step="100"
+                  size="small"
+                />
+              </div>
+              <div class="budget-overview-item">
+                <span class="budget-overview-label">分类合计</span>
+                <span class="budget-overview-value">¥{{ formatCurrency(breakdownTotal) }}</span>
+              </div>
+            </div>
+            <div v-if="hasBudgetGap" class="budget-gap">
+              分类合计与总预算相差 ¥{{ formatCurrency(budgetDifferenceAbs) }}，请确认后再保存。
+            </div>
+        <template v-if="!editMode">
+          <div class="budget-grid-wrapper">
+            <div v-for="entry in budgetEntries" :key="entry.key" class="budget-col">
+              <div class="budget-item">
+                <t-icon :name="budgetIconName(entry.key)" class="budget-icon" />
+                <div class="budget-label">{{ budgetLabelMap[entry.key] || entry.key }}</div>
+                <div class="budget-value">¥{{ formatCurrency(entry.value) }}</div>
+              </div>
             </div>
           </div>
-          <div v-if="plan.budget_breakdown.accommodation" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">🏨</div>
-              <div class="budget-label">住宿</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.accommodation }}</div>
+        </template>
+        <template v-else>
+          <div class="budget-edit-grid">
+            <div v-for="entry in budgetEntries" :key="entry.key" class="budget-edit-row">
+              <span class="budget-edit-label">{{ budgetLabelMap[entry.key] || entry.key }}</span>
+              <t-input-number v-model="plan.budget_breakdown[entry.key]" :min="0" size="small" />
+              <t-button theme="danger" variant="text" size="small" @click="removeBudgetItem(entry.key)">
+                删除
+              </t-button>
+            </div>
+            <div class="budget-add-row">
+              <t-input v-model="newBudgetKey" placeholder="新增类别，如门票" size="small" style="flex: 1;" />
+              <t-input-number v-model="newBudgetValue" :min="0" size="small" style="width: 140px;" />
+              <t-button theme="primary" variant="outline" size="small" @click="addBudgetItem">添加</t-button>
             </div>
           </div>
-          <div v-if="plan.budget_breakdown.meals" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">🍴</div>
-              <div class="budget-label">餐饮</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.meals }}</div>
-            </div>
-          </div>
-          <div v-if="plan.budget_breakdown.attractions" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">🎭</div>
-              <div class="budget-label">景点</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.attractions }}</div>
-            </div>
-          </div>
-          <div v-if="plan.budget_breakdown.shopping" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">🛍️</div>
-              <div class="budget-label">购物</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.shopping }}</div>
-            </div>
-          </div>
-          <div v-if="plan.budget_breakdown.other" class="budget-col">
-            <div class="budget-item">
-              <div class="budget-icon">💡</div>
-              <div class="budget-label">其他</div>
-              <div class="budget-value">¥{{ plan.budget_breakdown.other }}</div>
-            </div>
-          </div>
-        </div>
+        </template>
         <div class="budget-total">
           <span>总计</span>
-          <span class="total-value">¥{{ calculateTotal(plan.budget_breakdown) }}</span>
+          <span class="total-value">¥{{ formatCurrency(breakdownTotal) }}</span>
         </div>
         <!-- 图表区域 -->
         <div class="budget-charts">
           <t-card title="预算分布图" style="margin-bottom: 16px;">
-            <SimplePieChart :data="[
-                { name: '交通', value: plan.budget_breakdown.transportation || 0 },
-                { name: '住宿', value: plan.budget_breakdown.accommodation || 0 },
-                { name: '餐饮', value: plan.budget_breakdown.meals || 0 },
-                { name: '景点', value: plan.budget_breakdown.attractions || 0 },
-                { name: '购物', value: plan.budget_breakdown.shopping || 0 },
-                { name: '其他', value: plan.budget_breakdown.other || 0 }
-              ]" />
+            <SimplePieChart :data="budgetDataForChart" />
           </t-card>
         </div>
       </div>
@@ -181,7 +202,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import SimplePieChart from './SimplePieChart.vue';
 import GlassButton from './GlassButton.vue';
 
-const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset', 'select-day']);
+const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset', 'select-day', 'edit-mode-change', 'plan-draft-change']);
 const route = useRoute();
 const store = usePlannerStore();
 
@@ -191,11 +212,222 @@ const saving = ref(false);
 const headerRef = ref(null);
 const editMode = ref(false);
 const planId = ref(null); // 存储从数据库加载的计划ID
-const lodgingName = computed(() => {
+const defaultHotelName = computed(() => {
   const d = (store.form?.destination || '').toString().trim();
   return d ? `${d} 酒店` : '住宿地点';
 });
+
+const getHotelForDay = (dayIndex) => {
+  if (!plan.value || !Array.isArray(plan.value.daily_itinerary)) return null;
+  const day = plan.value.daily_itinerary[dayIndex];
+  if (!day) return null;
+  const hotel = day.hotel;
+  if (!hotel || typeof hotel !== 'object') return null;
+  return hotel;
+};
+
+const hotelDisplay = (hotel) => {
+  if (!hotel) return defaultHotelName.value;
+  return hotel.name || defaultHotelName.value;
+};
+
+const hotelSubtitle = (hotel) => {
+  if (!hotel) return '';
+  const location = [hotel.city, hotel.district].filter(Boolean).join(' · ');
+  const address = hotel.address && !hotel.address.includes(hotel.name) ? hotel.address : '';
+  const parts = [location, address, hotel.notes].filter(Boolean);
+  return parts.join(' | ');
+};
+
+const startHotelInfo = (dayIndex) => {
+  const currentHotel = getHotelForDay(dayIndex);
+  const prevHotel = dayIndex > 0 ? getHotelForDay(dayIndex - 1) : null;
+  return currentHotel || prevHotel;
+};
+
+const endHotelInfo = (dayIndex) => {
+  const totalDays = plan.value?.daily_itinerary?.length || 0;
+  const nextHotel = dayIndex < totalDays - 1 ? getHotelForDay(dayIndex + 1) : null;
+  const currentHotel = getHotelForDay(dayIndex);
+  return nextHotel || currentHotel || startHotelInfo(dayIndex);
+};
+
+const budgetLabelMap = {
+  transportation: '交通',
+  accommodation: '住宿',
+  meals: '餐饮',
+  attractions: '景点',
+  shopping: '购物',
+  tickets: '门票',
+  other: '其他'
+};
+
+const budgetOrder = Object.keys(budgetLabelMap);
+
+const budgetIconMap = {
+  transportation: 'explore',
+  accommodation: 'home',
+  meals: 'meat-pepper',
+  attractions: 'map',
+  tickets: 'ticket',
+  shopping: 'shop',
+  other: 'money'
+};
+
+const budgetIconName = (key) => budgetIconMap[key] || 'money-circle';
+
+const budgetEntries = computed(() => {
+  const breakdown = plan.value?.budget_breakdown || {};
+  return Object.keys(breakdown)
+    .map((key, index) => {
+      const raw = breakdown[key];
+      const numeric = Number(raw);
+      return {
+        key,
+        value: Number.isFinite(numeric) && numeric >= 0 ? numeric : 0,
+        originalIndex: index
+      };
+    })
+    .sort((a, b) => {
+      const aOrder = budgetOrder.indexOf(a.key);
+      const bOrder = budgetOrder.indexOf(b.key);
+      if (aOrder !== -1 || bOrder !== -1) {
+        if (aOrder === -1) return 1;
+        if (bOrder === -1) return -1;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+      }
+      return a.originalIndex - b.originalIndex;
+    })
+    .map(({ key, value }) => ({ key, value }));
+});
+
+const budgetDataForChart = computed(() => {
+  return budgetEntries.value.map(({ key, value }) => ({
+    name: budgetLabelMap[key] || key,
+    value
+  }));
+});
+
+const breakdownTotal = computed(() => {
+  return budgetEntries.value.reduce((sum, entry) => sum + entry.value, 0);
+});
+
+const formBudget = computed({
+  get: () => {
+    const raw = form.value?.budget;
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+    return breakdownTotal.value;
+  },
+  set: (val) => {
+    const numeric = Number(val);
+    if (!form.value) form.value = {};
+    form.value.budget = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+  }
+});
+
+const budgetDifference = computed(() => {
+  return (formBudget.value || 0) - breakdownTotal.value;
+});
+
+const budgetDifferenceAbs = computed(() => Math.abs(budgetDifference.value));
+
+const hasBudgetGap = computed(() => budgetDifferenceAbs.value > 0.5);
+
+const addBudgetItem = () => {
+  const key = newBudgetKey.value.trim();
+  if (!key) {
+    MessagePlugin.warning('请输入预算类别名称');
+    return;
+  }
+  if (!plan.value) return;
+  if (!plan.value.budget_breakdown) plan.value.budget_breakdown = {};
+  if (Object.prototype.hasOwnProperty.call(plan.value.budget_breakdown, key)) {
+    MessagePlugin.warning('该预算类别已存在');
+    return;
+  }
+  plan.value.budget_breakdown[key] = Number(newBudgetValue.value) || 0;
+  newBudgetKey.value = '';
+  newBudgetValue.value = null;
+};
+
+const removeBudgetItem = (key) => {
+  if (!plan.value?.budget_breakdown) return;
+  delete plan.value.budget_breakdown[key];
+};
+
+const formatDayRanges = (days) => {
+  if (!days || !days.length) return '';
+  const sorted = Array.from(new Set(days)).sort((a, b) => a - b);
+  const ranges = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const current = sorted[i];
+    if (current === prev + 1) {
+      prev = current;
+      continue;
+    }
+    ranges.push([start, prev]);
+    start = current;
+    prev = current;
+  }
+  ranges.push([start, prev]);
+
+  return ranges
+    .map(([s, e]) => (s === e ? `D${s}` : `D${s}-D${e}`))
+    .join(', ');
+};
+
+const rebuildAccommodation = (itinerary) => {
+  if (!Array.isArray(itinerary)) return [];
+  const map = new Map();
+
+  itinerary.forEach((day, idx) => {
+    const hotel = day?.hotel;
+    if (!hotel || typeof hotel !== 'object') return;
+    if (!hotel.name && !hotel.address) return;
+    const key = [hotel.name || '', hotel.address || '', hotel.city || '', hotel.district || '']
+      .join('|')
+      .toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, {
+        name: hotel.name || '',
+        city: hotel.city || '',
+        district: hotel.district || '',
+        address: hotel.address || '',
+        notes: hotel.notes || hotel.why || '',
+        price_range: hotel.price_range || '',
+        contact: hotel.contact || hotel.phone || '',
+        coords: Array.isArray(hotel.coords) ? hotel.coords : null,
+        daysList: []
+      });
+    }
+    const entry = map.get(key);
+    entry.daysList.push(day.day || idx + 1);
+    if (!entry.name && hotel.name) entry.name = hotel.name;
+    if (!entry.city && hotel.city) entry.city = hotel.city;
+    if (!entry.district && hotel.district) entry.district = hotel.district;
+    if (!entry.address && hotel.address) entry.address = hotel.address;
+    if (!entry.notes && (hotel.notes || hotel.why)) entry.notes = hotel.notes || hotel.why;
+    if (!entry.price_range && hotel.price_range) entry.price_range = hotel.price_range;
+    if (!entry.contact && (hotel.contact || hotel.phone)) entry.contact = hotel.contact || hotel.phone;
+    if (!entry.coords && Array.isArray(hotel.coords)) entry.coords = hotel.coords;
+  });
+
+  const result = [];
+  map.forEach((entry) => {
+    const days = formatDayRanges(entry.daysList);
+    delete entry.daysList;
+    result.push({ ...entry, days });
+  });
+  return result;
+};
+
 const activePanels = ref(['0']); // 折叠面板当前展开的天
+const newBudgetKey = ref('');
+const newBudgetValue = ref(null);
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -205,6 +437,7 @@ const showSaveButton = computed(() => {
 onMounted(() => {
   // 从store加载方案和表单数据
   plan.value = JSON.parse(JSON.stringify(store.plan));
+  emit('plan-draft-change', plan.value);
   form.value = store.form;
   
   // 如果是从 Planner 新生成的计划，清除旧的计划 ID
@@ -234,6 +467,7 @@ onMounted(() => {
     if (newPlan && newPlan !== plan.value) {
       plan.value = JSON.parse(JSON.stringify(newPlan));
       console.log('📋 从 store 同步最新计划');
+      emit('plan-draft-change', plan.value);
     }
   }, { deep: true });
 
@@ -258,6 +492,39 @@ onMounted(() => {
     window.removeEventListener('resize', reportHeaderOffset);
   });
 });
+
+  watch(plan, (newPlan) => {
+    if (newPlan) {
+      emit('plan-draft-change', newPlan);
+    }
+  }, { deep: true });
+
+  watch(editMode, (val) => {
+    emit('edit-mode-change', val);
+    if (val) {
+      ensureHotelsInitialized();
+    }
+  });
+
+  const ensureHotelsInitialized = () => {
+    if (!plan.value || !Array.isArray(plan.value.daily_itinerary)) return;
+    plan.value.daily_itinerary.forEach((day, idx) => {
+      const hotel = day?.hotel;
+      if (!hotel || typeof hotel !== 'object') {
+        plan.value.daily_itinerary[idx].hotel = {
+          name: '',
+          city: '',
+          district: '',
+          address: '',
+          notes: '',
+          price_range: '',
+          contact: '',
+          days: '',
+          coords: null
+        };
+      }
+    });
+  };
 
 const flyToLocation = (coords) => {
   if (coords) {
@@ -290,26 +557,33 @@ const handleSavePlan = async () => {
       return;
     }
 
+    const planPayload = JSON.parse(JSON.stringify(plan.value));
+
+    const insertPayload = {
+      user_id: session.user.id,
+      destination: form.value.destination,
+      duration: form.value.duration,
+      budget: form.value.budget,
+      travelers: form.value.travelers,
+      preferences: form.value.preferences || '',
+      plan_details: planPayload
+    };
+
     const { error } = await supabase
       .from('plans')
-      .insert([
-        {
-          user_id: session.user.id,
-          destination: form.value.destination,
-          duration: form.value.duration,
-          budget: form.value.budget,
-          travelers: form.value.travelers,
-          preferences: form.value.preferences || '',
-          plan_details: plan.value
-        }
-      ]);
+      .insert([insertPayload]);
 
     if (error) throw error;
 
     MessagePlugin.success('计划已保存！');
   } catch (error) {
     console.error('Error saving plan:', error);
-    MessagePlugin.error('保存计划失败，请稍后再试');
+    const message = error?.message || '';
+    if (message.includes('Failed to fetch')) {
+      MessagePlugin.error('保存计划失败：无法连接到云端，请检查网络或 Supabase 配置');
+    } else {
+      MessagePlugin.error('保存计划失败，请稍后再试');
+    }
   } finally {
     saving.value = false;
   }
@@ -317,7 +591,16 @@ const handleSavePlan = async () => {
 
 const calculateTotal = (budget) => {
   if (!budget) return 0;
-  return Object.values(budget).reduce((sum, value) => sum + (value || 0), 0);
+  return Object.values(budget).reduce((sum, value) => {
+    const numeric = Number(value);
+    return sum + (Number.isFinite(numeric) && numeric >= 0 ? numeric : 0);
+  }, 0);
+};
+
+const formatCurrency = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0';
+  return numeric.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 };
 
 const toggleEdit = async () => {
@@ -376,8 +659,28 @@ const persistPlan = () => {
     p.daily_itinerary.forEach(d => {
       d.activities = (d.activities || []).filter(a => a && (a.description || a.time));
     });
+    if (p.budget_breakdown && typeof p.budget_breakdown === 'object') {
+      Object.keys(p.budget_breakdown).forEach((key) => {
+        const numeric = Number(p.budget_breakdown[key]);
+        p.budget_breakdown[key] = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+      });
+    }
+    const totalBudgetNumber = Number(formBudget.value);
+    if (Number.isFinite(totalBudgetNumber) && totalBudgetNumber >= 0) {
+      p.total_budget = totalBudgetNumber;
+    } else {
+      delete p.total_budget;
+    }
+    p.accommodation = rebuildAccommodation(p.daily_itinerary);
     // 深拷贝以触发 store 更新
     store.setPlan(JSON.parse(JSON.stringify(p)));
+    if (form.value) {
+      const sanitizedForm = {
+        ...form.value,
+        budget: totalBudgetNumber >= 0 ? totalBudgetNumber : 0
+      };
+      store.setForm(sanitizedForm);
+    }
     console.log('✅ 计划已保存到 store');
   } catch (e) {
     console.warn('Failed to persist plan', e);
@@ -542,6 +845,31 @@ const onCollapseChange = (vals) => {
   padding: 12px 0;
 }
 
+.hotel-edit-container {
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hotel-edit-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hotel-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
 .activity-item {
   display: flex;
   justify-content: space-between;
@@ -598,6 +926,12 @@ const onCollapseChange = (vals) => {
   line-height: 1.6;
 }
 
+.activity-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .activity-edit-row {
   display: flex;
   gap: 8px;
@@ -625,6 +959,43 @@ const onCollapseChange = (vals) => {
   border-radius: 20px;
   box-shadow: var(--glass-shadow);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.budget-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.budget-overview-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.budget-overview-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.budget-overview-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.budget-gap {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(250, 173, 20, 0.12);
+  color: #d46b08;
+  font-size: 13px;
 }
 
 .budget-section:hover {
@@ -674,10 +1045,45 @@ const onCollapseChange = (vals) => {
   background: rgba(255, 255, 255, 0.8);
 }
 
+.budget-edit-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.budget-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 12px 16px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.budget-edit-label {
+  min-width: 80px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.budget-add-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  padding: 12px 16px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
 .budget-icon {
   font-size: 32px;
   margin-bottom: 8px;
   line-height: 1;
+  display: inline-flex;
+  color: var(--text-primary);
 }
 
 .budget-label {

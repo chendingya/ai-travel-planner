@@ -23,21 +23,14 @@ Write-Host ""
 Write-Host "🔍 检查配置文件..." -ForegroundColor Yellow
 
 $backendEnv = ".\backend\.env"
-$frontendEnv = ".\frontend\.env"
-
 if (-not (Test-Path $backendEnv)) {
     Write-Host "❌ 错误: 后端 .env 文件不存在！" -ForegroundColor Red
     Write-Host "   请先复制 backend\.env.example 为 backend\.env 并填写配置" -ForegroundColor Yellow
     exit 1
 }
 
-if (-not (Test-Path $frontendEnv)) {
-    Write-Host "❌ 错误: 前端 .env 文件不存在！" -ForegroundColor Red
-    Write-Host "   请先复制 frontend\.env.example 为 frontend\.env 并填写配置" -ForegroundColor Yellow
-    exit 1
-}
-
 Write-Host "✅ 配置文件检查通过" -ForegroundColor Green
+Write-Host "ℹ️  提示: 前端运行时配置将通过 backend/.env 中的 PUBLIC_* 变量注入" -ForegroundColor DarkCyan
 Write-Host ""
 
 # 检查 Node.js 是否安装
@@ -89,7 +82,7 @@ Write-Host "  ✅ 项目启动成功！" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "📍 访问地址：" -ForegroundColor Cyan
-Write-Host "   前端: http://localhost:5173" -ForegroundColor White
+Write-Host "   前端: http://localhost:8080" -ForegroundColor White
 Write-Host "   后端: http://localhost:3001" -ForegroundColor White
 Write-Host ""
 Write-Host "💡 提示：" -ForegroundColor Yellow
@@ -103,4 +96,4 @@ Write-Host ""
 # 等待 2 秒后自动打开浏览器
 Start-Sleep -Seconds 2
 Write-Host "🌐 正在打开浏览器..." -ForegroundColor Cyan
-Start-Process "http://localhost:5173"
+Start-Process "http://localhost:8080"

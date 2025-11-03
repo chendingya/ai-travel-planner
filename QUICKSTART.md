@@ -23,12 +23,7 @@
 # 配置后端
 cd backend
 copy .env.example .env
-# 编辑 .env，填入你的 API 密钥
-
-# 配置前端
-cd ../frontend
-copy .env.example .env
-# 编辑 .env，填入你的 Supabase 配置
+# 编辑 .env，填入你的 API 密钥以及 PUBLIC_* 前端运行时配置
 ```
 
 ### 3️⃣ 启动项目（1分钟）
@@ -52,13 +47,11 @@ cd ..
 PORT=3001
 DASHSCOPE_API_KEY=sk-你的阿里百炼密钥
 SUPABASE_URL=https://你的项目.supabase.co
-SUPABASE_KEY=你的Supabase匿名密钥
-```
-
-### frontend/.env
-```env
-VITE_SUPABASE_URL=https://你的项目.supabase.co
-VITE_SUPABASE_ANON_KEY=你的Supabase匿名密钥
+SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务密钥
+PUBLIC_SUPABASE_URL=https://你的项目.supabase.co
+PUBLIC_SUPABASE_ANON_KEY=你的Supabase匿名密钥
+PUBLIC_AMAP_KEY=你的高德地图Key (可选)
+PUBLIC_AMAP_SECURITY_CODE=你的高德安全密钥 (可选)
 ```
 
 ## 验证是否成功
@@ -99,7 +92,7 @@ taskkill /PID <进程ID> /F
 
 **❌ 页面空白或无法加载**
 - 按 F12 打开浏览器控制台查看错误
-- 检查 `frontend\.env` 中的 Supabase 配置是否正确
+- 检查 `backend\.env` 中的 PUBLIC_SUPABASE_URL / PUBLIC_SUPABASE_ANON_KEY 是否正确
 - 确认后端服务是否正常运行 (访问 http://localhost:3001)
 
 **❌ 权限错误 (permission denied)**

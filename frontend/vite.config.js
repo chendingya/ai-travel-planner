@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    port: 5173,
+    port: 8080,
     strictPort: false, // 如果端口被占用，自动尝试下一个端口
     proxy: {
       '/config.js': {

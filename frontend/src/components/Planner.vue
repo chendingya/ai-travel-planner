@@ -478,18 +478,64 @@ const getPlan = async () => {
     let parsedPlan;
     
     if (data.isStructured && data.plan.daily_itinerary) {
+      const normalizeHotel = (hotel, dayIndex) => {
+        if (!hotel) {
+          return null;
+        }
+        if (typeof hotel === 'string') {
+          hotel = { name: hotel };
+        }
+        return {
+          name: hotel.name || '',
+          city: hotel.city || '',
+          district: hotel.district || '',
+          address: hotel.address || '',
+          notes: hotel.notes || hotel.why || '',
+          days: hotel.days || hotel.day_range || hotel.day || `D${dayIndex}`,
+          check_in: hotel.check_in || '',
+          check_out: hotel.check_out || '',
+          price_range: hotel.price_range || '',
+          contact: hotel.contact || hotel.phone || '',
+          coords: Array.isArray(hotel.coords) ? hotel.coords : null
+        };
+      };
+
+      const normalizeActivity = (activity) => {
+        if (!activity) {
+          return { time: '', description: '', coords: null };
+        }
+        const displayParts = [];
+        if (activity.location) displayParts.push(activity.location);
+        if (activity.description) displayParts.push(activity.description);
+        const display = displayParts.join(' - ').trim() || activity.location || activity.description || '';
+        return {
+          time: activity.time || '',
+          location: activity.location || '',
+          city: activity.city || '',
+          district: activity.district || '',
+          address: activity.address || '',
+          notes: activity.notes || '',
+          originalDescription: activity.description || '',
+          description: display,
+          // 仅保留模型已校验的坐标，地图组件会再次核对
+          coords: Array.isArray(activity.coords) ? activity.coords : null
+        };
+      };
+
       parsedPlan = {
-        daily_itinerary: data.plan.daily_itinerary.map(day => ({
-          theme: day.theme || `第 ${day.day} 天`,
-          activities: day.activities.map(activity => ({
-            time: activity.time || '',
-            description: `${activity.location || ''} - ${activity.description || ''}`.trim(),
-            // 忽略模型返回的经纬度，统一后期自行定位
-            coords: null
-          }))
+        daily_itinerary: data.plan.daily_itinerary.map((day, index) => ({
+          day: day.day || index + 1,
+          theme: day.theme || `第 ${day.day || index + 1} 天`,
+          hotel: normalizeHotel(day.hotel, index + 1),
+          activities: (day.activities || []).map(normalizeActivity)
         })),
+        accommodation: Array.isArray(data.plan.accommodation)
+          ? data.plan.accommodation.map((hotel, idx) => normalizeHotel(hotel, idx + 1)).filter(Boolean)
+          : [],
+        restaurants: Array.isArray(data.plan.restaurants) ? data.plan.restaurants : [],
+        transport: data.plan.transport || {},
         budget_breakdown: data.plan.budget_breakdown,
-        tips: data.plan.tips
+        tips: data.plan.tips || []
       };
     } else {
       const raw = data.plan || '';
@@ -578,7 +624,16 @@ const getPlan = async () => {
 
     for (const day of parsedPlan.daily_itinerary) {
       for (const activity of day.activities) {
-        mapLocations.push({ name: activity.description, coords: null, order: seq++ });
+        const displayName = activity.location || activity.originalDescription || activity.description;
+        const geocodeQuery = [activity.location, activity.district, activity.city, activity.address]
+          .filter(Boolean)
+          .join(' ');
+        mapLocations.push({
+          name: displayName,
+          coords: activity.coords || null,
+          order: seq++,
+          geocodeQuery: geocodeQuery || displayName
+        });
       }
     }
 

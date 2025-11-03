@@ -90,6 +90,10 @@ app.post('/api/plan', async (req, res) => {
 3) 所有地点均应在“目的地城市及其行政区”范围内，避免跨省/跨市的同名地点
 4) 使用官方中文名称；若可能含糊，请补充区县(district)与地址(address)
 5) 每天 3-6 个活动，按时间顺序，考虑通勤/游览时长
+6) daily_itinerary 中每一天必须包含 hotel 字段，给出当晚建议入住酒店，提供 name/city/district/address/notes 字段
+7) accommodation 数组必须列出所有建议酒店，并通过 days 或 day_range 表明对应天数
+8) 除非确有跨城或夜间移动需求，应尽量保持全程使用同一家酒店，可通过 days/day_range 标识覆盖多天
+  9) 第 N 天的夜宿酒店就是第 N+1 天的出发地：从第 2 天起，activities 的首条记录必须说明“从上一晚酒店出发”并沿用该酒店的名称、城市、区县与地址；若确需更换城市，请在上一天 hotel.notes 中说明原因和跨城方式
 
 推荐结构示例：
 {
@@ -97,6 +101,13 @@ app.post('/api/plan', async (req, res) => {
     {
       "day": 1,
       "theme": "抵达与初探",
+      "hotel": {
+        "name": "新宿格拉斯丽酒店",
+        "city": "东京",
+        "district": "新宿区",
+        "address": "日本东京都新宿区歌舞伎町1-19-1",
+        "notes": "靠近歌舞伎町与地铁站，方便晚间活动后返回"
+      },
       "activities": [
         {
           "time": "09:00",
@@ -130,7 +141,14 @@ app.post('/api/plan', async (req, res) => {
     "to_city": "建议的往返交通方式与大致耗时"
   },
   "accommodation": [
-    { "name": "示例酒店A", "city": "东京", "district": "新宿区", "address": "...", "why": "靠近主要景点，交通便捷" }
+    {
+      "name": "新宿格拉斯丽酒店",
+      "city": "东京",
+      "district": "新宿区",
+      "address": "日本东京都新宿区歌舞伎町1-19-1",
+      "days": "D1-D3",
+      "notes": "步行可达新宿站，便于第二天游览"
+    }
   ],
   "restaurants": [
     { "name": "示例餐厅B", "city": "东京", "district": "涩谷区", "address": "...", "tags": ["美食","亲子"] }
@@ -156,6 +174,8 @@ app.post('/api/plan', async (req, res) => {
 3) 活动时间要符合实际（考虑通勤与游览时间）
 4) 预算分配合理，并给出餐饮/住宿/交通/门票等建议
 5) 偏好（如动漫/美食/亲子等）需体现在景点与餐厅选择中
+6) 每一天必须给出当晚入住酒店 (hotel)，并在 accommodation 中总结所有酒店及适用天数
+7) 除非确有跨城或夜间移动需求，尽量使用同一家酒店覆盖整个行程，并在 accommodation.days/day_range 中明确范围
 
 请严格按照纯 JSON 格式返回，无任何额外说明文字或标记。`;
 
