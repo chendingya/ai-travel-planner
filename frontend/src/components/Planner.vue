@@ -19,7 +19,7 @@
         <div class="quick-input-wrapper">
           <t-textarea
             v-model="quickInput"
-            placeholder="例如：我想去日本东京玩5天，预算1万元，2个人，喜欢美食和动漫..."
+            placeholder="例如：我想去北京玩5天，预算1万元，2个人，喜欢美食和动漫..."
             :autosize="{ minRows: 3, maxRows: 6 }"
             class="quick-input"
           />
