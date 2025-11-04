@@ -50,8 +50,9 @@ SUPABASE_URL=https://你的项目.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务密钥
 PUBLIC_SUPABASE_URL=https://你的项目.supabase.co
 PUBLIC_SUPABASE_ANON_KEY=你的Supabase匿名密钥
-PUBLIC_AMAP_KEY=你的高德地图Key (可选)
+PUBLIC_AMAP_KEY=你的高德 JS API Key (Web端)
 PUBLIC_AMAP_SECURITY_CODE=你的高德安全密钥 (可选)
+PUBLIC_AMAP_REST_KEY=你的高德 Web 服务 Key (REST 必填)
 ```
 
 ## 验证是否成功

@@ -161,11 +161,14 @@ ai-travel-planner/
 4. 在 SQL Editor 中执行 `supabase-setup.sql` 创建数据表
 
 #### 3. 高德地图 API Key
-1. 访问 [高德开放平台](https://console.amap.com/)
-2. 注册并登录账号
-3. 创建应用（选择 **Web端(JS API)**）
-4. 获取 API Key 和安全密钥（可选）
-5. 详细配置说明见：`frontend/高德地图配置说明.md`
+为保证 JS SDK 与 Web 服务 API 均可正常使用，需要**两个不同类型的 Key**：
+
+1. 访问 [高德开放平台](https://console.amap.com/)，注册并登录账号
+2. 创建应用后，在“Key 管理”中分别创建：
+   - **Web端(JS API)** Key → 配置到 `PUBLIC_AMAP_KEY`（JS SDK 加载用）
+   - **Web服务** Key → 配置到 `PUBLIC_AMAP_REST_KEY`（POI/地理编码等 REST 接口用）
+3. 如需开启安全防护，可同时复制 JS Key 对应的 `securityJsCode`
+4. 详细配置说明见：`frontend/高德地图配置说明.md`
 
 ### 🎯 方式一：一键启动（Windows 推荐）
 
@@ -192,8 +195,9 @@ ai-travel-planner/
    # SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务端密钥
    # PUBLIC_SUPABASE_URL=供前端使用的 Supabase URL
    # PUBLIC_SUPABASE_ANON_KEY=Supabase 匿名密钥（公开）
-   # PUBLIC_AMAP_KEY=高德地图 JS API Key
-   # PUBLIC_AMAP_SECURITY_CODE=高德安全密钥（可选）
+   # PUBLIC_AMAP_KEY=高德地图 JS API Key (Web 端)
+   # PUBLIC_AMAP_SECURITY_CODE=高德安全密钥（可选，JS Key 专用）
+   # PUBLIC_AMAP_REST_KEY=高德地图 Web 服务 Key (REST API 专用)
    ```
 
    > 前端运行时会通过 `/config.js` 自动读取 `PUBLIC_*` 变量，无需再在 `frontend/.env` 中重复配置。
@@ -305,8 +309,9 @@ SUPABASE_SERVICE_ROLE_KEY=eyJxxx...  # Supabase 服务端密钥（严禁暴露�
 # 公开配置（前端运行时读取，仍可设置访问白名单）
 PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
-PUBLIC_AMAP_KEY=xxx...
-PUBLIC_AMAP_SECURITY_CODE=xxx...
+PUBLIC_AMAP_KEY=xxx...                 # Web端(JS API) Key
+PUBLIC_AMAP_SECURITY_CODE=xxx...       # JS 安全密钥 (可选)
+PUBLIC_AMAP_REST_KEY=yyy...            # Web服务 Key（必填）
 ```
 
 > 前端容器运行时会向 `/config.js` 请求配置脚本，该脚本由后端用上述 `PUBLIC_*` 环境变量动态生成。
@@ -364,11 +369,15 @@ taskkill /PID <PID> /F
 
 ### 地图相关
 
-**Q: 地图不显示或显示空白？**
 - 确认 `backend/.env` 中的 PUBLIC_AMAP_KEY / PUBLIC_AMAP_SECURITY_CODE 已配置
 - 检查浏览器控制台是否有地图加载错误
 - 确认 API Key 类型为 "Web端(JS API)"
 - 查看 `frontend/高德地图配置说明.md` 获取详细配置说明
+
+**Q: 地理编码或 POI 搜索报错 `USERKEY_PLAT_NOMATCH`？**
+- 确认已在 `.env` 中配置 `PUBLIC_AMAP_REST_KEY`
+- 该值必须是高德控制台 **Web服务** 类型的 Key，不能与 JS Key 共用
+- 重启后端后刷新前端，确保 `/config.js` 载入了最新配置
 
 **Q: 地图点击事件不响应？**
 - 检查地图容器是否正确加载
