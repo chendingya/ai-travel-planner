@@ -47,6 +47,7 @@
 <script>
 import { ref, watch, onMounted, onBeforeUnmount, computed } from "vue";
 import { Loading as TLoading, Icon as TIcon, Button as TButton, MessagePlugin } from 'tdesign-vue-next';
+import { searchPoi, geocodeAddress, reverseGeocode } from '../utils/amapService';
 
 export default {
   components: {
@@ -74,11 +75,12 @@ export default {
   const routeLoading = ref(false);
   const routeStatus = ref('idle'); // idle | planning | success
   const markers = ref([]);
-  const routePolyline = ref(null);
-    const geocoder = ref(null);
-  const placeSearch = ref(null);
-  const lastGeocoderCity = ref(null);
-  const lastPlaceSearchCity = ref(null);
+  const routePolylines = ref([]);
+  const cityContext = ref({ ready: false, name: '', adcode: '', location: null });
+  const locationCache = new Map();
+  const pendingLocationPromises = new Map();
+  const ridingService = ref(null);
+  const restKeyMismatchWarned = ref(false);
     const currentDay = ref(1);
     
     // 中国省市列表（用于判断是否国内）
@@ -179,191 +181,168 @@ export default {
       return name;
     };
 
-    // 确保加载/更新 Geocoder（按城市复用，城市变更时重建）
-    const ensureGeocoder = (cityParam) => new Promise((resolve) => {
-      const city = cityParam || extractCity();
-      if (geocoder.value && lastGeocoderCity.value === city) return resolve(geocoder.value);
-      AMap.plugin('AMap.Geocoder', () => {
-        console.log('🔧 初始化地理编码器，城市范围:', city);
-        geocoder.value = new AMap.Geocoder({ city });
-        lastGeocoderCity.value = city;
-        resolve(geocoder.value);
-      });
-    });
+    const stripRegionSuffix = (value = '') => value.replace(/[省市州县区]$/,'');
 
-    // 确保加载/更新 PlaceSearch（城市限定）
-    const ensurePlaceSearch = (cityParam) => new Promise((resolve) => {
-      const city = cityParam || extractCity();
-      if (placeSearch.value && lastPlaceSearchCity.value === city) return resolve(placeSearch.value);
-      AMap.plugin('AMap.PlaceSearch', () => {
-        console.log('🔧 初始化地点搜索，城市范围:', city);
-        placeSearch.value = new AMap.PlaceSearch({ city, pageSize: 5 });
-        lastPlaceSearchCity.value = city;
-        resolve(placeSearch.value);
-      });
-    });
-
-    // 先用 Geocoder，失败则回退到 PlaceSearch
-    const cityMatches = (gc, city) => {
-      const cityNorm = city.replace(/[省市州县区]$/,'');
-      const f = (s) => (s || '').toString().replace(/[省市州县区]$/,'');
-      const fields = [gc.city, gc.province, gc.district];
-      if (fields.some(x => f(x).includes(cityNorm) || cityNorm.includes(f(x)))) return true;
-      if ((gc.formattedAddress || '').includes(city)) return true;
-      return false;
-    };
-
-    const geocodeByAMap = async (keyword, depth = 0) => {
-      const base = normalizePlaceName(keyword);
-      if (!base) return null;
-      
-      // 防止无限递归
-      if (depth > 2) {
-        console.warn(`❌ 地理编码递归深度超限: ${keyword}`);
-        return null;
+    const ensureCityContext = async () => {
+      if (cityContext.value.ready) return cityContext.value;
+      const baseCity = extractCity();
+      if (!baseCity) {
+        cityContext.value = { ready: true, name: '', adcode: '', location: null };
+        return cityContext.value;
       }
-      
-      const city = extractCity();
       try {
-        await ensureGeocoder(city);
-        const q1 = `${city} ${base}`;
-        console.log(`🔍[Geocoder] 在 "${city}" 搜索 "${q1}" (深度: ${depth})`);
-        const geoRes = await new Promise((resolve) => {
-          // 添加超时保护
-          const timer = setTimeout(() => {
-            console.warn(`⏱️ Geocoder 超时: ${q1}`);
-            resolve(null);
-          }, 5000);
-          
-          geocoder.value.getLocation(q1, (status, result) => {
-            clearTimeout(timer);
-            if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
-              const gc = result.geocodes[0];
-              if (gc.location) {
-                // 校验城市是否匹配，不匹配则触发 PlaceSearch 兜底
-                if (!cityMatches(gc, city)) {
-                  console.warn(`  ⚠️[Geocoder] 城市不匹配: ${gc.formattedAddress}，期望包含:${city}`);
-                  return resolve(null);
-                }
-                const { lng, lat } = gc.location;
-                console.log(`  ✅[Geocoder] ${gc.formattedAddress} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
-            }
-            resolve(null);
-          });
-        });
-        if (geoRes) return geoRes;
+        const geocode = await geocodeAddress({ address: baseCity, city: baseCity });
+        const adcode = geocode?.adcode || '';
+        const location = geocode?.location ? geocode.location.slice() : null;
+        cityContext.value = { ready: true, name: baseCity, adcode, location };
+      } catch (error) {
+        console.warn('⚠️ 无法解析目的地城市编码:', error.message);
+        cityContext.value = { ready: true, name: baseCity, adcode: '', location: null };
+      }
+      return cityContext.value;
+    };
 
-        // 备用：不加空格的紧凑写法
-        const q2 = `${city}${base}`;
-        console.log(`🔍[Geocoder-2] 在 "${city}" 搜索 "${q2}" (深度: ${depth})`);
-        const geoRes2 = await new Promise((resolve) => {
-          const timer = setTimeout(() => {
-            console.warn(`⏱️ Geocoder-2 超时: ${q2}`);
-            resolve(null);
-          }, 5000);
-          geocoder.value.getLocation(q2, (status, result) => {
-            clearTimeout(timer);
-            if (status === 'complete' && result && result.geocodes && result.geocodes.length > 0) {
-              const gc = result.geocodes[0];
-              if (gc.location) {
-                if (!cityMatches(gc, city)) {
-                  console.warn(`  ⚠️[Geocoder-2] 城市不匹配: ${gc.formattedAddress}，期望包含:${city}`);
-                  return resolve(null);
-                }
-                const { lng, lat } = gc.location;
-                console.log(`  ✅[Geocoder-2] ${gc.formattedAddress} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
-            }
-            resolve(null);
-          });
-        });
-        if (geoRes2) return geoRes2;
+    const makeLocationCacheKey = (type, query, city) => {
+      const normalizedQuery = normalizePlaceName(query).toLowerCase();
+      return `${type}|${normalizedQuery}|${(city || '').toLowerCase()}`;
+    };
 
-        // 回退：PlaceSearch
-        await ensurePlaceSearch(city);
-        const keyword1 = `${city}${base}`; // 强绑定城市
-        console.log(`🔎[PlaceSearch] 在 "${city}" 搜索 "${keyword1}" (深度: ${depth})`);
-        const poiRes = await new Promise((resolve) => {
-          // 添加超时保护
-          const timer = setTimeout(() => {
-            console.warn(`⏱️ PlaceSearch 超时: ${keyword1}`);
-            resolve(null);
-          }, 5000);
-          
-          placeSearch.value.search(keyword1, (status, result) => {
-            clearTimeout(timer);
-            if (status === 'complete' && result && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
-              // 优先选择与城市/区县匹配的 POI
-              const pois = result.poiList.pois;
-              const cityNorm = city.replace(/[省市州县区]$/,'');
-              const normalizedMatch = (s) => (s || '').toString().replace(/[省市州县区]$/,'');
-              let preferred = pois.find(p => {
-                const c = normalizedMatch(p.cityname);
-                const a = normalizedMatch(p.adname);
-                const pn = normalizedMatch(p.pname);
-                return c.includes(cityNorm) || a.includes(cityNorm) || pn.includes(cityNorm);
-              });
-              if (!preferred) preferred = pois[0];
-              if (preferred && preferred.location) {
-                const { lng, lat } = preferred.location;
-                console.log(`  ✅[PlaceSearch] ${preferred.name} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
-            }
-            resolve(null);
-          });
-        });
-        if (poiRes) return poiRes;
-
-        // 二次尝试：使用空格分隔的组合关键词
-        const keyword2 = `${city} ${base}`;
-        console.log(`🔎[PlaceSearch-2] 在 "${city}" 搜索 "${keyword2}" (深度: ${depth})`);
-        const poiRes2 = await new Promise((resolve) => {
-          const timer = setTimeout(() => {
-            console.warn(`⏱️ PlaceSearch-2 超时: ${keyword2}`);
-            resolve(null);
-          }, 5000);
-          placeSearch.value.search(keyword2, (status, result) => {
-            clearTimeout(timer);
-            if (status === 'complete' && result && result.poiList && result.poiList.pois && result.poiList.pois.length > 0) {
-              const pois = result.poiList.pois;
-              const cityNorm = city.replace(/[省市州县区]$/,'');
-              const normalizedMatch = (s) => (s || '').toString().replace(/[省市州县区]$/,'');
-              let preferred = pois.find(p => {
-                const c = normalizedMatch(p.cityname);
-                const a = normalizedMatch(p.adname);
-                const pn = normalizedMatch(p.pname);
-                return c.includes(cityNorm) || a.includes(cityNorm) || pn.includes(cityNorm);
-              });
-              if (!preferred) preferred = pois[0];
-              if (preferred && preferred.location) {
-                const { lng, lat } = preferred.location;
-                console.log(`  ✅[PlaceSearch-2] ${preferred.name} -> [${lat}, ${lng}]`);
-                return resolve([lat, lng]);
-              }
-            }
-            resolve(null);
-          });
-        });
-        if (poiRes2) return poiRes2;
-
-        // 进一步弱化：尝试去除常见尾缀，比如"历史街区/景区/风景区/广场/公园等"
-        const softened = base.replace(/(历史街区|风景区|景区|广场|公园|老街|古城|景点|餐厅|饭店|酒店|宾馆|陵|陵园|纪念馆)$/g, '');
-        if (softened && softened !== base && depth < 2) {
-          console.log(`🔁 弱化关键词再次检索: "${softened}" (深度: ${depth + 1})`);
-          return await geocodeByAMap(softened, depth + 1);
+    const buildLookupCandidates = (location, cityName) => {
+      const candidates = [];
+      const seen = new Set();
+      const tryPush = (candidate) => {
+        const key = JSON.stringify(candidate);
+        if (!seen.has(key)) {
+          seen.add(key);
+          candidates.push(candidate);
         }
-        
-        console.warn(`❌ 所有地理编码方法均失败: ${keyword}`);
-        return null;
-      } catch (e) {
-        console.error(`❌ AMap geocode/search 异常: ${keyword}`, e);
-        return null;
+      };
+
+      const baseName = (location.name || '').trim();
+      const geocodeQuery = (location.geocodeQuery || '').trim();
+
+      if (baseName) {
+        tryPush({ type: 'poi', keywords: baseName });
+        if (cityName) {
+          tryPush({ type: 'poi', keywords: `${cityName}${baseName}` });
+        }
+      }
+
+      if (geocodeQuery && geocodeQuery !== baseName) {
+        tryPush({ type: 'geocode', address: geocodeQuery });
+        if (cityName) {
+          tryPush({ type: 'geocode', address: `${cityName}${geocodeQuery}` });
+        }
+      }
+
+      const altNames = (location.aliases || []).map((alias) => alias.trim()).filter(Boolean);
+      altNames.forEach((alias) => {
+        tryPush({ type: 'poi', keywords: alias });
+        if (cityName) {
+          tryPush({ type: 'poi', keywords: `${cityName}${alias}` });
+        }
+      });
+
+      return candidates;
+    };
+
+    const resolveCoordinatesForLocation = async (location, cityParam) => {
+      const candidates = buildLookupCandidates(location, stripRegionSuffix(cityParam?.name || ''));
+      const cityForQuery = cityParam?.adcode || cityParam?.name || '';
+
+      for (const candidate of candidates) {
+        const cacheKey = makeLocationCacheKey(candidate.type, candidate.keywords || candidate.address, cityForQuery);
+        if (locationCache.has(cacheKey)) {
+          const cached = locationCache.get(cacheKey);
+          if (cached) return cached.slice();
+          continue;
+        }
+        if (pendingLocationPromises.has(cacheKey)) {
+          try {
+            const pending = await pendingLocationPromises.get(cacheKey);
+            if (pending) return pending.slice();
+            continue;
+          } catch {
+            continue;
+          }
+        }
+
+        try {
+          let promise;
+          if (candidate.type === 'poi') {
+            promise = (async () => {
+              const pois = await searchPoi({ keywords: candidate.keywords, city: cityForQuery, citylimit: true });
+              if (!pois.length) return null;
+              const exact = pois.find((poi) => normalizePlaceName(poi.name) === normalizePlaceName(location.name));
+              const best = exact || pois[0];
+              return best.location ? best.location.slice() : null;
+            })();
+          } else {
+            promise = (async () => {
+              const geocode = await geocodeAddress({ address: candidate.address, city: cityForQuery });
+              return geocode?.location ? geocode.location.slice() : null;
+            })();
+          }
+          pendingLocationPromises.set(cacheKey, promise);
+          const coords = await promise;
+          pendingLocationPromises.delete(cacheKey);
+          locationCache.set(cacheKey, coords ? coords.slice() : null);
+          if (coords) return coords.slice();
+        } catch (error) {
+          pendingLocationPromises.delete(cacheKey);
+          if (error?.isKeyMismatch) {
+            throw error;
+          }
+          console.warn(`⚠️ 解析地点失败: ${candidate.type === 'poi' ? candidate.keywords : candidate.address}`, error.message);
+          locationCache.set(cacheKey, null);
+        }
+      }
+      return null;
+    };
+
+    const verifyCoordsInCity = async (coords, cityParam) => {
+      if (!Array.isArray(coords) || coords.length !== 2) return false;
+      const [lat, lng] = coords;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      try {
+        const info = await reverseGeocode({ location: coords });
+        if (!info) return false;
+        const expectedAdcode = cityParam?.adcode;
+        if (expectedAdcode && info.adcode) {
+          // 城市级别比较，取前四位
+          const expectedPrefix = expectedAdcode.slice(0, 4);
+          const actualPrefix = info.adcode.slice(0, 4);
+          if (expectedPrefix && actualPrefix && expectedPrefix === actualPrefix) return true;
+        }
+        const expectedName = stripRegionSuffix(cityParam?.name || '');
+        if (!expectedName) return true;
+        const fields = [info.city, info.province, info.district].map(stripRegionSuffix);
+        return fields.some((field) => field && (field.includes(expectedName) || expectedName.includes(field)));
+      } catch (error) {
+        console.warn('⚠️ 反向地理编码失败:', error.message);
+        return false;
       }
     };
+
+    const ensureRidingService = () => new Promise((resolve, reject) => {
+      if (ridingService.value) {
+        resolve(ridingService.value);
+        return;
+      }
+      AMap.plugin('AMap.Riding', () => {
+        try {
+          ridingService.value = new AMap.Riding({
+            map: null,
+            hideMarkers: true,
+            autoFitView: false,
+            policy: 0, // 默认推荐路线
+          });
+          resolve(ridingService.value);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
 
     // 初始化高德地图
     const initMap = () => {
@@ -421,9 +400,11 @@ export default {
       markers.value = [];
 
       // 清除路线
-      if (routePolyline.value) {
-        map.value.remove(routePolyline.value);
-        routePolyline.value = null;
+      if (routePolylines.value.length) {
+        routePolylines.value.forEach((polyline) => {
+          map.value.remove(polyline);
+        });
+        routePolylines.value = [];
       }
     };
 
@@ -437,6 +418,19 @@ export default {
       clearMap();
       console.log('🗺️ 开始添加标记点:', locations);
 
+      const duplicateGroups = new Map();
+      locations.forEach((location) => {
+        if (!location.coords || location.coords.length !== 2) return;
+        const lat = Number(location.coords[0]);
+        const lng = Number(location.coords[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const key = `${lng.toFixed(6)}_${lat.toFixed(6)}`;
+        if (!duplicateGroups.has(key)) {
+          duplicateGroups.set(key, { size: 0, next: 0, lat, lng });
+        }
+        duplicateGroups.get(key).size += 1;
+      });
+
       locations.forEach((location, index) => {
         if (!location.coords || location.coords.length !== 2) {
           console.warn(`⚠️ 位置 ${location.name} 缺少有效坐标`);
@@ -444,17 +438,40 @@ export default {
         }
 
         // coords 格式: [lat, lng]
-        const lat = location.coords[0];
-        const lng = location.coords[1];
+        const lat = Number(location.coords[0]);
+        const lng = Number(location.coords[1]);
+        const positionKey = `${lng.toFixed(6)}_${lat.toFixed(6)}`;
+        const groupInfo = duplicateGroups.get(positionKey) || { size: 1, next: 0 };
+        const groupSize = groupInfo.size;
+        const orderInGroup = groupInfo.next;
+        groupInfo.next += 1;
+        duplicateGroups.set(positionKey, groupInfo);
+
+        let markerLng = lng;
+        let markerLat = lat;
+        let labelOffsetY = -35;
+
+        if (groupSize > 1) {
+          const offsetMeters = 35; // 微调半径，保证在地图上可见
+          const angle = (2 * Math.PI * orderInGroup) / groupSize;
+          const latRad = (lat * Math.PI) / 180;
+          const meterPerDegLat = 111320;
+          const meterPerDegLng = Math.max(Math.cos(latRad), 0.2) * 111320;
+          const deltaLat = (offsetMeters * Math.sin(angle)) / meterPerDegLat;
+          const deltaLng = (offsetMeters * Math.cos(angle)) / meterPerDegLng;
+          markerLat = lat + deltaLat;
+          markerLng = lng + deltaLng;
+          labelOffsetY -= 6 * orderInGroup;
+        }
         
         console.log(`📍 添加标记 ${index + 1}: ${location.name} [${lat}, ${lng}]`);
 
         const marker = new AMap.Marker({
-          position: new AMap.LngLat(lng, lat), // 高德需要 [lng, lat]
+          position: new AMap.LngLat(markerLng, markerLat),
           title: location.name,
           label: {
             content: `<div style="background: #0084ff; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${index + 1}</div>`,
-            offset: new AMap.Pixel(0, -35),
+            offset: new AMap.Pixel(0, labelOffsetY),
           },
           extData: {
             index: index,
@@ -486,7 +503,7 @@ export default {
     };
 
     // 绘制路线规划（需要全部坐标）
-    const drawRoute = (locations) => {
+    const drawRoute = async (locations) => {
       if (!map.value || locations.length === 0) {
         console.warn('⚠️ 地图未初始化或无位置数据,无法绘制路线');
         return;
@@ -502,83 +519,80 @@ export default {
       // 先添加标记
       addMarkers(locations);
 
-      console.log(`🚗 开始规划路线,共 ${locations.length} 个点`);
+  console.log(`[骑行] 开始规划骑行路线,共 ${locations.length} 个点`);
 
-      // 创建驾车路线服务（不直接绑定地图，避免清除自定义标记）
-      const driving = new AMap.Driving({
-        policy: AMap.DrivingPolicy.LEAST_TIME,
-        extensions: 'all',
-        showTraffic: false,
-      });
+      const validPoints = locations
+        .filter(loc => loc.coords && loc.coords.length === 2)
+        .map(loc => ({
+          raw: loc,
+          lngLat: new AMap.LngLat(loc.coords[1], loc.coords[0])
+        }));
 
-      // 构建途经点数组
-      const waypoints = [];
-      if (locations.length > 2) {
-        for (let i = 1; i < locations.length - 1; i++) {
-          const loc = locations[i];
-          if (loc.coords && loc.coords.length === 2) {
-            waypoints.push(new AMap.LngLat(loc.coords[1], loc.coords[0]));
-          }
-        }
-        console.log(`🛣️ 途经点数量: ${waypoints.length}`);
-      }
-
-      // 起点和终点
-      const startLoc = locations[0];
-      const endLoc = locations[locations.length - 1];
-      
-      if (!startLoc.coords || !endLoc.coords) {
-        console.error('❌ 起点或终点缺少坐标');
+      if (validPoints.length < 2) {
+        console.warn('⚠️ 有效坐标少于两个，跳过骑行路线规划');
+        map.value.setFitView(markers.value, true, [50, 50, 50, 50]);
         return;
       }
 
-      const start = new AMap.LngLat(startLoc.coords[1], startLoc.coords[0]);
-      const end = new AMap.LngLat(endLoc.coords[1], endLoc.coords[0]);
-
-      console.log(`🚩 起点: ${startLoc.name} [${startLoc.coords}]`);
-      console.log(`🏁 终点: ${endLoc.name} [${endLoc.coords}]`);
-
-      const handleResult = (status, result) => {
-        if (status === 'complete' && result && result.routes && result.routes.length > 0) {
-          console.log('✅ 路线规划成功');
-          const route = result.routes[0];
-          const path = [];
-          route.steps.forEach((step) => {
-            if (Array.isArray(step.path)) {
-              step.path.forEach((point) => path.push(point));
-            }
-          });
-          if (path.length > 1) {
-            if (routePolyline.value) {
-              map.value.remove(routePolyline.value);
-              routePolyline.value = null;
-            }
-            const polyline = new AMap.Polyline({
-              path,
-              strokeColor: '#0084ff',
-              strokeOpacity: 0.8,
-              strokeWeight: 5,
-              strokeStyle: 'solid',
-              lineJoin: 'round',
-              lineCap: 'round',
-            });
-            map.value.add(polyline);
-            routePolyline.value = polyline;
-            // 重新调整视野以包含所有标记和路线
-            map.value.setFitView([...markers.value, polyline], true, [50, 50, 50, 50]);
-          }
-        } else {
-          console.warn('⚠️ 路线规划失败,仅显示标记点', status, result);
-          // 失败时至少确保标记可见
-          map.value.setFitView(markers.value, true, [50, 50, 50, 50]);
-        }
-      };
-
-      if (waypoints.length > 0) {
-        driving.search(start, end, { waypoints }, handleResult);
-      } else {
-        driving.search(start, end, handleResult);
+      if (routePolylines.value.length) {
+        routePolylines.value.forEach((polyline) => {
+          map.value.remove(polyline);
+        });
+        routePolylines.value = [];
       }
+
+      const riding = await ensureRidingService();
+
+      const fitTargets = [...markers.value];
+
+      for (let i = 0; i < validPoints.length - 1; i += 1) {
+        const start = validPoints[i];
+        const end = validPoints[i + 1];
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => {
+          riding.search(start.lngLat, end.lngLat, (status, result) => {
+            if (status === 'complete' && result && result.routes && result.routes.length > 0) {
+              const route = result.routes[0];
+              const path = [];
+              route.rides?.forEach((segment) => {
+                segment.path?.forEach((point) => path.push(point));
+              });
+              if (path.length > 1) {
+                const polyline = new AMap.Polyline({
+                  path,
+                  strokeColor: '#00c48f',
+                  strokeOpacity: 0.85,
+                  strokeWeight: 5,
+                  strokeStyle: 'solid',
+                  lineJoin: 'round',
+                  lineCap: 'round',
+                });
+                map.value.add(polyline);
+                routePolylines.value.push(polyline);
+                fitTargets.push(polyline);
+                console.log(`✅ 第 ${i + 1} 段骑行路线规划成功`);
+                resolve();
+                return;
+              }
+            }
+
+            console.warn(`⚠️ 第 ${i + 1} 段骑行路线规划失败，使用直线连接`);
+            const fallback = new AMap.Polyline({
+              path: [start.lngLat, end.lngLat],
+              strokeColor: '#99a9bf',
+              strokeOpacity: 0.6,
+              strokeWeight: 3,
+              strokeStyle: 'dashed',
+            });
+            map.value.add(fallback);
+            routePolylines.value.push(fallback);
+            fitTargets.push(fallback);
+            resolve();
+          });
+        });
+      }
+
+      map.value.setFitView(fitTargets, true, [50, 50, 50, 50]);
     };
     
     // 切换天数
@@ -587,36 +601,12 @@ export default {
       updateMapForCurrentDay();
     };
     
-    // 反向校验：坐标是否属于目标城市
-    const verifyCoordsInCity = async (coords, city) => {
-      if (!coords || coords.length !== 2) return false;
-      await ensureGeocoder(city);
-      return await new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          console.warn('⏱️ 反向地理编码超时');
-          resolve(false);
-        }, 5000);
-        const lnglat = new AMap.LngLat(coords[1], coords[0]);
-        geocoder.value.getAddress(lnglat, (status, result) => {
-          clearTimeout(timer);
-          if (status === 'complete' && result && result.regeocode && result.regeocode.addressComponent) {
-            const ac = result.regeocode.addressComponent;
-            const fields = [ac.city, ac.province, ac.district];
-            const cityNorm = city.replace(/[省市州县区]$/,'');
-            const f = (s) => (s || '').toString().replace(/[省市州县区]$/,'');
-            const ok = fields.some(x => f(x).includes(cityNorm) || cityNorm.includes(f(x)));
-            return resolve(!!ok);
-          }
-          resolve(false);
-        });
-      });
-    };
-
     // 更新当前天的地图
     const updateMapForCurrentDay = async () => {
       console.log('🔄 开始更新地图 - 第', currentDay.value, '天');
       console.log('🗺️ 地图状态:', map.value ? '已初始化' : '未初始化');
       console.log('🏠 是否国内:', isDomestic.value);
+      restKeyMismatchWarned.value = false;
       
       if (!map.value || !isDomestic.value) {
         console.warn('⚠️ 地图未初始化或非国内目的地，跳过更新');
@@ -627,133 +617,144 @@ export default {
       console.log('📍 当前天的位置数量(原始):', dayBase.length);
       console.log('📍 当前天的位置详情(原始):', dayBase);
 
-      // 在“展示层”注入住宿地点（不修改 store）：出发和返回
-  let locations = dayBase;
-  const cityName = extractCity();
       const itinerary = props.dailyItinerary?.[currentDay.value - 1] || {};
-      const hotel = itinerary.hotel || null;
-      if (dayBase.length > 0) {
-        const lodgingName = (hotel && hotel.name) ? hotel.name : (cityName ? `${cityName} 酒店` : '住宿地点');
-        const geocodeQuery = hotel
-          ? [hotel.name, hotel.district, hotel.city, hotel.address].filter(Boolean).join(' ')
-          : lodgingName;
-        const lodgingStart = {
-          name: lodgingName,
-          coords: hotel?.coords || null,
-          order: -1,
-          geocodeQuery
-        };
-        const lodgingEnd = {
-          name: lodgingName,
-          coords: hotel?.coords || null,
-          order: 999999,
-          geocodeQuery
-        };
-        locations = [
-          lodgingStart,
-          ...dayBase.map(x => ({ ...x })),
-          lodgingEnd
-        ];
-      }
-      console.log('📍 注入住宿后的数量:', locations.length);
-      console.log('📍 注入住宿后的详情:', locations);
-      
-      if (locations.length === 0) {
+      let locations = dayBase;
+
+      if (dayBase.length === 0) {
         console.warn('⚠️ 没有位置数据，跳过更新');
         return;
       }
-      
+
       // 防止重复更新：如果正在更新中，直接返回
       if (routeLoading.value) {
         console.log('⚠️ 路线正在规划中，跳过重复请求');
         return;
       }
-      
-  routeLoading.value = true;
-  // 仅在组件内部显示唯一的规划提示，避免全局重复
-  routeStatus.value = 'planning';
-      const failed = [];
-      const geocodedCache = new Set(); // 防止重复地理编码
-      
+
+      routeLoading.value = true;
+      // 仅在组件内部显示唯一的规划提示，避免全局重复
+      routeStatus.value = 'planning';
+  const failed = [];
+  let abortedByError = false;
+
       try {
-  const city = cityName || extractCity();
-  // 先校验已有坐标是否属于目标城市，不属于则置空以触发重新定位
+        const cityMeta = await ensureCityContext();
+        const cityName = cityMeta.name || extractCity();
+        const hotel = itinerary.hotel || null;
+
+        // 在“展示层”注入住宿地点（不修改 store）：出发和返回
+        if (dayBase.length > 0) {
+          const lodgingName = (hotel && hotel.name) ? hotel.name : (cityName ? `${cityName} 酒店` : '住宿地点');
+          const geocodeQuery = hotel
+            ? [hotel.name, hotel.district, hotel.city, hotel.address].filter(Boolean).join(' ')
+            : lodgingName;
+          const lodgingStart = {
+            name: lodgingName,
+            coords: hotel?.coords || null,
+            order: -1,
+            geocodeQuery,
+          };
+          const lodgingEnd = {
+            name: lodgingName,
+            coords: hotel?.coords || null,
+            order: 999999,
+            geocodeQuery,
+          };
+          locations = [
+            lodgingStart,
+            ...dayBase.map((item) => ({ ...item })),
+            lodgingEnd,
+          ];
+        }
+
+        console.log('📍 注入住宿后的数量:', locations.length);
+        console.log('📍 注入住宿后的详情:', locations);
+
+        const cityDetails = cityMeta;
+
+        // 先校验已有坐标是否仍落在目标城市范围内
         for (const loc of locations) {
           if (loc.coords && loc.coords.length === 2) {
-            const ok = await verifyCoordsInCity(loc.coords, city);
-            if (!ok) {
+            const inCity = await verifyCoordsInCity(loc.coords, cityDetails);
+            if (!inCity) {
               console.warn(`🌐 坐标城市不匹配，丢弃并重新定位: ${loc.name} [${loc.coords}]`);
               loc.coords = null;
             }
           }
         }
 
-        // 为缺失坐标的地点进行地理编码（使用“城市+地名”强绑定）
+        // 使用官方 Web 服务为缺失坐标的地点进行解析
         for (const loc of locations) {
           if (!loc.coords || loc.coords.length !== 2) {
-            const query = loc.geocodeQuery || loc.name;
-            if (!query) {
-              console.warn('⚠️ 无有效检索关键词，跳过地理编码');
-              continue;
-            }
-            const cacheKey = normalizePlaceName(query);
-            
-            // 跳过已经尝试过但失败的地点
-            if (geocodedCache.has(cacheKey)) {
-              console.log(`⏭️ 跳过已处理的地点: ${query}`);
-              continue;
-            }
-            
-            geocodedCache.add(cacheKey);
-            console.log(`🔍 为 "${query}" 进行地理编码...`);
-            
+            const label = loc.name || loc.geocodeQuery || '未知地点';
             try {
-              const coords = await geocodeByAMap(query);
-              if (coords) {
-                console.log(`✅ 地理编码成功: ${query} -> [${coords}]`);
-                loc.coords = coords;
+              const coords = await resolveCoordinatesForLocation(loc, cityDetails);
+              if (coords && coords.length === 2) {
+                loc.coords = coords.slice();
+                console.log(`✅ 地理编码成功: ${label} -> [${loc.coords}]`);
               } else {
-                console.warn(`❌ 地理编码失败: ${query}，将从路线中排除`);
-                failed.push(query);
+                console.warn(`❌ 地理编码失败: ${label}，将从路线中排除`);
+                failed.push(label);
               }
             } catch (error) {
-              console.error(`❌ 地理编码出错: ${query}`, error);
-              failed.push(query);
+              if (error?.isKeyMismatch) {
+                throw error;
+              }
+              console.error(`❌ 地理编码出错: ${label}`, error);
+              failed.push(label);
             }
           }
         }
-      
-      // 仅使用有坐标的点进行绘制
-  const valid = locations.filter(l => l.coords && l.coords.length === 2);
-      console.log(`📍 第 ${currentDay.value} 天，可用点 ${valid.length}/${locations.length}`, valid);
-      if (valid.length >= 2) {
-        drawRoute(valid);
-      } else if (valid.length === 1) {
-        addMarkers(valid);
-        flyTo(valid[0].coords);
-      } else {
-        console.warn('⚠️ 无有效坐标可绘制，尝试按城市居中');
-        const cityCenter = await geocodeByAMap(city);
-        if (cityCenter) flyTo(cityCenter);
-      }
+
+        // 仅使用有坐标的点进行绘制
+        const valid = locations.filter((item) => item.coords && item.coords.length === 2);
+        console.log(`📍 第 ${currentDay.value} 天，可用点 ${valid.length}/${locations.length}`, valid);
+
+        if (valid.length >= 2) {
+          await drawRoute(valid);
+        } else if (valid.length === 1) {
+          addMarkers(valid);
+          flyTo(valid[0].coords);
+        } else {
+          console.warn('⚠️ 无有效坐标可绘制，尝试按城市居中');
+          let fallbackCenter = cityDetails.location ? cityDetails.location.slice() : null;
+          if ((!fallbackCenter || fallbackCenter.length !== 2) && cityName) {
+            try {
+              const fallback = await geocodeAddress({ address: cityName, city: cityDetails.adcode || cityName });
+              fallbackCenter = fallback?.location ? fallback.location.slice() : null;
+            } catch (error) {
+              console.warn('⚠️ 目的地城市居中失败:', error.message);
+            }
+          }
+          if (fallbackCenter) flyTo(fallbackCenter);
+        }
+
         if (failed.length > 0) {
           const sample = failed.slice(0, 3).join('、');
           const more = failed.length > 3 ? ` 等 ${failed.length} 个` : '';
           MessagePlugin.warning({
             content: `以下地点未能定位：${sample}${more}。已从路线中排除。`,
             duration: 5000,
-            placement: 'top'
+            placement: 'top',
           });
           // 告知父级(用于在页面顶部展示可关闭的告警条)
           emit('route-failed-places', failed);
         }
       } catch (error) {
         console.error('❌ 更新地图出错:', error);
-        MessagePlugin.error('地图更新失败，请稍后重试');
+        if (error?.isKeyMismatch) {
+          if (!restKeyMismatchWarned.value) {
+            restKeyMismatchWarned.value = true;
+            MessagePlugin.error(error.userMessage || '高德 Web 服务 Key 与调用平台不匹配，请配置 Web 服务类型 Key (PUBLIC_AMAP_REST_KEY)。');
+          }
+        } else {
+          MessagePlugin.error('地图更新失败，请稍后重试');
+        }
+        abortedByError = true;
       } finally {
         routeLoading.value = false;
         // 路线规划完成提示（若无失败）
-        if (failed.length === 0) {
+        if (!abortedByError && failed.length === 0) {
           routeStatus.value = 'success';
           // 1.5s 后自动消失
           setTimeout(() => {
@@ -797,6 +798,10 @@ export default {
     // 监听目的地变化
     watch(() => props.destination, (newDest) => {
       if (!newDest) return;
+
+      cityContext.value = { ready: false, name: '', adcode: '', location: null };
+      locationCache.clear();
+      pendingLocationPromises.clear();
       
       if (!isDomestic.value) {
         console.log('🌍 切换到国外目的地，地图不可用');

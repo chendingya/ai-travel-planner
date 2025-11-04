@@ -5,7 +5,7 @@ export const AMAP_CONFIG = {
   key: '',
   securityJsCode: '',
   version: '2.0',
-  plugins: ['AMap.Driving', 'AMap.Marker', 'AMap.InfoWindow'],
+  plugins: ['AMap.Driving', 'AMap.Riding', 'AMap.Marker', 'AMap.InfoWindow'],
 };
 
 loadRuntimeConfig()

@@ -12,7 +12,8 @@ const runtimeConfig = {
   supabaseUrl: process.env.PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '',
   supabaseAnonKey: process.env.PUBLIC_SUPABASE_ANON_KEY || '',
   amapKey: process.env.PUBLIC_AMAP_KEY || '',
-  amapSecurityCode: process.env.PUBLIC_AMAP_SECURITY_CODE || ''
+  amapSecurityCode: process.env.PUBLIC_AMAP_SECURITY_CODE || '',
+  amapRestKey: process.env.PUBLIC_AMAP_REST_KEY || process.env.AMAP_REST_KEY || ''
 };
 
 // 检查必要的环境变量
@@ -48,7 +49,8 @@ app.get('/config.js', (req, res) => {
     supabaseUrl: runtimeConfig.supabaseUrl,
     supabaseAnonKey: runtimeConfig.supabaseAnonKey,
     amapKey: runtimeConfig.amapKey,
-    amapSecurityCode: runtimeConfig.amapSecurityCode
+    amapSecurityCode: runtimeConfig.amapSecurityCode,
+    amapRestKey: runtimeConfig.amapRestKey
   };
   res.send(`window.__APP_CONFIG__ = ${JSON.stringify(safeConfig)};`);
 });
