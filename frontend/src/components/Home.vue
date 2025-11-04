@@ -266,7 +266,7 @@ import GlassButton from './GlassButton.vue';
 defineEmits(['start-plan']);
 
 const gotoDemo = () => {
-  window.open('https://github.com/chendingya/ai-travel-planner', '_blank');
+  window.open('https://box.nju.edu.cn/d/5ccc891c28d24a378b8c/', '_blank');
 };
 </script>
 
