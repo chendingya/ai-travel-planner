@@ -17,23 +17,165 @@ const runtimeConfig = {
 };
 
 // 检查必要的环境变量
-if (!process.env.DASHSCOPE_API_KEY) {
-  console.warn('警告: DASHSCOPE_API_KEY 未设置,AI 行程规划功能将不可用');
+if (!process.env.DASHSCOPE_API_KEY && !process.env.AI_API_KEY) {
+  console.warn('警告: AI_API_KEY 或 DASHSCOPE_API_KEY 未设置,AI 行程规划功能将不可用');
 }
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('警告: Supabase 配置不完整,相关功能可能无法正常工作');
 }
 
-// 初始化阿里百炼客户端(使用 OpenAI SDK 兼容模式)
-let openai = null;
-if (process.env.DASHSCOPE_API_KEY) {
-  openai = new OpenAI({
-    apiKey: process.env.DASHSCOPE_API_KEY,
-    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-  });
-  console.log('✅ 阿里百炼 API 已配置');
+// --- 策略模式实现 AI 客户端 ---
+
+// 抽象策略基类
+class AIStrategy {
+  constructor(apiKey, baseURL, model) {
+    this.client = new OpenAI({ apiKey, baseURL });
+    this.model = model;
+  }
+
+  async generate(systemPrompt, userPrompt, options = {}) {
+    throw new Error("Method 'generate' must be implemented.");
+  }
 }
+
+// 阿里百炼 (DashScope) 策略
+class DashScopeStrategy extends AIStrategy {
+  constructor(apiKey, baseURL, model) {
+    super(
+      apiKey, 
+      baseURL || 'https://dashscope.aliyuncs.com/compatible-mode/v1', 
+      model || 'qwen3-max-preview'
+    );
+  }
+
+  async generate(systemPrompt, userPrompt, options = {}) {
+    const completion = await this.client.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      model: this.model,
+      temperature: options.temperature || 0.7,
+    });
+    return completion.choices[0].message.content.trim();
+  }
+}
+
+// GitCode 策略
+class GitCodeStrategy extends AIStrategy {
+  constructor(apiKey, baseURL, model) {
+    super(
+      apiKey, 
+      baseURL || 'https://api.gitcode.com/api/v5', 
+      model || 'deepseek-ai/DeepSeek-V3.2-Exp'
+    );
+  }
+
+  async generate(systemPrompt, userPrompt, options = {}) {
+    // GitCode/DeepSeek 可能需要特定的参数
+    const params = {
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      model: this.model,
+      temperature: options.temperature || 0.6,
+      top_p: 0.95,
+      frequency_penalty: 0,
+      max_tokens: 8192,
+      stream: false 
+    };
+
+    try {
+      console.log('🚀 发送请求到 GitCode:', JSON.stringify(params, null, 2));
+      const completion = await this.client.chat.completions.create(params);
+      console.log('📩 GitCode 响应:', JSON.stringify(completion, null, 2));
+
+      // 如果 API 返回了明确的错误码，抛出包含错误名与信息的异常，便于上层判断
+      if (completion && completion.error_code) {
+        console.error('❌ GitCode 返回了错误响应:', completion);
+        throw new Error(`GitCodeAPIError:${completion.error_code_name}:${completion.error_message}`);
+      }
+
+      if (!completion || !completion.choices || completion.choices.length === 0) {
+        console.error('❌ GitCode 返回了无效的响应结构:', completion);
+        throw new Error('GitCode API 返回了无效的响应结构 (无 choices)');
+      }
+
+      return completion.choices[0].message.content.trim();
+    } catch (error) {
+      console.error('❌ GitCode API 调用失败:', error);
+      throw error;
+    }
+  }
+}
+
+// 上下文类
+class AIContext {
+  constructor(strategy) {
+    this.strategy = strategy;
+  }
+
+  async generateResponse(systemPrompt, userPrompt, options) {
+    if (!this.strategy) {
+      throw new Error('AI Strategy not initialized');
+    }
+    try {
+      return await this.strategy.generate(systemPrompt, userPrompt, options);
+    } catch (err) {
+      // 如果是 GitCode 的审查或模型不存在等错误，并且系统配置了阿里百炼，则尝试回退到 DashScope
+      const msg = (err && err.message) ? err.message : '';
+      const isGitCodeAuditOrModelError = msg.includes('CHAT_HANDLER_INPUT_AUDIT_FAIL') || msg.includes('MODEL_DO_NOT_EXIST') || msg.startsWith('GitCodeAPIError:');
+
+      if (isGitCodeAuditOrModelError && process.env.DASHSCOPE_API_KEY && !(this.strategy instanceof DashScopeStrategy)) {
+        console.warn('⚠️ GitCode 出现审查或模型错误，尝试回退到阿里百炼(DashScope) 策略');
+        try {
+          const fallback = new DashScopeStrategy(process.env.DASHSCOPE_API_KEY, process.env.DASHSCOPE_BASE_URL, process.env.DASHSCOPE_AI_MODEL);
+          return await fallback.generate(systemPrompt, userPrompt, options);
+        } catch (fallbackErr) {
+          console.error('❌ DashScope 回退也失败:', fallbackErr);
+          // 抛出原始错误以便上层了解具体原因
+          throw err;
+        }
+      }
+
+      throw err;
+    }
+  }
+}
+
+// 初始化 AI 上下文
+let aiContext = null;
+
+function initAI() {
+  const apiKey = process.env.AI_API_KEY || process.env.DASHSCOPE_API_KEY;
+  const baseURL = process.env.AI_BASE_URL;
+  const model = process.env.AI_MODEL;
+
+  if (!apiKey) {
+    console.log('❌ 未找到 AI API Key');
+    return;
+  }
+
+  let strategy;
+  // 根据 Base URL 判断使用哪个策略
+  if (baseURL && baseURL.includes('gitcode.com')) {
+    console.log('✅ 检测到 GitCode 配置，使用 GitCode 策略');
+    strategy = new GitCodeStrategy(apiKey, baseURL, model);
+  } else if ((baseURL && baseURL.includes('dashscope')) || process.env.DASHSCOPE_API_KEY) {
+    console.log('✅ 检测到 DashScope 配置，使用阿里百炼策略');
+    strategy = new DashScopeStrategy(apiKey, baseURL, model);
+  } else {
+    // 默认回退到 DashScope 或通用处理
+    console.log('⚠️ 未识别的 Base URL，默认使用阿里百炼策略');
+    strategy = new DashScopeStrategy(apiKey, baseURL, model);
+  }
+
+  aiContext = new AIContext(strategy);
+}
+
+initAI();
 
 app.use(cors());
 app.use(express.json());
@@ -71,11 +213,11 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/api/plan', async (req, res) => {
-  // 如果没有配置阿里百炼 API,则返回错误
-  if (!openai) {
+  // 如果没有配置 AI 上下文,则返回错误
+  if (!aiContext || !aiContext.strategy) {
     return res.status(500).json({ 
       error: 'AI 功能当前不可用 - 未配置 API 密钥',
-      message: '系统管理员需要配置阿里百炼 API 密钥才能使用 AI 行程规划功能'
+      message: '系统管理员需要配置 AI API 密钥才能使用 AI 行程规划功能'
     });
   }
 
@@ -102,62 +244,62 @@ app.post('/api/plan', async (req, res) => {
   "daily_itinerary": [
     {
       "day": 1,
-      "theme": "抵达与初探",
+      "theme": "江南水乡漫游",
       "hotel": {
-        "name": "新宿格拉斯丽酒店",
-        "city": "东京",
-        "district": "新宿区",
-        "address": "日本东京都新宿区歌舞伎町1-19-1",
-        "notes": "靠近歌舞伎町与地铁站，方便晚间活动后返回"
+        "name": "杭州西湖宾馆",
+        "city": "杭州",
+        "district": "西湖区",
+        "address": "浙江省杭州市西湖区湖滨路XXX号",
+        "notes": "靠近西湖，方便傍晚漫步与观光"
       },
       "activities": [
         {
           "time": "09:00",
-          "location": "成田国际机场",
-          "city": "东京",
-          "district": "成田市",
-          "address": "日本千叶县成田市古込1-1",
-          "description": "抵达成田机场,办理入境手续"
+          "location": "杭州萧山国际机场",
+          "city": "杭州",
+          "district": "萧山区",
+          "address": "浙江省杭州市萧山区机场路",
+          "description": "抵达杭州，乘坐地铁或出租车前往市区"
         },
         {
-          "time": "12:00",
-          "location": "秋叶原",
-          "city": "东京",
-          "district": "千代田区",
-          "address": "(可选)",
-          "description": "参观动漫街区,逛动漫商店"
+          "time": "14:00",
+          "location": "西湖",
+          "city": "杭州",
+          "district": "西湖区",
+          "address": "浙江省杭州市西湖区",
+          "description": "漫步苏堤、断桥，游览西湖名胜"
         }
       ]
     }
   ],
   "budget_breakdown": {
-    "transportation": 1000,
-    "accommodation": 3000,
-    "meals": 2000,
-    "attractions": 1500,
-    "shopping": 1500,
-    "other": 1000
+    "transportation": 400,
+    "accommodation": 1800,
+    "meals": 800,
+    "attractions": 400,
+    "shopping": 800,
+    "other": 300
   },
   "transport": {
-    "in_city": "优先公共交通/打车，避开高峰",
-    "to_city": "建议的往返交通方式与大致耗时"
+    "in_city": "建议乘坐地铁或网约车",
+    "to_city": "高铁或飞机抵达"
   },
   "accommodation": [
     {
-      "name": "新宿格拉斯丽酒店",
-      "city": "东京",
-      "district": "新宿区",
-      "address": "日本东京都新宿区歌舞伎町1-19-1",
+      "name": "杭州西湖宾馆",
+      "city": "杭州",
+      "district": "西湖区",
+      "address": "浙江省杭州市西湖区湖滨路XXX号",
       "days": "D1-D3",
-      "notes": "步行可达新宿站，便于第二天游览"
+      "notes": "靠近西湖景区，方便观光与出行"
     }
   ],
   "restaurants": [
-    { "name": "示例餐厅B", "city": "东京", "district": "涩谷区", "address": "...", "tags": ["美食","亲子"] }
+    { "name": "楼外楼", "city": "杭州", "district": "西湖区", "address": "...", "tags": ["美食","本帮菜"] }
   ],
   "tips": [
-    "购买交通卡如 Suica 或 Pasmo 方便出行",
-    "提前预约热门景点门票"
+    "建议提前预订西湖游船票",
+    "高峰期注意景区人流，避开早晚高峰"
   ]
 }`;
 
@@ -181,16 +323,7 @@ app.post('/api/plan', async (req, res) => {
 
 请严格按照纯 JSON 格式返回，无任何额外说明文字或标记。`;
 
-    const completion = await openai.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt }, 
-        { role: 'user', content: userPrompt }
-      ],
-      model: 'qwen3-max-preview',
-      temperature: 0.7,
-    });
-
-    let planText = completion.choices[0].message.content.trim();
+    let planText = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.7 });
     
     // 尝试提取 JSON(去除可能的 markdown 代码块标记)
     if (planText.startsWith('```json')) {
@@ -223,7 +356,7 @@ app.post('/api/plan', async (req, res) => {
 
 // 解析旅行信息的 API
 app.post('/api/parse-travel-info', async (req, res) => {
-  if (!openai) {
+  if (!aiContext || !aiContext.strategy) {
     return res.status(500).json({ 
       error: 'AI 功能当前不可用 - 未配置 API 密钥'
     });
@@ -238,11 +371,11 @@ app.post('/api/parse-travel-info', async (req, res) => {
 
 返回格式示例：
 {
-  "destination": "日本东京",
+  "destination": "杭州",
   "duration": 5,
   "budget": 10000,
   "travelers": 2,
-  "preferences": "喜欢美食和动漫"
+  "preferences": "喜欢历史和美食"
 }
 
 规则：
@@ -253,16 +386,7 @@ app.post('/api/parse-travel-info', async (req, res) => {
 
     const userPrompt = `请从以下文本中提取旅行信息：\n\n${text}`;
 
-    const completion = await openai.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt }, 
-        { role: 'user', content: userPrompt }
-      ],
-      model: 'qwen3-max-preview',
-      temperature: 0.3,
-    });
-
-    let resultText = completion.choices[0].message.content.trim();
+    let resultText = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.3 });
     
     // 去除可能的 markdown 代码块标记
     if (resultText.startsWith('```json')) {
@@ -297,7 +421,7 @@ app.listen(port, () => {
   
   // 显示配置状态
   console.log('\n=== 配置状态 ===');
-  console.log(`✓ 阿里百炼 API: ${openai ? '已配置 ✅' : '未配置 ❌'}`);
+  console.log(`✓ AI 服务: ${aiContext && aiContext.strategy ? '已配置 ✅ (' + aiContext.strategy.constructor.name + ')' : '未配置 ❌'}`);
   console.log(`✓ Supabase: ${process.env.SUPABASE_URL ? '已配置 ✅' : '未配置 ❌'}`);
   console.log(`✓ 前端可见 Supabase Anon Key: ${runtimeConfig.supabaseAnonKey ? '已注入 ✅' : '未注入 ❌'}`);
   console.log(`✓ 高德地图 Key: ${runtimeConfig.amapKey ? '已注入 ✅' : '未注入 ❌'}`);
