@@ -1204,7 +1204,60 @@ defineExpose({
   box-shadow: none !important;
 }
 
+/* === 分享浮动按钮 === */
+.share-button-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.share-float-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 50% !important;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
+}
+
+.share-float-btn:hover {
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.4);
+  transform: translateY(-4px);
+  background: linear-gradient(135deg, #a855f7 0%, #c084fc 100%);
+}
+
+.share-float-btn.playlist-btn {
+  background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
+  box-shadow: 0 4px 16px rgba(236, 72, 153, 0.3);
+}
+
+.share-float-btn.playlist-btn:hover {
+  box-shadow: 0 8px 24px rgba(236, 72, 153, 0.4);
+  background: linear-gradient(135deg, #f43f5e 0%, #fb7185 100%);
+}
+
 @media (max-width: 768px) {
+  .share-button-container {
+    bottom: 16px;
+    right: 16px;
+    gap: 8px;
+  }
+
+  .share-float-btn {
+    width: 50px;
+    height: 50px;
+    font-size: 11px;
+  }
+
   .plan-detail-header {
     flex-direction: column;
     gap: 16px;

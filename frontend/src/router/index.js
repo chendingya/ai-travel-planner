@@ -5,6 +5,8 @@ import PlanDetailView from '../views/PlanDetailView.vue';
 import SavedPlansView from '../views/SavedPlansView.vue';
 import QuickNoteView from '../views/QuickNoteView.vue';
 import HandbookView from '../views/HandbookView.vue';
+import PlaylistView from '../views/PlaylistView.vue';
+import ShareContentView from '../views/ShareContentView.vue';
 
 const routes = [
   {
@@ -41,7 +43,19 @@ const routes = [
     path: '/postcard',
     name: 'Handbook',
     component: HandbookView,
-    meta: { title: '旅游明信片 - 拾光绘旅' }
+    meta: { title: '尺素锦书 - 拾光绘旅' }
+  },
+  {
+    path: '/playlist',
+    name: 'Playlist',
+    component: PlaylistView,
+    meta: { title: '听见山河 - 拾光绘旅' }
+  },
+  {
+    path: '/share-content',
+    name: 'ShareContent',
+    component: ShareContentView,
+    meta: { title: '妙笔云章 - 拾光绘旅' }
   },
   {
     path: '/:pathMatch(.*)*',

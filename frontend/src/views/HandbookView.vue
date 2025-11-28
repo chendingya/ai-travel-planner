@@ -4,10 +4,10 @@
     <div class="page-header">
       <div class="header-content">
         <h1 class="page-title">
-          <t-icon name="postcard" />
-          旅游明信片
+          <t-icon name="palette" />
+          尺素·锦书
         </h1>
-        <p class="page-subtitle">为您的旅程生成风景明信片设计，定制专属记忆</p>
+        <p class="page-subtitle">基于AI生成技术，为您的旅程生成风景明信片设计，定制专属记忆</p>
       </div>
       <div class="header-actions">
         <!-- 提供商选择 -->
@@ -414,6 +414,9 @@ onMounted(() => {
   gap: 20px;
   position: relative;
   overflow: hidden;
+  margin-top: 24px;
+  border-radius: 24px;
+  box-shadow: 0 4px 24px rgba(139, 92, 246, 0.3);
 }
 
 .page-header::before {
@@ -568,7 +571,7 @@ onMounted(() => {
 
 /* === 主内容区 === */
 .main-content {
-  padding: 32px 24px;
+  padding: 8px 24px 32px 24px;
   margin: 0 auto;
 }
 

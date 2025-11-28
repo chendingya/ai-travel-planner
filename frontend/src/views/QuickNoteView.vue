@@ -5,9 +5,9 @@
       <div class="header-content">
         <h1 class="page-title">
           <t-icon name="image" />
-          AI速记卡片生成
+          拾光·绘影
         </h1>
-        <p class="page-subtitle">将您的旅行计划转化为精美的视觉卡片</p>
+        <p class="page-subtitle">基于AI速记卡片技术，将您的旅行计划转化为精美的视觉卡片</p>
       </div>
       <div class="header-actions">
         <!-- 提供商选择 -->
@@ -137,15 +137,17 @@
       </div>
 
       <!-- 初始状态 -->
-      <div v-else class="initial-container">
+      <div v-if="!loading && !imageUrl && !error" class="initial-container">
         <div class="initial-card">
           <div class="initial-icon">
-            <t-icon name="image" />
+            <span>📝</span>
           </div>
-          <h3 class="initial-title">准备生成速记卡片</h3>
-          <p class="initial-subtitle">点击下方按钮，AI将为您的旅行计划生成精美的视觉卡片</p>
+          <h3 class="initial-title">AI速记卡片生成器</h3>
+          <p class="initial-subtitle">
+            基于您的旅行计划，AI将为您生成独一无二的速记卡片，记录美好瞬间
+          </p>
           <GlassButton @click="generateQuickNote" icon="palette" theme="primary" size="lg">
-            开始生成
+            开始创作
           </GlassButton>
         </div>
       </div>
@@ -306,10 +308,8 @@ const handleDownload = () => {
 };
 
 onMounted(() => {
-  // 先获取提供商列表，再自动开始生成
-  fetchProviders().then(() => {
-    generateQuickNote();
-  });
+  // 仅获取提供商列表，不自动生成
+  fetchProviders();
 });
 </script>
 
@@ -330,6 +330,9 @@ onMounted(() => {
   gap: 20px;
   position: relative;
   overflow: hidden;
+  margin-top: 24px;
+  border-radius: 24px;
+  box-shadow: 0 4px 24px rgba(0, 132, 255, 0.3);
 }
 
 .page-header::before {
@@ -411,7 +414,7 @@ onMounted(() => {
 
 /* === 主内容区 === */
 .main-content {
-  padding: 32px 24px;
+  padding: 8px 24px 32px 24px;
   max-width: 1200px;
   margin: 0 auto;
 }

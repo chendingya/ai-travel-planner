@@ -28,12 +28,12 @@
       </t-col>
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="map-section">
-          <!-- AI创作中心卡片 -->
+          <!-- 灵境·文创工坊卡片 -->
           <div class="actions-card">
             <div class="actions-header">
               <h3 class="actions-title">
                 <t-icon name="lightbulb" />
-                AI创作中心
+                灵境 · 文创工坊
               </h3>
             </div>
             <div class="actions-buttons">
@@ -48,12 +48,20 @@
                 保存计划
               </GlassButton>
               <GlassButton 
+                icon="sound"
+                @click="handleGeneratePlaylist"
+                size="sm"
+                theme="dark"
+              >
+                听见·山河
+              </GlassButton>
+              <GlassButton 
                 icon="image"
                 @click="handleGenerateQuickNote"
                 size="sm"
                 theme="dark"
               >
-                AI速记卡片
+                拾光·绘影
               </GlassButton>
               <GlassButton 
                 icon="palette"
@@ -61,10 +69,34 @@
                 size="sm"
                 theme="dark"
               >
-                旅游明信片
+                尺素·锦书
+              </GlassButton>
+              <GlassButton 
+                icon="edit"
+                @click="handleGenerateShare"
+                size="sm"
+                theme="dark"
+              >
+                妙笔·云章
               </GlassButton>
             </div>
           </div>
+          
+          <!-- 模态框 -->
+          <ShareContentModal 
+            :visible="showShareModal"
+            :destination="store.form?.destination || ''"
+            :duration="store.form?.duration || 1"
+            :daily-itinerary="store.plan?.daily_itinerary || []"
+            @update:visible="showShareModal = $event"
+          />
+          <PlaylistModal 
+            :visible="showPlaylistModal"
+            :destination="store.form?.destination || ''"
+            :duration="store.form?.duration || 1"
+            :dailyItinerary="store.plan?.daily_itinerary || []"
+            @update:visible="showPlaylistModal = $event"
+          />
 
           <div class="map-card-offset" :style="{ marginTop: '16px' }">
             <t-card class="map-card book-right" :bordered="false">
@@ -153,6 +185,8 @@ import { useRoute, useRouter } from 'vue-router';
 import PlanDetail from '../components/PlanDetail.vue';
 import MapView from '../components/MapView.vue';
 import GlassButton from '../components/GlassButton.vue';
+import ShareContentModal from '../components/ShareContentModal.vue';
+import PlaylistModal from '../components/PlaylistModal.vue';
 import { usePlannerStore } from '../stores/planner';
 
 const store = usePlannerStore();
@@ -165,6 +199,8 @@ const routeAlert = ref({ show: false, message: '' });
 const isEditing = ref(false);
 const draftPlan = ref(store.plan);
 const isSaving = ref(false);
+const showShareModal = ref(false);
+const showPlaylistModal = ref(false);
 
 // 根据路由来源判断是否显示保存按钮
 const showSaveButton = computed(() => {
@@ -360,6 +396,16 @@ const handleGeneratePostcard = () => {
   router.push({ name: 'Handbook' });
 };
 
+// 处理生成 BGM 歌单
+const handleGeneratePlaylist = () => {
+  router.push({ name: 'Playlist' });
+};
+
+// 处理生成分享文案
+const handleGenerateShare = () => {
+  router.push({ name: 'ShareContent' });
+};
+
 // 根据存储的计划，按天/时间生成顺序化的 locations
 const parseTimeToMinutes = (t) => {
   if (!t || typeof t !== 'string') return Number.POSITIVE_INFINITY;
@@ -510,8 +556,17 @@ const rebuildLocationsFromPlan = async () => {
   gap: 12px;
 }
 
+.actions-subtitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 4px 0 0 0;
+  font-style: italic;
+  letter-spacing: 2px;
+}
+
 .actions-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
   flex-wrap: wrap;
 }
