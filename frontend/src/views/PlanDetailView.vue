@@ -28,23 +28,15 @@
       </t-col>
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="map-section">
-          <!-- 操作卡片 -->
+          <!-- AI创作中心卡片 -->
           <div class="actions-card">
             <div class="actions-header">
               <h3 class="actions-title">
-                <t-icon name="tools" />
-                快捷操作
+                <t-icon name="lightbulb" />
+                AI创作中心
               </h3>
             </div>
             <div class="actions-buttons">
-              <GlassButton 
-                :icon="isEditing ? 'check' : 'edit'"
-                @click="handleToggleEdit"
-                size="sm"
-                theme="dark"
-              >
-                {{ isEditing ? '完成编辑' : '编辑行程' }}
-              </GlassButton>
               <GlassButton 
                 v-if="showSaveButton"
                 icon="save"
@@ -61,7 +53,15 @@
                 size="sm"
                 theme="dark"
               >
-                生成AI速记卡片
+                AI速记卡片
+              </GlassButton>
+              <GlassButton 
+                icon="palette"
+                @click="handleGeneratePostcard"
+                size="sm"
+                theme="dark"
+              >
+                旅游明信片
               </GlassButton>
             </div>
           </div>
@@ -354,6 +354,12 @@ const handleGenerateQuickNote = () => {
   router.push({ name: 'QuickNote' });
 };
 
+// 处理生成旅游明信片
+const handleGeneratePostcard = () => {
+  // 跳转到电子手账页面
+  router.push({ name: 'Handbook' });
+};
+
 // 根据存储的计划，按天/时间生成顺序化的 locations
 const parseTimeToMinutes = (t) => {
   if (!t || typeof t !== 'string') return Number.POSITIVE_INFINITY;
@@ -480,7 +486,7 @@ const rebuildLocationsFromPlan = async () => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  height: 128px; /* 固定高度与左侧一致 */
+  min-height: 128px; /* 最小高度 */
   padding: 24px;
   box-sizing: border-box;
 }
@@ -491,7 +497,7 @@ const rebuildLocationsFromPlan = async () => {
 }
 
 .actions-header {
-  margin-bottom: 12px; /* 与左侧卡片标题和按钮间距一致 */
+  margin-bottom: 20px; /* 与左侧卡片标题和按钮间距一致 (title margin-bottom 8px + actions margin-top 12px) */
 }
 
 .actions-title {

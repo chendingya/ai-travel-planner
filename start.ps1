@@ -1,8 +1,8 @@
-# AI 旅行规划师 - 启动脚本
+# 拾光绘旅 - 启动脚本
 # 此脚本将自动启动前端和后端服务
 
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  AI 旅行规划师 - 项目启动工具" -ForegroundColor Cyan
+Write-Host "  拾光绘旅 - 项目启动工具" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 

@@ -759,6 +759,86 @@ app.get('/api/image-providers', (req, res) => {
   });
 });
 
+// 生成旅游明信片提示词的 API
+app.post('/api/generate-postcard-prompt', async (req, res) => {
+  if (!aiContext || !aiContext.strategy) {
+    return res.status(500).json({ 
+      error: 'AI 功能当前不可用 - 未配置 API 密钥'
+    });
+  }
+
+  try {
+    const { destination, duration, dailyItinerary, style, styleName, styleSuffix } = req.body;
+
+    console.log(`🎨 正在为 ${destination} ${duration}日游生成【${styleName}】旅游明信片提示词...`);
+
+    // 构建每日简要信息
+    const dailySummary = dailyItinerary.map((day, index) => {
+      const dayNum = index + 1;
+      const theme = day.theme || '精彩行程';
+      const activities = day.activities || [];
+      const mainActivities = activities.slice(0, 2).map(a => a.location || a.description).filter(Boolean);
+      
+      return `${theme}：${mainActivities.join('、')}`;
+    }).join('，');
+
+    const systemPrompt = `你是一个专业的旅游明信片设计师，精通湖湘文化与传统艺术。请根据用户的旅行计划和指定的艺术风格生成一段中文的AI绘图提示词。
+
+旅游明信片设计要求：
+1. 明信片尺寸比例：竖版明信片设计（5.5:8.5 英寸比例）
+2. 主要元素：目的地标志性景观、当地文化符号、特色建筑
+3. 艺术风格：${styleSuffix || '中国传统艺术风格'}
+4. 装饰元素：邮票图案、邮戳、传统花纹、标题文字
+5. 色彩风格：符合指定艺术风格的配色，协调统一
+6. 整体布局：留有寄语空间，兼具美观和实用性
+
+提示词要求：
+- 使用中文描述，不用英文
+- 控制在1500字符以内（必须！）
+- 详细描述每个设计元素
+- 突出地域特色和文化内涵
+- 描述清晰具体，便于AI生成
+
+请直接返回简洁的中文的绘图提示词，无需额外说明。`;
+
+    const userPrompt = `请为以下旅行计划生成【${styleName}】风格的旅游明信片设计提示词：
+
+目的地：${destination}
+旅行天数：${duration}天
+行程亮点：${dailySummary}
+
+艺术风格特点：${styleSuffix || '中国传统艺术风格'}
+
+请生成一段中文的明信片设计提示词，要体现${destination}的特色景观和${styleName}的艺术风格。`;
+
+    let prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.75 });
+    
+    // 如果提示词超过1800字符，进行截断处理
+    if (prompt.length > 1800) {
+      console.log(`⚠️ 提示词过长 (${prompt.length}字符)，进行截断...`);
+      // 尝试在最后一个完整句子处截断
+      const truncated = prompt.substring(0, 1800);
+      const lastPeriod = Math.max(
+        truncated.lastIndexOf('。'),
+        truncated.lastIndexOf('，'),
+        truncated.lastIndexOf(','),
+        truncated.lastIndexOf('.')
+      );
+      prompt = lastPeriod > 1500 ? truncated.substring(0, lastPeriod + 1) : truncated;
+      console.log(`📏 截断后长度: ${prompt.length}字符`);
+    }
+    
+    console.log('✅ 明信片提示词生成成功');
+    res.json({ prompt, style, styleName });
+  } catch (error) {
+    console.error('❌ Error generating postcard prompt:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate postcard prompt',
+      message: '生成明信片提示词时发生错误，请稍后再试'
+    });
+  }
+});
+
 // 解析旅行信息的 API
 app.post('/api/parse-travel-info', async (req, res) => {
   if (!aiContext || !aiContext.strategy) {

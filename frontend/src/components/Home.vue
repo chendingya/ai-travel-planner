@@ -17,8 +17,8 @@
           <span class="title-line">新体验</span>
         </h1>
         <p class="hero-subtitle">
-          基于 AI 的个性化旅行方案生成器<br/>
-          让每一次出行都成为难忘的回忆
+          不只是规划一次旅行<br/>
+          更是为您自动生成一部专属的旅行纪录片
         </p>
         <div class="hero-actions">
           <t-button 

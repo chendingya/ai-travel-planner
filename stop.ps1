@@ -1,8 +1,8 @@
-# AI 旅行规划师 - 停止脚本
+# 拾光绘旅 - 停止脚本
 # 此脚本将停止所有运行中的前端和后端服务
 
 Write-Host "=====================================" -ForegroundColor Cyan
-Write-Host "  停止 AI 旅行规划师 服务" -ForegroundColor Cyan
+Write-Host "  停止 拾光绘旅 服务" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 

@@ -9,6 +9,14 @@
       </div>
       <div class="header-actions">
         <GlassButton 
+          :icon="editMode ? 'check' : 'edit'"
+          @click="toggleEdit"
+          size="sm"
+          theme="dark"
+        >
+          {{ editMode ? '完成编辑' : '编辑行程' }}
+        </GlassButton>
+        <GlassButton 
           icon="arrow-left"
           @click="handleBackToPlanner"
           size="sm"
@@ -749,7 +757,7 @@ defineExpose({
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
-  height: 128px; /* 固定高度与右侧一致 */
+  min-height: 128px; /* 最小高度 */
   box-sizing: border-box;
 }
 

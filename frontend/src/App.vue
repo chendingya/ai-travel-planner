@@ -6,7 +6,7 @@
         <div class="header-left">
           <h1 class="logo">
             <span class="logo-icon">✈️</span>
-            AI 旅行规划师
+            拾光绘旅
           </h1>
         </div>
         
