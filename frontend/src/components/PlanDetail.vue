@@ -12,6 +12,7 @@
           icon="arrow-left"
           @click="handleBackToPlanner"
           size="sm"
+          theme="dark"
         >
           重新规划
         </GlassButton>

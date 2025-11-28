@@ -214,6 +214,212 @@ function initHunyuan() {
 
 initHunyuan();
 
+// --- 图片生成策略模式 ---
+
+// 图片生成策略基类
+class ImageGenerationStrategy {
+  constructor(name) {
+    this.name = name;
+  }
+
+  async generate(prompt, options = {}) {
+    throw new Error("Method 'generate' must be implemented.");
+  }
+}
+
+// 腾讯混元策略
+class HunyuanImageStrategy extends ImageGenerationStrategy {
+  constructor() {
+    super('hunyuan');
+  }
+
+  async generate(prompt, options = {}) {
+    if (!hunyuanClient) {
+      throw new Error('混元生图功能当前不可用，请配置腾讯云密钥');
+    }
+
+    const params = {
+      Prompt: prompt,
+      NegativePrompt: options.negativePrompt || '黑色、模糊、低质量、变形',
+      Resolution: options.resolution || '1024:1024',
+      RspImgType: 'url',
+      LogoAdd: 1,
+    };
+
+    const data = await hunyuanClient.TextToImageLite(params);
+    
+    if (!data || !data.ResultImage) {
+      throw new Error('混元API返回数据格式错误');
+    }
+
+    return {
+      imageUrl: data.ResultImage,
+      seed: data.Seed,
+      provider: 'hunyuan'
+    };
+  }
+}
+
+// 魔搭社区策略 (ModelScope Qwen-Image)
+class ModelScopeImageStrategy extends ImageGenerationStrategy {
+  constructor(apiKey, baseUrl) {
+    super('modelscope');
+    this.apiKey = apiKey || process.env.MODELSCOPE_API_KEY;
+    this.baseUrl = baseUrl || process.env.MODELSCOPE_BASE_URL || 'https://api-inference.modelscope.cn/';
+    this.model = process.env.MODELSCOPE_IMAGE_MODEL || 'Qwen/Qwen-Image';
+  }
+
+  async generate(prompt, options = {}) {
+    if (!this.apiKey) {
+      throw new Error('魔搭社区API密钥未配置');
+    }
+
+    const headers = {
+      'Authorization': `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/json',
+      'X-ModelScope-Async-Mode': 'true'
+    };
+
+    // 第一步：提交生成任务
+    console.log('🚀 提交魔搭社区图片生成任务...');
+    const submitResponse = await fetch(`${this.baseUrl}v1/images/generations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: this.model,
+        prompt: prompt,
+        n: options.n || 1,
+        size: options.size || '1024x1024'
+      })
+    });
+
+    if (!submitResponse.ok) {
+      const errorText = await submitResponse.text();
+      console.error('❌ 魔搭社区任务提交失败:', errorText);
+      throw new Error(`魔搭社区任务提交失败: ${submitResponse.status}`);
+    }
+
+    const submitData = await submitResponse.json();
+    const taskId = submitData.task_id;
+
+    if (!taskId) {
+      throw new Error('魔搭社区未返回任务ID');
+    }
+
+    console.log(`📋 任务已提交，任务ID: ${taskId}`);
+
+    // 第二步：轮询任务状态
+    const maxRetries = 60; // 最多等待5分钟 (60 * 5秒)
+    const pollInterval = 5000; // 5秒
+
+    for (let i = 0; i < maxRetries; i++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+      console.log(`⏳ 轮询任务状态 (${i + 1}/${maxRetries})...`);
+      
+      const statusResponse = await fetch(`${this.baseUrl}v1/tasks/${taskId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'X-ModelScope-Task-Type': 'image_generation'
+        }
+      });
+
+      if (!statusResponse.ok) {
+        console.warn(`⚠️ 状态查询失败: ${statusResponse.status}`);
+        continue;
+      }
+
+      const statusData = await statusResponse.json();
+      console.log(`📊 任务状态: ${statusData.task_status}`);
+
+      if (statusData.task_status === 'SUCCEED') {
+        if (!statusData.output_images || statusData.output_images.length === 0) {
+          throw new Error('魔搭社区未返回图片');
+        }
+
+        return {
+          imageUrl: statusData.output_images[0],
+          taskId: taskId,
+          provider: 'modelscope'
+        };
+      } else if (statusData.task_status === 'FAILED') {
+        throw new Error(`魔搭社区图片生成失败: ${statusData.error_message || '未知错误'}`);
+      }
+      // PENDING 或 RUNNING 状态继续轮询
+    }
+
+    throw new Error('魔搭社区图片生成超时');
+  }
+}
+
+// 图片生成上下文
+class ImageGenerationContext {
+  constructor() {
+    this.strategies = new Map();
+    this.defaultStrategy = null;
+  }
+
+  registerStrategy(strategy) {
+    this.strategies.set(strategy.name, strategy);
+    if (!this.defaultStrategy) {
+      this.defaultStrategy = strategy.name;
+    }
+  }
+
+  setDefault(name) {
+    if (this.strategies.has(name)) {
+      this.defaultStrategy = name;
+    }
+  }
+
+  getAvailableProviders() {
+    return Array.from(this.strategies.keys());
+  }
+
+  async generate(prompt, options = {}) {
+    const providerName = options.provider || this.defaultStrategy;
+    const strategy = this.strategies.get(providerName);
+
+    if (!strategy) {
+      throw new Error(`未知的图片生成提供商: ${providerName}`);
+    }
+
+    return await strategy.generate(prompt, options);
+  }
+}
+
+// 初始化图片生成上下文
+const imageContext = new ImageGenerationContext();
+
+function initImageGenerators() {
+  // 注册腾讯混元
+  if (hunyuanClient) {
+    imageContext.registerStrategy(new HunyuanImageStrategy());
+    console.log('✅ 混元生图策略已注册');
+  }
+
+  // 注册魔搭社区
+  if (process.env.MODELSCOPE_API_KEY) {
+    imageContext.registerStrategy(new ModelScopeImageStrategy());
+    console.log('✅ 魔搭社区策略已注册');
+  }
+
+  // 设置默认提供商
+  const defaultProvider = process.env.IMAGE_PROVIDER || 'hunyuan';
+  if (imageContext.strategies.has(defaultProvider)) {
+    imageContext.setDefault(defaultProvider);
+    console.log(`✅ 默认图片生成提供商: ${defaultProvider}`);
+  } else if (imageContext.strategies.size > 0) {
+    const first = imageContext.strategies.keys().next().value;
+    imageContext.setDefault(first);
+    console.log(`⚠️ 指定的默认提供商 ${defaultProvider} 不可用，使用 ${first}`);
+  }
+}
+
+initImageGenerators();
+
 app.use(cors());
 app.use(express.json());
 
@@ -455,17 +661,17 @@ ${dailySummary}
   }
 });
 
-// 生成图片的 API (调用腾讯云混元生图)
+// 生成图片的 API (支持多提供商切换)
 app.post('/api/generate-image', async (req, res) => {
-  if (!hunyuanClient) {
+  if (imageContext.strategies.size === 0) {
     return res.status(500).json({ 
-      error: '混元生图功能当前不可用',
-      message: '系统管理员需要配置腾讯云密钥才能使用混元生图功能'
+      error: '图片生成功能当前不可用',
+      message: '系统管理员需要配置腾讯云密钥或魔搭社区密钥才能使用图片生成功能'
     });
   }
 
   try {
-    const { prompt } = req.body;
+    const { prompt, provider, negativePrompt, resolution, size } = req.body;
 
     if (!prompt) {
       return res.status(400).json({ 
@@ -474,39 +680,29 @@ app.post('/api/generate-image', async (req, res) => {
       });
     }
 
-    console.log(`🖼️ 正在调用混元生图API...`);
+    const selectedProvider = provider || imageContext.defaultStrategy;
+    console.log(`🖼️ 正在调用 ${selectedProvider} 生图API...`);
     console.log(`📝 提示词长度: ${prompt.length} 字符`);
 
-    // 调用混元生图极速版 API
-    const params = {
-      Prompt: prompt,
-      NegativePrompt: '黑色、模糊、低质量、变形',
-      Resolution: '1024:1024',
-      RspImgType: 'url',
-      LogoAdd: 1, // 添加AI生成标识
-    };
-
-    const data = await hunyuanClient.TextToImageLite(params);
-    
-    if (!data || !data.ResultImage) {
-      console.error('❌ 混元API返回数据异常:', data);
-      throw new Error('混元API返回数据格式错误');
-    }
-
-    console.log('✅ 图片生成成功');
-    console.log(`🔗 图片URL: ${data.ResultImage}`);
-    console.log(`🌱 随机种子: ${data.Seed}`);
-
-    res.json({ 
-      imageUrl: data.ResultImage,
-      seed: data.Seed
+    const result = await imageContext.generate(prompt, {
+      provider: selectedProvider,
+      negativePrompt,
+      resolution,
+      size
     });
+
+    console.log(`✅ 图片生成成功 (提供商: ${result.provider})`);
+    console.log(`🔗 图片URL: ${result.imageUrl}`);
+
+    res.json(result);
   } catch (error) {
     console.error('❌ Error generating image:', error);
     
-    // 处理腾讯云API特定错误
+    // 处理各种API特定错误
     let errorMessage = '生成图片时发生错误，请稍后再试';
+    
     if (error.code) {
+      // 腾讯云API错误
       switch (error.code) {
         case 'AuthFailure':
           errorMessage = '腾讯云认证失败，请检查密钥配置';
@@ -526,6 +722,8 @@ app.post('/api/generate-image', async (req, res) => {
         default:
           errorMessage = error.message || errorMessage;
       }
+    } else {
+      errorMessage = error.message || errorMessage;
     }
     
     res.status(500).json({ 
@@ -534,6 +732,31 @@ app.post('/api/generate-image', async (req, res) => {
       code: error.code
     });
   }
+});
+
+// 获取可用的图片生成提供商列表
+app.get('/api/image-providers', (req, res) => {
+  const providers = imageContext.getAvailableProviders();
+  const providerInfo = {
+    hunyuan: {
+      name: '腾讯混元',
+      description: '腾讯云混元生图极速版',
+      icon: 'cloud'
+    },
+    modelscope: {
+      name: '魔搭社区',
+      description: 'ModelScope Qwen-Image',
+      icon: 'app'
+    }
+  };
+
+  res.json({
+    providers: providers.map(p => ({
+      id: p,
+      ...providerInfo[p]
+    })),
+    default: imageContext.defaultStrategy
+  });
 });
 
 // 解析旅行信息的 API
@@ -604,7 +827,8 @@ app.listen(port, () => {
   // 显示配置状态
   console.log('\n=== 配置状态 ===');
   console.log(`✓ AI 服务: ${aiContext && aiContext.strategy ? '已配置 ✅ (' + aiContext.strategy.constructor.name + ')' : '未配置 ❌'}`);
-  console.log(`✓ 混元生图: ${hunyuanClient ? '已配置 ✅' : '未配置 ❌'}`);
+  console.log(`✓ 图片生成提供商: ${imageContext.strategies.size > 0 ? `已配置 ✅ (${Array.from(imageContext.strategies.keys()).join(', ')})` : '未配置 ❌'}`);
+  console.log(`✓ 默认图片提供商: ${imageContext.defaultStrategy || '无'}`);
   console.log(`✓ Supabase: ${process.env.SUPABASE_URL ? '已配置 ✅' : '未配置 ❌'}`);
   console.log(`✓ 前端可见 Supabase Anon Key: ${runtimeConfig.supabaseAnonKey ? '已注入 ✅' : '未注入 ❌'}`);
   console.log(`✓ 高德地图 Key: ${runtimeConfig.amapKey ? '已注入 ✅' : '未注入 ❌'}`);

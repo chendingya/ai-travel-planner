@@ -41,6 +41,7 @@
                 :icon="isEditing ? 'check' : 'edit'"
                 @click="handleToggleEdit"
                 size="sm"
+                theme="dark"
               >
                 {{ isEditing ? '完成编辑' : '编辑行程' }}
               </GlassButton>
@@ -50,6 +51,7 @@
                 @click="handleSavePlan"
                 :loading="isSaving"
                 size="sm"
+                theme="dark"
               >
                 保存计划
               </GlassButton>
@@ -57,7 +59,7 @@
                 icon="image"
                 @click="handleGenerateQuickNote"
                 size="sm"
-                theme="primary"
+                theme="dark"
               >
                 生成AI速记卡片
               </GlassButton>

@@ -30,7 +30,7 @@
             <t-icon name="rocket" />
             立即开始规划
           </t-button>
-          <GlassButton icon="play-circle" @click="gotoDemo">
+          <GlassButton icon="play-circle" @click="gotoDemo" theme="dark">
             观看演示
           </GlassButton>
         </div>
