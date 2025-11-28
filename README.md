@@ -7,10 +7,15 @@
 ## ✨ 核心功能
 
 ### 🧠 智能行程规划
-- **AI 驱动**：基于阿里云百炼大模型（通义千问），智能生成个性化旅行方案
+- **AI 驱动**：基于阿里云百炼大模型（通义千问）/ GitCode DeepSeek V3.2，智能生成个性化旅行方案
 - **多维度输入**：支持目的地、天数、预算、人数、偏好等多维度需求
 - **语音输入**：支持语音识别输入目的地信息，提升填写效率
 - **结构化输出**：生成包含日程安排、预算分解、旅行提示的完整方案
+
+### 🎨 AI 速记卡片
+- **智能绘图**：基于旅行计划自动生成精美的手绘风格速记卡片
+- **多提供商支持**：可切换腾讯云混元生图或魔搭社区 ModelScope
+- **提示词优化**：AI 自动生成适合绘图的艺术风格提示词
 
 ### 🗺️ 地图可视化
 - **高德地图集成**：基于高德地图 API，提供精准的地图展示
@@ -46,7 +51,8 @@
 ### 后端
 - **运行时**：Node.js
 - **框架**：Express.js
-- **AI 服务**：阿里云百炼（通义千问 qwen3-max-preview）
+- **AI 服务**：阿里云百炼（通义千问）/ GitCode Deepseek V3.2
+- **图片生成**：腾讯云混元生图 / 魔搭社区 ModelScope
 - **API 调用**：OpenAI SDK 兼容模式
 
 ### 数据库与认证
@@ -73,7 +79,7 @@ ai-travel-planner/
 │   │   ├── components/        # Vue 组件
 │   │   │   ├── Auth.vue      # 用户认证组件
 │   │   │   ├── ExpenseTracker.vue # 费用追踪
-│   │   │   ├── GlassButton.vue # 玻璃态按钮组件
+│   │   │   ├── GlassButton.vue # 玻璃态按钮组件（支持 light/dark/primary 主题）
 │   │   │   ├── Home.vue      # 首页营销组件
 │   │   │   ├── MapView.vue   # 地图组件
 │   │   │   ├── MapView_old.vue # 地图旧版本组件
@@ -88,6 +94,7 @@ ai-travel-planner/
 │   │   │   ├── PlanDetailView.vue
 │   │   │   ├── PlannerView.vue
 │   │   │   └── SavedPlansView.vue
+│   │   │   └── QuickNoteView.vue # AI 速记卡片生成页面
 │   │   ├── router/           # 路由配置
 │   │   ├── stores/           # Pinia 状态管理
 │   │   ├── config/           # 配置文件
@@ -135,6 +142,12 @@ ai-travel-planner/
 - 查看所有已保存的旅行方案
 - 支持查看方案详情
 - 云端数据同步
+
+### 5. AI 速记卡片 (`/quick-note`)
+- 基于旅行计划生成精美手绘风格卡片
+- 支持切换图片生成提供商（腾讯混元/魔搭社区）
+- 显示生成的提示词和图片
+- 支持下载和重新生成
 
 
 ## 🚀 快速开始
@@ -189,9 +202,15 @@ ai-travel-planner/
    cp .env.example .env
    # 编辑 .env 文件填入：
    # PORT=3001
-   # DASHSCOPE_API_KEY=你的阿里百炼API密钥
+   # AI_API_KEY=你的AI密钥
+   # AI_BASE_URL=https://api.gitcode.com/api/v5
+   # AI_MODEL=Kimi-K2
+   # DASHSCOPE_API_KEY=你的阿里百炼API密钥（可选）
    # SUPABASE_URL=你的Supabase项目URL
    # SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务端密钥
+   # TENCENT_SECRET_ID=腾讯云密钥ID（图片生成）
+   # TENCENT_SECRET_KEY=腾讯云密钥（图片生成）
+   # MODELSCOPE_API_KEY=魔搭社区API密钥（图片生成，免费）
    # PUBLIC_SUPABASE_URL=供前端使用的 Supabase URL
    # PUBLIC_SUPABASE_ANON_KEY=Supabase 匿名密钥（公开）
    # PUBLIC_AMAP_KEY=高德地图 JS API Key (Web 端)
@@ -301,9 +320,23 @@ ai-travel-planner/
 ```bash
 # 私密配置（仅后端使用）
 PORT=3001                             # 后端服务器端口
-DASHSCOPE_API_KEY=sk-xxx...          # 阿里云百炼 API 密钥
+
+# AI API 配置（用于对话和提示词生成）
+AI_API_KEY=sk-xxx...                  # AI API 密钥
+AI_BASE_URL=https://api.gitcode.com/api/v5  # API 地址
+AI_MODEL=Kimi-K2                      # 模型名称
+
+# 阿里云百炼（可选，备用）
+# DASHSCOPE_API_KEY=sk-xxx...          # 阿里云百炼 API 密钥
+
+# Supabase 配置
 SUPABASE_URL=https://xxx.supabase.co # Supabase 项目 URL
 SUPABASE_SERVICE_ROLE_KEY=eyJxxx...  # Supabase 服务端密钥（严禁暴露给前端）
+
+# 图片生成配置（至少配置一个）
+TENCENT_SECRET_ID=xxx...             # 腾讯云 SecretId（混元生图）
+TENCENT_SECRET_KEY=xxx...            # 腾讯云 SecretKey
+MODELSCOPE_API_KEY=xxx...            # 魔搭社区 API Key（免费额度充足）
 
 # 公开配置（前端运行时读取，仍可设置访问白名单）
 PUBLIC_SUPABASE_URL=https://xxx.supabase.co
@@ -317,17 +350,32 @@ PUBLIC_AMAP_REST_KEY=yyy...            # Web服务 Key（必填）
 
 ### AI 模型配置
 
-在 `backend/src/index.js` 中可以修改使用的 AI 模型：
+在 `backend/src/index.js` 中可以修改使用的 AI 模型，或通过 `.env` 配置：
 
-```javascript
-const model = 'qwen3-max-preview';  // 当前使用的模型
+```bash
+# .env 配置示例
+AI_API_KEY=sk-xxx
+AI_BASE_URL=https://api.gitcode.com/api/v5
+AI_MODEL=Kimi-K2
 ```
 
 可用模型：
-- `qwen3-max-preview`（推荐）- 最新预览版本，性能最强
+- `Kimi-K2`（推荐）- GitCode 提供，速度快
+- `qwen3-max-preview` - 阿里百炼，性能强
 - `qwen-max` - 稳定版本
 - `qwen-plus` - 性能与成本平衡
 - `qwen-turbo` - 快速响应
+
+### 图片生成配置
+
+支持两种图片生成提供商，可同时配置：
+
+| 提供商 | 配置项 | 特点 |
+|--------|--------|------|
+| 腾讯云混元 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 高质量，按量计费 |
+| 魔搭社区 | `MODELSCOPE_API_KEY` | 免费额度充足，推荐 |
+
+用户可在 AI 速记卡片页面通过下拉框切换提供商。
 
 ## ⚠️ 常见问题
 
@@ -350,11 +398,17 @@ taskkill /PID <PID> /F
 
 ### API 相关
 
-**Q: 阿里百炼 API 调用失败？**
+**Q: AI API 调用失败？**
 - 检查 API Key 是否正确配置在 `backend/.env` 中
-- 确认阿里云账号余额充足（有免费额度）
+- 确认账号余额充足（有免费额度）
 - 查看后端终端的错误日志获取详细信息
 - 确认模型名称拼写正确
+
+**Q: AI 速记卡片生成失败？**
+- 检查是否配置了图片生成提供商（腾讯云或魔搭社区）
+- 确认 `TENCENT_SECRET_ID/KEY` 或 `MODELSCOPE_API_KEY` 配置正确
+- 建议使用魔搭社区（免费额度充足）
+- 查看后端日志了解详细错误
 
 **Q: 前端无法连接后端？**
 - 确认后端服务器已启动（端口 3001）
@@ -417,7 +471,7 @@ taskkill /PID <PID> /F
 启动项目后，请确认以下内容：
 
 ### ✅ 后端服务检查
-- [ ] 终端显示 "✅ 阿里百炼 API 已配置"
+- [ ] 终端显示 "✅ AI API 已配置"
 - [ ] 终端显示 "🚀 Server is running on port 3001"
 - [ ] 访问 http://localhost:3001 能看到欢迎消息
 
@@ -471,9 +525,9 @@ taskkill /PID <PID> /F
 
 ### 项目文档
 - [阿里百炼配置说明](./backend/阿里百炼配置说明.md)
+- [AI 速记卡片功能说明](./docs/AI速记卡片功能说明.md)
 - [高德地图配置说明](./frontend/高德地图配置说明.md)
 - [快速开始指南](./QUICKSTART.md)
-- [变更日志](./CHANGELOG_DOCS.md)
 
 ## 📝 开发说明
 

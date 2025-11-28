@@ -45,9 +45,30 @@ cd ..
 ### backend/.env
 ```env
 PORT=3001
-DASHSCOPE_API_KEY=sk-你的阿里百炼密钥
+
+# AI API 配置
+AI_API_KEY=sk-你的AI密钥
+AI_BASE_URL=https://api.gitcode.com/api/v5
+AI_MODEL=Kimi-K2
+
+# 阿里百炼（备选）
+# DASHSCOPE_API_KEY=sk-你的阿里百炼密钥
+# DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# DASHSCOPE_AI_MODEL=qwen3-max-preview
+
+# Supabase 配置
 SUPABASE_URL=https://你的项目.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务密钥
+
+# 图片生成配置（至少配置一个）
+# 方案一：腾讯云混元生图
+TENCENT_SECRET_ID=你的腾讯云SecretId
+TENCENT_SECRET_KEY=你的腾讯云SecretKey
+
+# 方案二：魔搭社区（免费额度充足）
+MODELSCOPE_API_KEY=你的魔搭社区API密钥
+
+# 前端运行时配置
 PUBLIC_SUPABASE_URL=https://你的项目.supabase.co
 PUBLIC_SUPABASE_ANON_KEY=你的Supabase匿名密钥
 PUBLIC_AMAP_KEY=你的高德 JS API Key (Web端)
@@ -59,7 +80,9 @@ PUBLIC_AMAP_REST_KEY=你的高德 Web 服务 Key (REST 必填)
 
 ✅ 后端终端显示：
 ```
-✅ 阿里百炼 API 已配置
+✅ AI API 已配置 (Kimi-K2)
+✅ 腾讯混元生图已配置
+✅ 魔搭社区图片生成已配置
 🚀 Server is running on port 3001
 ```
 
@@ -87,9 +110,14 @@ taskkill /PID <进程ID> /F
 ```
 
 **❌ API 调用失败**
-- 检查 `backend\.env` 中的 `DASHSCOPE_API_KEY` 是否正确
-- 确认阿里云账号余额充足或有免费额度
+- 检查 `backend\.env` 中的 `AI_API_KEY` 或 `DASHSCOPE_API_KEY` 是否正确
+- 确认账号余额充足或有免费额度
 - 查看后端终端窗口的详细错误信息
+
+**❌ AI速记卡片生成失败**
+- 检查是否配置了图片生成提供商（腾讯云或魔搭社区）
+- 确认 `TENCENT_SECRET_ID/KEY` 或 `MODELSCOPE_API_KEY` 配置正确
+- 建议优先使用魔搭社区（免费额度充足）
 
 **❌ 页面空白或无法加载**
 - 按 F12 打开浏览器控制台查看错误
