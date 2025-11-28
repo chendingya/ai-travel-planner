@@ -3,6 +3,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
+const tencentcloud = require('tencentcloud-sdk-nodejs');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -181,6 +182,38 @@ function initAI() {
 
 initAI();
 
+// 初始化腾讯云客户端
+const AiartClient = tencentcloud.aiart.v20221229.Client;
+let hunyuanClient = null;
+
+function initHunyuan() {
+  const secretId = process.env.TENCENT_SECRET_ID;
+  const secretKey = process.env.TENCENT_SECRET_KEY;
+  
+  if (!secretId || !secretKey) {
+    console.warn('警告: TENCENT_SECRET_ID 或 TENCENT_SECRET_KEY 未设置，混元生图功能将不可用');
+    return;
+  }
+
+  const clientConfig = {
+    credential: {
+      secretId,
+      secretKey,
+    },
+    region: 'ap-guangzhou',
+    profile: {
+      httpProfile: {
+        endpoint: 'aiart.tencentcloudapi.com',
+      },
+    },
+  };
+
+  hunyuanClient = new AiartClient(clientConfig);
+  console.log('✅ 混元生图客户端初始化成功');
+}
+
+initHunyuan();
+
 app.use(cors());
 app.use(express.json());
 
@@ -344,6 +377,165 @@ JSON 结构示例：
   }
 });
 
+// 生成速记卡片提示词的 API
+app.post('/api/generate-prompt', async (req, res) => {
+  if (!aiContext || !aiContext.strategy) {
+    return res.status(500).json({ 
+      error: 'AI 功能当前不可用 - 未配置 API 密钥'
+    });
+  }
+
+  try {
+    const { destination, duration, dailyItinerary } = req.body;
+
+    console.log(`🎨 正在为 ${destination} ${duration}日游生成速记卡片提示词...`);
+
+    // 构建每日简要信息
+    const dailySummary = dailyItinerary.map((day, index) => {
+      const dayNum = index + 1;
+      const theme = day.theme || '精彩行程';
+      const activities = day.activities || [];
+      const mainActivities = activities.slice(0, 3).map(a => a.location || a.description).filter(Boolean);
+      
+      return `Day ${dayNum}: ${theme} - ${mainActivities.join('、')}`;
+    }).join('\n');
+
+    const systemPrompt = `你是一个专业的旅行海报设计师。请根据用户的旅行计划生成一段适合AI绘图的提示词(Prompt)。
+
+要求：
+1. 风格：手绘水彩风格，清新明快
+2. 构图：垂直分层手账风格，从上至下按日期分区
+3. 色调：以蓝、绿为主，粉黄点缀
+4. 元素：包含地标建筑、特色美食、自然风光等
+5. 文字标注：每日主题和关键活动
+6. 整体氛围：轻松活泼、有留白
+
+参考模板：
+画面标题：《目的地·N日游》
+整体构图：垂直分层手账风格，从上至下按日期分为N个区域，每个区域用柔和的曲线或小花边分隔。
+
+每日画面元素：
+Day 1：主题
+- 主视觉：标志性建筑/景观
+- 细节元素：相关装饰元素
+- 美食点缀：代表性美食
+- 文字标注："Day 1: 地点 - 活动"
+
+整体风格与色调：
+- 风格：手绘水彩风格，线条轻松随意
+- 色调：清新明快
+- 背景：干净留白
+
+装饰元素：
+- 顶部装饰小旗帜
+- 手账图标连接
+
+请直接返回完整的绘图提示词，无需额外说明。`;
+
+    const userPrompt = `请为以下旅行计划生成绘图提示词：
+
+目的地：${destination}
+天数：${duration}天
+
+每日行程：
+${dailySummary}
+
+请生成一段详细的、适合AI绘图使用的提示词。`;
+
+    const prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.8 });
+    
+    console.log('✅ 提示词生成成功');
+    res.json({ prompt });
+  } catch (error) {
+    console.error('❌ Error generating prompt:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate prompt',
+      message: '生成提示词时发生错误，请稍后再试'
+    });
+  }
+});
+
+// 生成图片的 API (调用腾讯云混元生图)
+app.post('/api/generate-image', async (req, res) => {
+  if (!hunyuanClient) {
+    return res.status(500).json({ 
+      error: '混元生图功能当前不可用',
+      message: '系统管理员需要配置腾讯云密钥才能使用混元生图功能'
+    });
+  }
+
+  try {
+    const { prompt } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ 
+        error: 'Missing prompt',
+        message: '请提供图片生成提示词'
+      });
+    }
+
+    console.log(`🖼️ 正在调用混元生图API...`);
+    console.log(`📝 提示词长度: ${prompt.length} 字符`);
+
+    // 调用混元生图极速版 API
+    const params = {
+      Prompt: prompt,
+      NegativePrompt: '黑色、模糊、低质量、变形',
+      Resolution: '1024:1024',
+      RspImgType: 'url',
+      LogoAdd: 1, // 添加AI生成标识
+    };
+
+    const data = await hunyuanClient.TextToImageLite(params);
+    
+    if (!data || !data.ResultImage) {
+      console.error('❌ 混元API返回数据异常:', data);
+      throw new Error('混元API返回数据格式错误');
+    }
+
+    console.log('✅ 图片生成成功');
+    console.log(`🔗 图片URL: ${data.ResultImage}`);
+    console.log(`🌱 随机种子: ${data.Seed}`);
+
+    res.json({ 
+      imageUrl: data.ResultImage,
+      seed: data.Seed
+    });
+  } catch (error) {
+    console.error('❌ Error generating image:', error);
+    
+    // 处理腾讯云API特定错误
+    let errorMessage = '生成图片时发生错误，请稍后再试';
+    if (error.code) {
+      switch (error.code) {
+        case 'AuthFailure':
+          errorMessage = '腾讯云认证失败，请检查密钥配置';
+          break;
+        case 'OperationDenied.TextIllegalDetected':
+          errorMessage = '提示词包含违规内容，请修改后重试';
+          break;
+        case 'FailedOperation.GenerateImageFailed':
+          errorMessage = '图片生成失败，请重试';
+          break;
+        case 'RequestLimitExceeded':
+          errorMessage = '请求次数超过限制，请稍后再试';
+          break;
+        case 'ResourceUnavailable.InArrears':
+          errorMessage = '账号已欠费，请充值后继续使用';
+          break;
+        default:
+          errorMessage = error.message || errorMessage;
+      }
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to generate image',
+      message: errorMessage,
+      code: error.code
+    });
+  }
+});
+
 // 解析旅行信息的 API
 app.post('/api/parse-travel-info', async (req, res) => {
   if (!aiContext || !aiContext.strategy) {
@@ -412,6 +604,7 @@ app.listen(port, () => {
   // 显示配置状态
   console.log('\n=== 配置状态 ===');
   console.log(`✓ AI 服务: ${aiContext && aiContext.strategy ? '已配置 ✅ (' + aiContext.strategy.constructor.name + ')' : '未配置 ❌'}`);
+  console.log(`✓ 混元生图: ${hunyuanClient ? '已配置 ✅' : '未配置 ❌'}`);
   console.log(`✓ Supabase: ${process.env.SUPABASE_URL ? '已配置 ✅' : '未配置 ❌'}`);
   console.log(`✓ 前端可见 Supabase Anon Key: ${runtimeConfig.supabaseAnonKey ? '已注入 ✅' : '未注入 ❌'}`);
   console.log(`✓ 高德地图 Key: ${runtimeConfig.amapKey ? '已注入 ✅' : '未注入 ❌'}`);

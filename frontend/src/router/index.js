@@ -3,6 +3,7 @@ import HomeView from '../views/HomeView.vue';
 import PlannerView from '../views/PlannerView.vue';
 import PlanDetailView from '../views/PlanDetailView.vue';
 import SavedPlansView from '../views/SavedPlansView.vue';
+import QuickNoteView from '../views/QuickNoteView.vue';
 
 const routes = [
   {
@@ -28,6 +29,12 @@ const routes = [
     name: 'SavedPlans',
     component: SavedPlansView,
     meta: { title: '我的计划 - AI 旅行规划师' }
+  },
+  {
+    path: '/quick-note',
+    name: 'QuickNote',
+    component: QuickNoteView,
+    meta: { title: 'AI速记卡片 - AI 旅行规划师' }
   },
   {
     path: '/:pathMatch(.*)*',

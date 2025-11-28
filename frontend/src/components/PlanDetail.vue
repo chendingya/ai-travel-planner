@@ -6,25 +6,8 @@
           <t-icon name="check-circle" />
           您的专属旅行方案
         </h2>
-        <p class="plan-detail-subtitle">点击活动可在地图上定位</p>
       </div>
       <div class="header-actions">
-        <GlassButton 
-          :icon="editMode ? 'check' : 'edit'"
-          @click="toggleEdit"
-          size="sm"
-        >
-          {{ editMode ? '完成编辑' : '编辑行程' }}
-        </GlassButton>
-        <GlassButton 
-          v-if="showSaveButton"
-          icon="save"
-          @click="handleSavePlan"
-          :loading="saving"
-          size="sm"
-        >
-          保存计划
-        </GlassButton>
         <GlassButton 
           icon="arrow-left"
           @click="handleBackToPlanner"
@@ -731,6 +714,12 @@ const onCollapseChange = (vals) => {
     if (!Number.isNaN(day)) emit('select-day', day);
   }
 };
+
+// 暴露方法给父组件调用
+defineExpose({
+  toggleEdit,
+  handleSavePlan
+});
 </script>
 
 <style scoped>
@@ -744,9 +733,10 @@ const onCollapseChange = (vals) => {
 
 .plan-detail-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 32px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  margin-bottom: 16px; /* 与右侧卡片间距一致 */
   padding: 24px;
   background: linear-gradient(135deg, var(--td-brand-color-8) 0%, var(--td-brand-color-6) 30%, var(--td-brand-color-4) 70%, var(--td-brand-color-2) 100%);
   backdrop-filter: var(--glass-blur);
@@ -758,6 +748,8 @@ const onCollapseChange = (vals) => {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
+  height: 128px; /* 固定高度与右侧一致 */
+  box-sizing: border-box;
 }
 
 .plan-detail-header:hover {
@@ -769,6 +761,7 @@ const onCollapseChange = (vals) => {
   display: flex;
   gap: 12px;
   align-items: center;
+  margin-top: 12px; /* 与右侧卡片标题和按钮间距一致 */
 }
 
 .plan-detail-title {

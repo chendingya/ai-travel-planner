@@ -9,7 +9,7 @@
       @close="routeAlert.show = false"
       style="margin-bottom: 12px;"
     />
-    <t-row :gutter="24">
+    <t-row :gutter="24" class="plan-detail-row">
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="plan-detail-section">
           <!-- 移除外层 t-card 包裹，避免左侧头部与内容之间的间隔出现贯穿边界/阴影 -->
@@ -28,7 +28,43 @@
       </t-col>
       <t-col :xs="12" :sm="12" :md="6" :lg="6" :xl="6">
         <div class="map-section">
-          <div class="map-card-offset" :style="{ marginTop: mapTopOffset + 'px' }">
+          <!-- 操作卡片 -->
+          <div class="actions-card">
+            <div class="actions-header">
+              <h3 class="actions-title">
+                <t-icon name="tools" />
+                快捷操作
+              </h3>
+            </div>
+            <div class="actions-buttons">
+              <GlassButton 
+                :icon="isEditing ? 'check' : 'edit'"
+                @click="handleToggleEdit"
+                size="sm"
+              >
+                {{ isEditing ? '完成编辑' : '编辑行程' }}
+              </GlassButton>
+              <GlassButton 
+                v-if="showSaveButton"
+                icon="save"
+                @click="handleSavePlan"
+                :loading="isSaving"
+                size="sm"
+              >
+                保存计划
+              </GlassButton>
+              <GlassButton 
+                icon="image"
+                @click="handleGenerateQuickNote"
+                size="sm"
+                theme="primary"
+              >
+                生成AI速记卡片
+              </GlassButton>
+            </div>
+          </div>
+
+          <div class="map-card-offset" :style="{ marginTop: '16px' }">
             <t-card class="map-card book-right" :bordered="false">
               <MapView 
                 :locations="store.locations" 
@@ -111,17 +147,27 @@
 
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import PlanDetail from '../components/PlanDetail.vue';
 import MapView from '../components/MapView.vue';
+import GlassButton from '../components/GlassButton.vue';
 import { usePlannerStore } from '../stores/planner';
 
 const store = usePlannerStore();
+const route = useRoute();
+const router = useRouter();
 const planDetailRef = ref(null);
 const mapViewRef = ref(null);
 const mapTopOffset = ref(0);
 const routeAlert = ref({ show: false, message: '' });
 const isEditing = ref(false);
 const draftPlan = ref(store.plan);
+const isSaving = ref(false);
+
+// 根据路由来源判断是否显示保存按钮
+const showSaveButton = computed(() => {
+  return route.query.from === 'planner';
+});
 
 const fallbackHotelName = computed(() => {
   const d = (store.form?.destination || '').toString().trim();
@@ -281,6 +327,31 @@ watch(() => store.plan, () => {
   rebuildLocationsFromPlan();
 }, { deep: true });
 
+// 处理编辑按钮点击
+const handleToggleEdit = () => {
+  if (planDetailRef.value) {
+    planDetailRef.value.toggleEdit();
+  }
+};
+
+// 处理保存按钮点击
+const handleSavePlan = async () => {
+  if (planDetailRef.value) {
+    isSaving.value = true;
+    try {
+      await planDetailRef.value.handleSavePlan();
+    } finally {
+      isSaving.value = false;
+    }
+  }
+};
+
+// 处理生成AI速记卡片
+const handleGenerateQuickNote = () => {
+  // 跳转到速记卡片页面
+  router.push({ name: 'QuickNote' });
+};
+
 // 根据存储的计划，按天/时间生成顺序化的 locations
 const parseTimeToMinutes = (t) => {
   if (!t || typeof t !== 'string') return Number.POSITIVE_INFINITY;
@@ -339,8 +410,14 @@ const rebuildLocationsFromPlan = async () => {
   background: transparent;
 }
 
-.plan-detail-section, .map-section {
-  min-height: 600px;
+.plan-detail-row {
+  align-items: stretch;
+}
+
+.map-section {
+  position: sticky;
+  top: 24px;
+  height: fit-content;
 }
 
 /* 仅右侧地图卡片保留 t-card 圆角与阴影效果 */
@@ -387,12 +464,56 @@ const rebuildLocationsFromPlan = async () => {
   background: transparent;
 }
 
+/* 操作卡片样式 */
+.actions-card {
+  background: linear-gradient(135deg, var(--td-brand-color-8) 0%, var(--td-brand-color-6) 30%, var(--td-brand-color-4) 70%, var(--td-brand-color-2) 100%);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: none;
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 128px; /* 固定高度与左侧一致 */
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.actions-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.actions-header {
+  margin-bottom: 12px; /* 与左侧卡片标题和按钮间距一致 */
+}
+
+.actions-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: white;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.actions-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 /* 地图卡片特殊处理 - 固定高度 */
 .map-card :deep(.t-card__body) {
   padding: 0 !important;
   overflow: hidden !important;
-  height: calc(100vh - var(--header-height) - 48px);
-  min-height: 600px;
+  height: calc(100vh - var(--header-height) - 48px - 120px);
+  min-height: 500px;
 }
 
 .map-section :deep(#map-container) {
