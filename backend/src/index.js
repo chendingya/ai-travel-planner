@@ -124,14 +124,18 @@ class AIContext {
     try {
       return await this.strategy.generate(systemPrompt, userPrompt, options);
     } catch (err) {
-      // 如果是 GitCode 的审查或模型不存在等错误，并且系统配置了阿里百炼，则尝试回退到 DashScope
+      // 如果是 GitCode 的审查、模型错误或网络超时(504/502/Connection error)，并且系统配置了阿里百炼，则尝试回退到 DashScope
       const msg = (err && err.message) ? err.message : '';
+      const status = (err && err.status) ? err.status : 0;
+      
       const isGitCodeAuditOrModelError = msg.includes('CHAT_HANDLER_INPUT_AUDIT_FAIL') || msg.includes('MODEL_DO_NOT_EXIST') || msg.startsWith('GitCodeAPIError:');
+      const isNetworkError = status === 504 || status === 502 || msg.includes('Connection error') || msg.includes('fetch failed');
 
-      if (isGitCodeAuditOrModelError && process.env.DASHSCOPE_API_KEY && !(this.strategy instanceof DashScopeStrategy)) {
-        console.warn('⚠️ GitCode 出现审查或模型错误，尝试回退到阿里百炼(DashScope) 策略');
+      if ((isGitCodeAuditOrModelError || isNetworkError) && process.env.DASHSCOPE_API_KEY && !(this.strategy instanceof DashScopeStrategy)) {
+        console.warn(`⚠️ GitCode 调用失败 (${msg})，尝试回退到阿里百炼(DashScope) 策略`);
         try {
-          const fallback = new DashScopeStrategy(process.env.DASHSCOPE_API_KEY, process.env.DASHSCOPE_BASE_URL, process.env.DASHSCOPE_AI_MODEL);
+          // 回退时使用默认的 DashScope 配置
+          const fallback = new DashScopeStrategy(process.env.DASHSCOPE_API_KEY);
           return await fallback.generate(systemPrompt, userPrompt, options);
         } catch (fallbackErr) {
           console.error('❌ DashScope 回退也失败:', fallbackErr);
@@ -226,81 +230,67 @@ app.post('/api/plan', async (req, res) => {
 
     console.log(`📝 正在为 ${destination} 生成 ${duration} 天的旅行计划...`);
 
-  const systemPrompt = `你是一个专业的旅行规划助手。必须严格返回纯 JSON，且遵守以下约束：
+  const systemPrompt = `你是一个专业的旅行规划助手。请返回纯 JSON 格式的旅行计划。
 
-必备规则：
-1) 仅 JSON，无任何额外文字/标题/标记
-2) 严禁包含经纬度坐标（如 latitude/longitude/coords）
-3) 所有地点均应在“目的地城市及其行政区”范围内，避免跨省/跨市的同名地点
-4) 使用官方中文名称；若可能含糊，请补充区县(district)与地址(address)
-5) 每天 3-6 个活动，按时间顺序，考虑通勤/游览时长
-6) daily_itinerary 中每一天必须包含 hotel 字段，给出当晚建议入住酒店，提供 name/city/district/address/notes 字段
-7) accommodation 数组必须列出所有建议酒店，并通过 days 或 day_range 表明对应天数
-8) 除非确有跨城或夜间移动需求，应尽量保持全程使用同一家酒店，可通过 days/day_range 标识覆盖多天
-  9) 第 N 天的夜宿酒店就是第 N+1 天的出发地：从第 2 天起，activities 的首条记录必须说明“从上一晚酒店出发”并沿用该酒店的名称、城市、区县与地址；若确需更换城市，请在上一天 hotel.notes 中说明原因和跨城方式
+规则：
+1. 仅返回 JSON，无额外文字。
+2. 不包含经纬度。
+3. 地点需在目的地城市范围内。
+4. 每天 3-6 个活动，按时间顺序。
+5. 必须包含每日酒店 (hotel) 和住宿汇总 (accommodation)。
+6. 除非必要，全程建议同一家酒店。
 
-推荐结构示例：
+JSON 结构示例：
 {
   "daily_itinerary": [
     {
       "day": 1,
-      "theme": "江南水乡漫游",
+      "theme": "主题名称",
       "hotel": {
-        "name": "杭州西湖宾馆",
-        "city": "杭州",
-        "district": "西湖区",
-        "address": "浙江省杭州市西湖区湖滨路XXX号",
-        "notes": "靠近西湖，方便傍晚漫步与观光"
+        "name": "酒店名称",
+        "city": "城市",
+        "district": "区县",
+        "address": "详细地址",
+        "notes": "备注"
       },
       "activities": [
         {
           "time": "09:00",
-          "location": "杭州萧山国际机场",
-          "city": "杭州",
-          "district": "萧山区",
-          "address": "浙江省杭州市萧山区机场路",
-          "description": "抵达杭州，乘坐地铁或出租车前往市区"
-        },
-        {
-          "time": "14:00",
-          "location": "西湖",
-          "city": "杭州",
-          "district": "西湖区",
-          "address": "浙江省杭州市西湖区",
-          "description": "漫步苏堤、断桥，游览西湖名胜"
+          "location": "景点名称",
+          "city": "城市",
+          "district": "区县",
+          "address": "地址",
+          "description": "活动描述"
         }
       ]
     }
   ],
   "budget_breakdown": {
-    "transportation": 400,
-    "accommodation": 1800,
-    "meals": 800,
-    "attractions": 400,
-    "shopping": 800,
-    "other": 300
+    "transportation": 0,
+    "accommodation": 0,
+    "meals": 0,
+    "attractions": 0,
+    "shopping": 0,
+    "other": 0
   },
   "transport": {
-    "in_city": "建议乘坐地铁或网约车",
-    "to_city": "高铁或飞机抵达"
+    "in_city": "市内交通建议",
+    "to_city": "往返交通建议"
   },
   "accommodation": [
     {
-      "name": "杭州西湖宾馆",
-      "city": "杭州",
-      "district": "西湖区",
-      "address": "浙江省杭州市西湖区湖滨路XXX号",
+      "name": "酒店名称",
+      "city": "城市",
+      "district": "区县",
+      "address": "地址",
       "days": "D1-D3",
-      "notes": "靠近西湖景区，方便观光与出行"
+      "notes": "备注"
     }
   ],
   "restaurants": [
-    { "name": "楼外楼", "city": "杭州", "district": "西湖区", "address": "...", "tags": ["美食","本帮菜"] }
+    { "name": "餐厅名", "city": "城市", "district": "区县", "address": "地址", "tags": ["美食"] }
   ],
-  "tips": [
-    "建议提前预订西湖游船票",
-    "高峰期注意景区人流，避开早晚高峰"
-  ]
+  "tips": ["提示1", "提示2"]
 }`;
 
   const userPrompt = `请为我制定一个${duration}天的${destination}旅行计划：
