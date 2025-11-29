@@ -17,6 +17,16 @@
           {{ editMode ? '完成编辑' : '编辑行程' }}
         </GlassButton>
         <GlassButton 
+          v-if="showSaveButton"
+          icon="save"
+          @click="handleSavePlan"
+          :loading="isSaving"
+          size="sm"
+          theme="dark"
+        >
+          保存计划
+        </GlassButton>
+        <GlassButton 
           icon="arrow-left"
           @click="handleBackToPlanner"
           size="sm"
@@ -204,6 +214,14 @@ const saving = ref(false);
 const headerRef = ref(null);
 const editMode = ref(false);
 const planId = ref(null); // 存储从数据库加载的计划ID
+
+// 根据路由来源判断是否显示保存按钮
+const showSaveButton = computed(() => {
+  return route.query.from === 'planner';
+});
+
+// 暴露isSaving状态给父组件使用
+const isSaving = ref(false);
 const defaultHotelName = computed(() => {
   const d = (store.form?.destination || '').toString().trim();
   return d ? `${d} 酒店` : '住宿地点';
@@ -421,11 +439,6 @@ const activePanels = ref(['0']); // 折叠面板当前展开的天
 const newBudgetKey = ref('');
 const newBudgetValue = ref(null);
 
-// 根据路由来源判断是否显示保存按钮
-const showSaveButton = computed(() => {
-  return route.query.from === 'planner';
-});
-
 onMounted(() => {
   // 从store加载方案和表单数据
   plan.value = JSON.parse(JSON.stringify(store.plan));
@@ -541,6 +554,7 @@ const handleSavePlan = async () => {
     return;
   }
 
+  isSaving.value = true;
   saving.value = true;
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -578,6 +592,7 @@ const handleSavePlan = async () => {
     }
   } finally {
     saving.value = false;
+    isSaving.value = false;
   }
 };
 

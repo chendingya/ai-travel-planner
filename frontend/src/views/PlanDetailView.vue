@@ -38,16 +38,6 @@
             </div>
             <div class="actions-buttons">
               <GlassButton 
-                v-if="showSaveButton"
-                icon="save"
-                @click="handleSavePlan"
-                :loading="isSaving"
-                size="sm"
-                theme="dark"
-              >
-                保存计划
-              </GlassButton>
-              <GlassButton 
                 icon="sound"
                 @click="handleGeneratePlaylist"
                 size="sm"
@@ -198,14 +188,8 @@ const mapTopOffset = ref(0);
 const routeAlert = ref({ show: false, message: '' });
 const isEditing = ref(false);
 const draftPlan = ref(store.plan);
-const isSaving = ref(false);
 const showShareModal = ref(false);
 const showPlaylistModal = ref(false);
-
-// 根据路由来源判断是否显示保存按钮
-const showSaveButton = computed(() => {
-  return route.query.from === 'planner';
-});
 
 const fallbackHotelName = computed(() => {
   const d = (store.form?.destination || '').toString().trim();
@@ -372,17 +356,7 @@ const handleToggleEdit = () => {
   }
 };
 
-// 处理保存按钮点击
-const handleSavePlan = async () => {
-  if (planDetailRef.value) {
-    isSaving.value = true;
-    try {
-      await planDetailRef.value.handleSavePlan();
-    } finally {
-      isSaving.value = false;
-    }
-  }
-};
+
 
 // 处理生成AI速记卡片
 const handleGenerateQuickNote = () => {
