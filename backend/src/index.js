@@ -136,7 +136,7 @@ class AIContext {
         console.warn(`⚠️ GitCode 调用失败 (${msg})，尝试回退到阿里百炼(DashScope) 策略`);
         try {
           // 回退时使用默认的 DashScope 配置
-          const fallback = new DashScopeStrategy(process.env.DASHSCOPE_API_KEY);
+          const fallback = new DashScopeStrategy(process.env.DASHSCOPE_API_KEY, process.env.DASHSCOPE_BASE_URL, process.env.DASHSCOPE_AI_MODEL);
           return await fallback.generate(systemPrompt, userPrompt, options);
         } catch (fallbackErr) {
           console.error('❌ DashScope 回退也失败:', fallbackErr);
