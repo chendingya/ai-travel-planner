@@ -22,6 +22,7 @@
               @select-day="onSelectDay"
               @edit-mode-change="onEditModeChange"
               @plan-draft-change="onPlanDraftChange"
+              @spot-click="handleSpotClick"
             />
           </div>
         </div>
@@ -166,6 +167,12 @@
         </div>
       </t-col>
     </t-row>
+    
+    <!-- 数字人组件 -->
+    <DigitalHuman 
+      :spot-info="selectedSpotInfo"
+      @spot-selected="handleSpotSelected"
+    />
   </div>
 </template>
 
@@ -177,6 +184,7 @@ import MapView from '../components/MapView.vue';
 import GlassButton from '../components/GlassButton.vue';
 import ShareContentModal from '../components/ShareContentModal.vue';
 import PlaylistModal from '../components/PlaylistModal.vue';
+import DigitalHuman from '../components/DigitalHuman.vue';
 import { usePlannerStore } from '../stores/planner';
 
 const store = usePlannerStore();
@@ -190,6 +198,7 @@ const isEditing = ref(false);
 const draftPlan = ref(store.plan);
 const showShareModal = ref(false);
 const showPlaylistModal = ref(false);
+const selectedSpotInfo = ref(null);
 
 const fallbackHotelName = computed(() => {
   const d = (store.form?.destination || '').toString().trim();
@@ -322,7 +331,7 @@ onMounted(() => {
     }, 100);
   }
 
-  // 进入详情页时，根据存储的计划重建按“天+时间”顺序的地图点
+  // 进入详情页时，根据存储的计划重建按"天+时间"顺序的地图点
   rebuildLocationsFromPlan();
 });
 
@@ -332,16 +341,27 @@ const onRouteFailedPlaces = (list) => {
     const more = list.length > 3 ? ` 等 ${list.length} 个` : '';
     routeAlert.value = {
       show: true,
-      message: `以下地点未能定位：${sample}${more}。已临时从路线排除，请在左侧“编辑行程”中修正地点名称后重试。`
+      message: `以下地点未能定位：${sample}${more}。已临时从路线排除，请在左侧"编辑行程"中修正地点名称后重试。`
     };
   }
 };
 
-// 来自左侧：用户切换折叠的“第N天”，地图切换到对应天数
+// 来自左侧：用户切换折叠的"第N天"，地图切换到对应天数
 const onSelectDay = (day) => {
   if (mapViewRef.value && typeof mapViewRef.value.switchDay === 'function') {
     mapViewRef.value.switchDay(day);
   }
+};
+
+// 处理景点点击事件
+const handleSpotClick = (spot) => {
+  selectedSpotInfo.value = spot;
+  console.log('景点被点击:', spot);
+};
+
+// 处理数字人景点选择事件
+const handleSpotSelected = (spot) => {
+  console.log('数字人选择景点:', spot);
 };
 
 // 监听计划变化，自动重建 locations 并同步地图

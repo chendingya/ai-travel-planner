@@ -239,7 +239,9 @@ def ai_chat():
             print(f"⚠️ LLM调用异常，使用默认回复: {llm_error}")
             ai_response = "湖南是一个充满魅力的旅游胜地，拥有丰富的自然风光和人文景观。我为您推荐张家界、凤凰古城、岳阳楼等经典景点，每个地方都值得细细品味。"
         
-        print(f"✅ AI回复生成成功: {ai_response[:100]}{'...' if len(ai_response) > 100 else ''}")
+        print(f"✅ AI回复生成成功")
+        print(f"📏 AI回复文本长度: {len(ai_response)} 字符")
+        print(f"📝 AI回复内容: {ai_response[:200]}{'...' if len(ai_response) > 200 else ''}")
         
         result = {
             'user_message': message,
@@ -253,29 +255,49 @@ def ai_chat():
             try:
                 print(f"🗣️ 正在为AI回复生成语音...")
                 
-                # 检查文本长度，如果超过600字符则进行分段处理
+                # 检查文本长度，如果超过600字节则进行分段处理
                 max_length = 600
-                if len(ai_response) > max_length:
-                    print(f"⚠️ 文本长度超过限制 ({len(ai_response)} > {max_length})，正在进行分段处理...")
-                    # 按句号切割，尽量保持语义完整
-                    sentences = ai_response.split('。')
+                text_bytes = len(ai_response.encode('utf-8'))
+                print(f"📏 文本字节长度: {text_bytes} (字符长度: {len(ai_response)})")
+                
+                if text_bytes > max_length:
+                    print(f"⚠️ 文本字节长度超过限制 ({text_bytes} > {max_length})，正在进行分段处理...")
+                    
+                    # 智能分段：按句号、问号、感叹号切割，尽量保持语义完整
+                    import re
+                    sentences = re.split(r'[。！？]', ai_response)
                     segments = []
                     current_segment = ""
                     
                     for sentence in sentences:
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                            
+                        sentence_with_punct = sentence + "。"  # 默认使用句号
+                        
+                        # 计算当前段和新句子的字节长度
+                        current_bytes = len(current_segment.encode('utf-8'))
+                        sentence_bytes = len(sentence_with_punct.encode('utf-8'))
+                        
                         # 如果当前段加上新句子不超过限制，则添加
-                        if len(current_segment) + len(sentence) + 1 <= max_length:
-                            current_segment += sentence + "。"
+                        if current_bytes + sentence_bytes <= max_length:
+                            current_segment += sentence_with_punct
                         else:
                             # 如果当前段不为空，则保存
                             if current_segment.strip():
                                 segments.append(current_segment.strip())
+                            
                             # 如果新句子本身不超过限制，则作为新段
-                            if len(sentence) + 1 <= max_length:
-                                current_segment = sentence + "。"
+                            if sentence_bytes <= max_length:
+                                current_segment = sentence_with_punct
                             else:
-                                # 如果句子本身超过限制，则强制截断
-                                truncated = sentence[:max_length-1] + "。"
+                                # 如果句子本身超过限制，则按字节强制截断
+                                # 逐步截断直到字节长度符合要求
+                                truncated = sentence
+                                while len(truncated.encode('utf-8')) > max_length - 3:  # 留3字节给"..."
+                                    truncated = truncated[:-1]
+                                truncated += "..."
                                 segments.append(truncated)
                                 current_segment = ""
                     
@@ -283,40 +305,56 @@ def ai_chat():
                     if current_segment.strip():
                         segments.append(current_segment.strip())
                     
+                    # 验证每段的字节长度
+                    for i, segment in enumerate(segments):
+                        segment_bytes = len(segment.encode('utf-8'))
+                        print(f"📊 段 {i+1}: {segment_bytes} 字节, {len(segment)} 字符")
+                        if segment_bytes > max_length:
+                            print(f"⚠️ 段 {i+1} 仍然超过限制，进行强制截断")
+                            # 强制截断
+                            while len(segment.encode('utf-8')) > max_length:
+                                segment = segment[:-1]
+                            segments[i] = segment
+                    
                     print(f"✂️ 文本已分段，共 {len(segments)} 段")
                     
                     # 为每段生成TTS音频
                     audio_urls = []
                     tts_model = os.getenv('DASHSCOPE_TTS_MODEL', 'qwen3-tts-flash')
                     for i, segment in enumerate(segments):
-                        print(f"🗣️ 正在生成第 {i+1} 段音频...")
-                        tts_response = dashscope.MultiModalConversation.call(
-                            model=tts_model,
-                            api_key=os.getenv('DASHSCOPE_API_KEY'),
-                            text=segment,
-                            voice=voice,
-                            language_type=language_type,
-                            stream=False
-                        )
+                        print(f"🗣️ 正在生成第 {i+1} 段音频 (长度: {len(segment)})...")
                         
-                        if tts_response and hasattr(tts_response, 'output') and tts_response.output:
-                            if hasattr(tts_response.output, 'audio') and tts_response.output.audio:
-                                audio_info = tts_response.output.audio
-                                if hasattr(audio_info, 'url') and audio_info.url:
-                                    audio_urls.append(audio_info.url)
-                                    print(f"✅ 第 {i+1} 段音频生成成功")
+                        try:
+                            tts_response = dashscope.MultiModalConversation.call(
+                                model=tts_model,
+                                api_key=os.getenv('DASHSCOPE_API_KEY'),
+                                text=segment,
+                                voice=voice,
+                                language_type=language_type,
+                                stream=False
+                            )
+                            
+                            if tts_response and hasattr(tts_response, 'output') and tts_response.output:
+                                if hasattr(tts_response.output, 'audio') and tts_response.output.audio:
+                                    audio_info = tts_response.output.audio
+                                    if hasattr(audio_info, 'url') and audio_info.url:
+                                        audio_urls.append(audio_info.url)
+                                        print(f"✅ 第 {i+1} 段音频生成成功: {audio_info.url}")
+                                    else:
+                                        print(f"❌ 第 {i+1} 段音频URL获取失败: {audio_info}")
                                 else:
-                                    print(f"❌ 第 {i+1} 段音频URL获取失败")
+                                    print(f"❌ 第 {i+1} 段音频信息格式异常: {tts_response.output}")
                             else:
-                                print(f"❌ 第 {i+1} 段音频信息格式异常")
-                        else:
-                            print(f"❌ 第 {i+1} 段TTS调用失败")
+                                print(f"❌ 第 {i+1} 段TTS调用失败: {tts_response}")
+                                
+                        except Exception as segment_error:
+                            print(f"❌ 第 {i+1} 段音频生成异常: {segment_error}")
                     
                     if audio_urls:
                         result['audio_urls'] = audio_urls
                         print(f"✅ 共生成 {len(audio_urls)} 段音频")
                     else:
-                        result['audio_error'] = '音频生成失败'
+                        result['audio_error'] = '所有分段音频生成均失败'
                 else:
                     # 文本长度未超过限制，直接生成音频
                     tts_model = os.getenv('DASHSCOPE_TTS_MODEL', 'qwen3-tts-flash')

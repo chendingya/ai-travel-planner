@@ -91,7 +91,7 @@
               <div 
                 class="activity-item" 
                 :class="{ 'edit-mode': editMode }"
-                @click="!editMode && flyToLocation(activity.coords)"
+                @click="!editMode && handleActivityClick(activity)"
               >
                 <template v-if="editMode">
                   <div class="activity-edit-row">
@@ -204,7 +204,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import SimplePieChart from './SimplePieChart.vue';
 import GlassButton from './GlassButton.vue';
 
-const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset', 'select-day', 'edit-mode-change', 'plan-draft-change']);
+const emit = defineEmits(['fly-to', 'back-to-planner', 'header-offset', 'select-day', 'edit-mode-change', 'plan-draft-change', 'spot-click']);
 const route = useRoute();
 const store = usePlannerStore();
 
@@ -534,6 +534,17 @@ onMounted(() => {
 const flyToLocation = (coords) => {
   if (coords) {
     emit('fly-to', coords);
+  }
+};
+
+// 处理景点点击事件
+const handleActivityClick = (activity) => {
+  // 发送景点点击事件给父组件
+  emit('spot-click', activity);
+  
+  // 同时触发地图定位
+  if (activity.coords) {
+    emit('fly-to', activity.coords);
   }
 };
 
