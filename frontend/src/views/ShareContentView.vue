@@ -24,7 +24,7 @@
     <!-- 主内容区 -->
     <div class="main-content">
       <!-- 初始状态 -->
-      <div v-if="!loading && !shareContent && !error && !showConfig" class="initial-container">
+      <div v-if="!showConfig && !loading && !shareContent && !error" class="initial-container">
         <div class="initial-card">
           <div class="initial-icon">
             <span>✍️</span>
@@ -97,24 +97,24 @@
             </div>
 
             <div class="config-actions">
-              <t-button
-                theme="primary"
+              <GlassButton 
                 @click="generateShareContent"
                 :loading="loading"
-                size="large"
+                size="lg"
+                theme="primary"
                 class="generate-btn"
               >
                 {{ loading ? '生成中...' : '生成文案' }}
-              </t-button>
-              <t-button
-                theme="default"
+              </GlassButton>
+              <GlassButton 
                 @click="showConfig = false"
                 :disabled="loading"
-                size="large"
+                size="lg"
+                theme="light"
                 class="cancel-btn"
               >
                 取消
-              </t-button>
+              </GlassButton>
             </div>
           </div>
         </div>
@@ -524,7 +524,7 @@ const formatTime = (timestamp) => {
 
 /* === 主内容区 === */
 .main-content {
-  padding: 8px 24px 32px 24px;
+  padding: 40px 24px 32px 24px;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -535,18 +535,27 @@ const formatTime = (timestamp) => {
   justify-content: center;
   align-items: center;
   min-height: 500px;
+  margin-bottom: 40px;
 }
 
-.initial-card {
+.initial-card, .config-card {
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 24px;
   padding: 64px 48px;
-  text-align: center;
   box-shadow: var(--glass-shadow);
-  max-width: 450px;
+  max-width: 1200px;
   width: 100%;
+}
+
+/* 初始卡片特定样式：确保内容居中 */
+.initial-card {
+  text-align: center;
+}
+
+.initial-card .glass-button {
+  margin: 0 auto;
 }
 
 .initial-icon {
@@ -960,16 +969,25 @@ const formatTime = (timestamp) => {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 24px;
-  padding: 32px;
+  padding: 64px 48px;
   box-shadow: var(--glass-shadow);
-  margin-top: 24px;
+  max-width: 1200px;
+  width: 100%;
 }
 
 .config-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   margin-bottom: 24px;
+  position: relative;
+}
+
+.config-header .glass-button {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .config-title {

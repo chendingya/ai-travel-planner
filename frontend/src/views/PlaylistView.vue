@@ -24,7 +24,7 @@
     <!-- 主内容区 -->
     <div class="main-content">
       <!-- 初始状态 -->
-      <div v-if="!loading && !playlist && !error && !showConfig" class="initial-container">
+      <div v-if="!showConfig && !loading && !playlist && !error" class="initial-container">
         <div class="initial-card">
           <div class="initial-icon">
             <span>🎵</span>
@@ -470,7 +470,7 @@ onMounted(() => {
 
 /* === 主内容区 === */
 .main-content {
-  padding: 8px 24px 32px 24px;
+  padding: 40px 24px 32px 24px;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -481,9 +481,10 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   min-height: 500px;
+  margin-bottom: 40px;
 }
 
-.initial-card {
+.initial-card, .config-card {
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -491,7 +492,7 @@ onMounted(() => {
   padding: 64px 48px;
   text-align: center;
   box-shadow: var(--glass-shadow);
-  max-width: 450px;
+  max-width: 1200px;
   width: 100%;
 }
 
@@ -907,6 +908,12 @@ onMounted(() => {
 }
 
 /* === 配置区域 === */
+.config-section {
+  max-width: 900px;
+  margin: 0 auto;
+  animation: fadeInUp 0.4s ease-out;
+}
+
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -925,17 +932,16 @@ onMounted(() => {
   border-radius: 24px;
   padding: 64px 48px;
   box-shadow: var(--glass-shadow);
-  max-width: 450px;
+  max-width: 1200px;
   width: 100%;
-  text-align: center;
-  animation: fadeInUp 0.4s ease-out;
+  text-align: left;
 }
 
 .config-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .config-title {
