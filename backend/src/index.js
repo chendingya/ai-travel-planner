@@ -58,6 +58,7 @@ class DashScopeStrategy extends AIStrategy {
       ],
       model: this.model,
       temperature: options.temperature || 0.7,
+      signal: options.signal, // 添加signal参数支持
     });
     return completion.choices[0].message.content.trim();
   }
@@ -90,7 +91,11 @@ class GitCodeStrategy extends AIStrategy {
 
     try {
       console.log('🚀 发送请求到 GitCode:', JSON.stringify(params, null, 2));
-      const completion = await this.client.chat.completions.create(params);
+      // 添加signal参数支持
+      const completion = await this.client.chat.completions.create({
+        ...params,
+        signal: options.signal,
+      });
       console.log('📩 GitCode 响应:', JSON.stringify(completion, null, 2));
 
       // 如果 API 返回了明确的错误码，抛出包含错误名与信息的异常，便于上层判断
@@ -241,7 +246,7 @@ class HunyuanImageStrategy extends ImageGenerationStrategy {
     const params = {
       Prompt: prompt,
       NegativePrompt: options.negativePrompt || '黑色、模糊、低质量、变形',
-      Resolution: options.resolution || '1024:1024',
+      Resolution: options.resolution || '1024:768', // 默认使用4:3比例，更适合明信片
       RspImgType: 'url',
       LogoAdd: 1,
     };
@@ -289,7 +294,7 @@ class ModelScopeImageStrategy extends ImageGenerationStrategy {
         model: this.model,
         prompt: prompt,
         n: options.n || 1,
-        size: options.size || '1024x1024'
+        size: options.size || '1024x768' // 默认使用4:3比例，更适合明信片
       })
     });
 
@@ -591,6 +596,13 @@ app.post('/api/generate-prompt', async (req, res) => {
     });
   }
 
+  // 监听请求取消事件
+  let isAborted = false;
+  req.on('close', () => {
+    isAborted = true;
+    console.log('🚫 客户端断开连接，提示词生成请求被取消');
+  });
+
   try {
     const { destination, duration, dailyItinerary } = req.body;
 
@@ -648,7 +660,23 @@ ${dailySummary}
 
 请生成一段详细的、适合AI绘图使用的提示词。`;
 
-    const prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.8 });
+    // 检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 提示词生成请求已取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
+
+    const prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { 
+      temperature: 0.8,
+      // 添加 AbortSignal 用于内部实现
+      signal: req.signal || undefined
+    });
+    
+    // 再次检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 提示词生成请求在AI处理后被取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
     
     console.log('✅ 提示词生成成功');
     res.json({ prompt });
@@ -670,6 +698,13 @@ app.post('/api/generate-image', async (req, res) => {
     });
   }
 
+  // 监听请求取消事件
+  let isAborted = false;
+  req.on('close', () => {
+    isAborted = true;
+    console.log('🚫 客户端断开连接，图片生成请求被取消');
+  });
+
   try {
     const { prompt, provider, negativePrompt, resolution, size } = req.body;
 
@@ -684,12 +719,24 @@ app.post('/api/generate-image', async (req, res) => {
     console.log(`🖼️ 正在调用 ${selectedProvider} 生图API...`);
     console.log(`📝 提示词长度: ${prompt.length} 字符`);
 
+    // 检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 图片生成请求已取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
+
     const result = await imageContext.generate(prompt, {
       provider: selectedProvider,
       negativePrompt,
       resolution,
       size
     });
+    
+    // 再次检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 图片生成请求在处理后被取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
 
     console.log(`✅ 图片生成成功 (提供商: ${result.provider})`);
     console.log(`🔗 图片URL: ${result.imageUrl}`);
@@ -767,6 +814,13 @@ app.post('/api/generate-postcard-prompt', async (req, res) => {
     });
   }
 
+  // 监听请求取消事件
+  let isAborted = false;
+  req.on('close', () => {
+    isAborted = true;
+    console.log('🚫 客户端断开连接，明信片提示词生成请求被取消');
+  });
+
   try {
     const { destination, duration, dailyItinerary, style, styleName, styleSuffix } = req.body;
 
@@ -785,7 +839,7 @@ app.post('/api/generate-postcard-prompt', async (req, res) => {
     const systemPrompt = `你是一个专业的旅游明信片设计师，精通湖湘文化与传统艺术。请根据用户的旅行计划和指定的艺术风格生成一段中文的AI绘图提示词。
 
 旅游明信片设计要求：
-1. 明信片尺寸比例：竖版明信片设计（5.5:8.5 英寸比例）
+1. 明信片尺寸比例：4:3的横向构图，适合明信片布局
 2. 主要元素：目的地标志性景观、当地文化符号、特色建筑
 3. 艺术风格：${styleSuffix || '中国传统艺术风格'}
 4. 装饰元素：邮票图案、邮戳、传统花纹、标题文字
@@ -811,7 +865,23 @@ app.post('/api/generate-postcard-prompt', async (req, res) => {
 
 请生成一段中文的明信片设计提示词，要体现${destination}的特色景观和${styleName}的艺术风格。`;
 
-    let prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.75 });
+    // 检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 明信片提示词生成请求已取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
+
+    let prompt = await aiContext.generateResponse(systemPrompt, userPrompt, { 
+      temperature: 0.75,
+      // 添加 AbortSignal 用于内部实现
+      signal: req.signal || undefined
+    });
+    
+    // 再次检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 明信片提示词生成请求在AI处理后被取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
     
     // 如果提示词超过1800字符，进行截断处理
     if (prompt.length > 1800) {
@@ -880,8 +950,24 @@ app.post('/api/parse-travel-info', async (req, res) => {
       resultText = resultText.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
 
-    // 解析 JSON
-    const parsedData = JSON.parse(resultText);
+    // 解析 JSON - 添加错误处理以应对AI可能返回的不规范JSON
+    let parsedData;
+    try {
+      parsedData = JSON.parse(resultText);
+    } catch (parseError) {
+      console.error('❌ JSON 解析失败:', parseError.message);
+      console.error('原始文本内容:', resultText);
+      
+      // 返回默认结构，避免完全失败
+      parsedData = {
+        destination: "未知",
+        duration: 0,
+        budget: null,
+        travelers: null,
+        preferences: "解析失败"
+      };
+      console.warn('⚠️ 使用默认结构继续处理');
+    }
     console.log('✅ 文本解析成功:', parsedData);
     
     res.json(parsedData);
@@ -901,6 +987,13 @@ app.post('/api/generate-share-content', async (req, res) => {
       error: 'AI 功能当前不可用 - 未配置 API 密钥'
     });
   }
+
+  // 监听请求取消事件
+  let isAborted = false;
+  req.on('close', () => {
+    isAborted = true;
+    console.log('🚫 客户端断开连接，分享文案生成请求被取消');
+  });
 
   try {
     const { 
@@ -1004,7 +1097,23 @@ ${emotion === '种草' ? '风格：激情种草，强调"你必须来"、"绝了
 
 请生成符合平台特性的完整文案内容。`;
 
-    const content = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.8 });
+    // 检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 分享文案生成请求已取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
+
+    const content = await aiContext.generateResponse(systemPrompt, userPrompt, { 
+      temperature: 0.8,
+      // 添加 AbortSignal 用于内部实现
+      signal: req.signal || undefined
+    });
+
+    // 再次检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 分享文案生成请求在AI处理后被取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
 
     console.log(`✅ ${platformPrompt.name}文案生成成功`);
     res.json({ 
@@ -1031,6 +1140,13 @@ app.post('/api/generate-playlist', async (req, res) => {
       error: 'AI 功能当前不可用 - 未配置 API 密钥'
     });
   }
+
+  // 监听请求取消事件
+  let isAborted = false;
+  req.on('close', () => {
+    isAborted = true;
+    console.log('🚫 客户端断开连接，歌单生成请求被取消');
+  });
 
   try {
     const { 
@@ -1113,7 +1229,23 @@ ${!presetStyles[style] ? `对于"${style}"这个自定义风格，请选择最�
   ]
 }`;
 
-    let resultText = await aiContext.generateResponse(systemPrompt, userPrompt, { temperature: 0.8 });
+    // 检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 歌单生成请求已取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
+
+    let resultText = await aiContext.generateResponse(systemPrompt, userPrompt, { 
+      temperature: 0.8,
+      // 添加 AbortSignal 用于内部实现
+      signal: req.signal || undefined
+    });
+    
+    // 再次检查请求是否已被取消
+    if (isAborted) {
+      console.log('🚫 歌单生成请求在AI处理后被取消');
+      return res.status(499).json({ error: 'Request cancelled' });
+    }
     
     // 去除可能的 markdown 代码块标记
     if (resultText.startsWith('```json')) {
@@ -1122,8 +1254,38 @@ ${!presetStyles[style] ? `对于"${style}"这个自定义风格，请选择最�
       resultText = resultText.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
 
-    // 解析 JSON
-    const playlistData = JSON.parse(resultText);
+    // 解析 JSON - 添加错误处理以应对AI可能返回的不规范JSON
+    let playlistData;
+    try {
+      playlistData = JSON.parse(resultText);
+    } catch (parseError) {
+      console.error('❌ JSON 解析失败:', parseError.message);
+      console.error('原始文本内容:', resultText);
+      
+      // 尝试修复常见的JSON格式问题
+      let fixedText = resultText;
+      
+      // 尝试修复缺少引号的问题
+      fixedText = fixedText.replace(/"reason":\s*([^"}\n]+)([,\n}])/g, '"reason": "$1"$2');
+      
+      try {
+        playlistData = JSON.parse(fixedText);
+        console.log('✅ 修复JSON后解析成功');
+      } catch (secondError) {
+        // 如果仍然失败，返回基本结构
+        console.error('❌ JSON修复失败，返回基本歌单结构');
+        playlistData = {
+          destination: destination,
+          style: style,
+          title: `【${destination}】${style}旅途BGM`,
+          description: '歌单生成时出现格式问题，但已尽力恢复内容',
+          songs: [
+            { title: "生成异常", artist: "系统", genre: "错误", reason: "JSON解析失败" }
+          ]
+        };
+      }
+    }
+    
     console.log(`✅ 歌单生成成功 (${playlistData.songs?.length || 0} 首歌曲)`);
     
     res.json(playlistData);

@@ -156,7 +156,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -164,6 +164,9 @@ import GlassButton from '../components/GlassButton.vue';
 
 const router = useRouter();
 const store = usePlannerStore();
+
+// 用于存储AbortController以终止请求
+let currentAbortController = null;
 
 const loading = ref(false);
 const currentStep = ref(0);
@@ -226,6 +229,10 @@ const generateQuickNote = async () => {
   currentStep.value = 1;
   usedProvider.value = selectedProvider.value;
 
+  // 创建AbortController以支持请求取消
+  currentAbortController = new AbortController();
+  const { signal } = currentAbortController;
+
   try {
     // 第一步：生成提示词
     console.log('🎨 开始生成提示词...');
@@ -239,6 +246,7 @@ const generateQuickNote = async () => {
         duration: store.form.duration,
         dailyItinerary: store.plan.daily_itinerary,
       }),
+      signal, // 添加signal以支持请求取消
     });
 
     if (!promptResponse.ok) {
@@ -261,7 +269,10 @@ const generateQuickNote = async () => {
       body: JSON.stringify({
         prompt: generatedPrompt.value,
         provider: selectedProvider.value,
+        // 混元使用分辨率格式:1024:768，魔搭社区使用尺寸格式:1024x768
+        [selectedProvider.value === 'hunyuan' ? 'resolution' : 'size']: selectedProvider.value === 'hunyuan' ? '1024:768' : '1024x768'
       }),
+      signal, // 添加signal以支持请求取消
     });
 
     if (!imageResponse.ok) {
@@ -277,15 +288,26 @@ const generateQuickNote = async () => {
     currentStep.value = 3;
     MessagePlugin.success('速记卡片生成成功！');
   } catch (err) {
+    // 如果是请求被取消的错误，不显示错误消息
+    if (err.name === 'AbortError') {
+      console.log('🚫 速记卡片生成请求已取消');
+      return;
+    }
     console.error('❌ 生成失败:', err);
     error.value = err.message || '生成速记卡片时发生错误，请稍后再试';
     MessagePlugin.error(error.value);
   } finally {
     loading.value = false;
+    currentAbortController = null;
   }
 };
 
 const handleRetry = () => {
+  // 取消可能存在的进行中请求
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  
   error.value = '';
   imageUrl.value = '';
   generatedPrompt.value = '';
@@ -310,6 +332,14 @@ const handleDownload = () => {
 onMounted(() => {
   // 仅获取提供商列表，不自动生成
   fetchProviders();
+});
+
+// 在组件卸载前取消所有进行中的请求
+onBeforeUnmount(() => {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    console.log('🚫 离开页面，已取消速记卡片生成请求');
+  }
 });
 </script>
 
@@ -414,7 +444,7 @@ onMounted(() => {
 
 /* === 主内容区 === */
 .main-content {
-  padding: 8px 24px 32px 24px;
+  padding: 40px 24px 32px 24px;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -715,6 +745,7 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   min-height: 500px;
+  margin-bottom: 40px;
 }
 
 .initial-card {
@@ -725,7 +756,7 @@ onMounted(() => {
   padding: 64px 48px;
   text-align: center;
   box-shadow: var(--glass-shadow);
-  max-width: 450px;
+  max-width: 1200px;
   width: 100%;
 }
 

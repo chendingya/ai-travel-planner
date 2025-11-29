@@ -213,7 +213,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -221,6 +221,9 @@ import GlassButton from '../components/GlassButton.vue';
 
 const router = useRouter();
 const store = usePlannerStore();
+
+// 用于存储AbortController以终止请求
+let currentAbortController = null;
 
 const showConfig = ref(false);
 const loading = ref(false);
@@ -297,6 +300,10 @@ const generatePlaylist = async () => {
   error.value = '';
   playlist.value = null;
 
+  // 创建AbortController以支持请求取消
+  currentAbortController = new AbortController();
+  const { signal } = currentAbortController;
+
   try {
     const highlightsArray = playlistHighlights.value
       .split('，')
@@ -318,6 +325,7 @@ const generatePlaylist = async () => {
         highlights: highlightsArray,
         duration: store.form.duration,
       }),
+      signal, // 添加signal以支持请求取消
     });
 
     if (!response.ok) {
@@ -330,10 +338,16 @@ const generatePlaylist = async () => {
     showConfig.value = false;
     MessagePlugin.success('歌单生成成功！');
   } catch (err) {
+    // 如果是请求被取消的错误，不显示错误消息
+    if (err.name === 'AbortError') {
+      console.log('🚫 歌单生成请求已取消');
+      return;
+    }
     error.value = err.message || '生成歌单时发生错误';
     console.error('Error generating playlist:', err);
   } finally {
     loading.value = false;
+    currentAbortController = null;
   }
 };
 
@@ -400,6 +414,14 @@ onMounted(() => {
   const highlights = extractHighlights();
   if (highlights) {
     playlistHighlights.value = highlights;
+  }
+});
+
+// 在组件卸载前取消所有进行中的请求
+onBeforeUnmount(() => {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    console.log('🚫 离开页面，已取消歌单生成请求');
   }
 });
 </script>

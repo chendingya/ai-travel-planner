@@ -189,7 +189,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -197,6 +197,9 @@ import GlassButton from '../components/GlassButton.vue';
 
 const router = useRouter();
 const store = usePlannerStore();
+
+// 用于存储AbortController以终止请求
+let currentAbortController = null;
 
 const loading = ref(false);
 const currentStep = ref(0);
@@ -306,6 +309,10 @@ const generatePostcard = async () => {
   usedProvider.value = selectedProvider.value;
   usedStyle.value = selectedStyle.value;
 
+  // 创建AbortController以支持请求取消
+  currentAbortController = new AbortController();
+  const { signal } = currentAbortController;
+
   // 获取选中的风格信息
   const styleInfo = artStyles.value.find(s => s.id === selectedStyle.value);
 
@@ -325,6 +332,7 @@ const generatePostcard = async () => {
         styleName: styleInfo?.name,
         styleSuffix: styleInfo?.promptSuffix,
       }),
+      signal, // 添加signal以支持请求取消
     });
 
     if (!promptResponse.ok) {
@@ -347,7 +355,11 @@ const generatePostcard = async () => {
       body: JSON.stringify({
         prompt: generatedPrompt.value,
         provider: selectedProvider.value,
+        // 明信片使用4:3的宽高比，更适合明信片设计
+        // 混元使用分辨率格式:1024:768，魔搭社区使用尺寸格式:1024x768
+        [selectedProvider.value === 'hunyuan' ? 'resolution' : 'size']: selectedProvider.value === 'hunyuan' ? '1024:768' : '1024x768'
       }),
+      signal, // 添加signal以支持请求取消
     });
 
     if (!imageResponse.ok) {
@@ -363,15 +375,26 @@ const generatePostcard = async () => {
     currentStep.value = 3;
     MessagePlugin.success('明信片生成成功！');
   } catch (err) {
+    // 如果是请求被取消的错误，不显示错误消息
+    if (err.name === 'AbortError') {
+      console.log('🚫 明信片生成请求已取消');
+      return;
+    }
     console.error('❌ 生成失败:', err);
     error.value = err.message || '生成明信片时发生错误，请稍后再试';
     MessagePlugin.error(error.value);
   } finally {
     loading.value = false;
+    currentAbortController = null;
   }
 };
 
 const handleRetry = () => {
+  // 取消可能存在的进行中请求
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  
   error.value = '';
   imageUrl.value = '';
   generatedPrompt.value = '';
@@ -394,6 +417,14 @@ const handleDownload = () => {
 
 onMounted(() => {
   fetchProviders();
+});
+
+// 在组件卸载前取消所有进行中的请求
+onBeforeUnmount(() => {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    console.log('🚫 离开页面，已取消明信片生成请求');
+  }
 });
 </script>
 
@@ -853,6 +884,8 @@ onMounted(() => {
   border-radius: 16px;
   padding: 16px;
   min-height: 400px;
+  max-width: 900px; /* 限制最大宽度，以更好地展示4:3比例的图片 */
+  margin: 0 auto;
 }
 
 .result-image {
@@ -861,6 +894,9 @@ onMounted(() => {
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(139, 92, 246, 0.2);
   transition: transform 0.3s ease;
+  /* 保持4:3比例，宽度优先 */
+  aspect-ratio: 4/3;
+  object-fit: cover;
 }
 
 .result-image:hover {
