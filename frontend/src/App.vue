@@ -34,6 +34,12 @@
               </template>
               我的计划
             </t-menu-item>
+            <t-menu-item value="/ai-chat" @click="handleNavigate('/ai-chat')">
+              <template #icon>
+                <t-icon name="chat" />
+              </template>
+              AI面对面
+            </t-menu-item>
           </t-menu>
         </div>
 

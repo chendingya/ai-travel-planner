@@ -7,6 +7,7 @@ import QuickNoteView from '../views/QuickNoteView.vue';
 import HandbookView from '../views/HandbookView.vue';
 import PlaylistView from '../views/PlaylistView.vue';
 import ShareContentView from '../views/ShareContentView.vue';
+import AIChatView from '../views/AIChatView.vue';
 
 const routes = [
   {
@@ -56,6 +57,12 @@ const routes = [
     name: 'ShareContent',
     component: ShareContentView,
     meta: { title: '妙笔云章 - 拾光绘旅' }
+  },
+  {
+    path: '/ai-chat',
+    name: 'AIChat',
+    component: AIChatView,
+    meta: { title: 'AI面对面对话 - 拾光绘旅' }
   },
   {
     path: '/:pathMatch(.*)*',
