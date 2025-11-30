@@ -4,6 +4,75 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import dashscope
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain.tools.tool_node import ToolCallRequest
+from langchain.messages import ToolMessage
+from langgraph.types import Command
+from typing import Callable, Awaitable, Dict, List
+
+class ToolErrorHandlerMiddleware(AgentMiddleware):
+    """处理工具错误，并让模型重新尝试"""
+    
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        """在工具调用周围包装错误处理"""
+        try:
+            print(f"🔧 执行工具: {request.tool_call['name']}")
+            print(f"📝 参数: {request.tool_call['args']}")
+            
+            result = handler(request)
+            print(f"✅ 工具执行成功")
+            return result
+            
+        except Exception as e:
+            error_msg = (
+                f"工具 '{request.tool_call['name']}' 执行失败。\n"
+                f"错误: {str(e)}\n"
+                f"请检查参数并重新尝试"
+            )
+            print(f"❌ 工具错误: {error_msg}")
+            
+            # 返回ToolMessage，让模型继续处理
+            return ToolMessage(
+                content=error_msg,
+                tool_call_id=request.tool_call["id"],
+                name=request.tool_call["name"]
+            )
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """异步包装工具调用，确保在ainvoke场景正常运行"""
+        try:
+            print(f"🔧 执行工具: {request.tool_call['name']}")
+            print(f"📝 参数: {request.tool_call['args']}")
+
+            result = await handler(request)
+            print(f"✅ 工具执行成功")
+            return result
+
+        except Exception as e:
+            error_msg = (
+                f"工具 '{request.tool_call['name']}' 执行失败。\n"
+                f"错误: {str(e)}\n"
+                f"请检查参数并重新尝试"
+            )
+            print(f"❌ 工具错误: {error_msg}")
+
+            return ToolMessage(
+                content=error_msg,
+                tool_call_id=request.tool_call["id"],
+                name=request.tool_call["name"]
+            )
 
 # 加载环境变量
 load_dotenv()
@@ -12,6 +81,43 @@ load_dotenv()
 dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
 
 app = Flask(__name__)
+
+# 初始化MCP客户端（在应用启动时）
+mcp_client = None
+
+# 简易会话存储（内存级，重启即失），按conversation_id分组
+conversation_sessions: Dict[str, List[dict]] = {}
+MAX_HISTORY_MESSAGES = int(os.getenv('AI_CHAT_HISTORY_LIMIT', '12'))  # 总消息上限
+
+
+def get_conversation_history(conversation_id: str) -> List[dict]:
+    """获取指定会话的历史消息列表"""
+    return conversation_sessions.setdefault(conversation_id, [])
+
+
+def trim_conversation_history(history: List[dict]) -> None:
+    """限制历史长度，避免无限增长"""
+    if len(history) > MAX_HISTORY_MESSAGES:
+        # 仅保留最近的若干条消息
+        history[:] = history[-MAX_HISTORY_MESSAGES:]
+
+@app.before_request
+async def init_mcp():
+    global mcp_client
+    if mcp_client is None:
+        mcp_client = MultiServerMCPClient({
+            "12306-mcp": {
+                "transport": "stdio",
+                "command": "npx",
+                "args": ["-y", "12306-mcp"],
+            },
+            "bing-cn-mcp-server": {
+                "transport": "sse",
+                "url": "https://mcp.api-inference.modelscope.net/23494d15514349/sse",  # 远程MCP服务器
+            }
+        })
+
+
 CORS(app)  # 允许跨域请求
 
 @app.route('/health', methods=['GET'])
@@ -163,7 +269,7 @@ def get_tts_audio(task_id):
         }), 500
 
 @app.route('/api/ai-chat', methods=['POST'])
-def ai_chat():
+async def ai_chat():
     """AI对话API - 结合LLM和TTS"""
     try:
         data = request.get_json()
@@ -174,12 +280,20 @@ def ai_chat():
         language_type = data.get('language_type', 'Chinese')
         include_audio = data.get('include_audio', True)
         enable_tools = data.get('enable_tools', False)  # 新增：控制是否启用工具
+        conversation_id = data.get('conversation_id', 'default')
+        reset_history = data.get('reset_history', False)
+        history: List[dict] | None = None
         
         if not message:
             return jsonify({
                 'error': 'Missing message',
                 'message': '请提供对话消息'
             }), 400
+
+        if enable_tools:
+            history = get_conversation_history(conversation_id)
+            if reset_history:
+                history.clear()
         
         print(f"💬 正在处理AI对话请求...")
         print(f"📝 用户消息: {message[:100]}{'...' if len(message) > 100 else ''}")
@@ -188,65 +302,110 @@ def ai_chat():
         try:
             print(f"🤖 正在调用魔搭社区LLM生成回复...")
             
-            # 从环境变量获取配置
-            import requests
-            
+            # 从环境变量获取配置            
             MODELSCOPE_BASE_URL = os.getenv('MODELSCOPE_BASE_URL', 'https://api-inference.modelscope.cn/v1')
             MODELSCOPE_API_KEY = os.getenv('MODELSCOPE_API_KEY', 'xxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')
             MODELSCOPE_MODEL = os.getenv('MODELSCOPE_MODEL', 'deepseek-ai/DeepSeek-V3.2-Exp')
+
+            llm = ChatOpenAI(
+                model=MODELSCOPE_MODEL,
+                api_key=MODELSCOPE_API_KEY,
+                base_url=MODELSCOPE_BASE_URL)
             
             # 构造对话历史（维持上下文）
-            # 从session或其他存储中获取历史对话，这里简化处理
-            
             system_prompt = "你是一个专业的湖南旅游助手，你的任务是为用户提供关于湖南旅游的专业建议和信息。请用友好、专业的语气回答用户的问题。回答要求：1. 使用纯文本格式，不要使用Markdown或其他格式；2. 回答要简洁明了，突出重点；3. 提供实用的旅游建议和信息。"
-            
-            # 如果启用了工具，修改系统提示词或添加工具定义
-            if enable_tools:
-                print("🔧 已启用工具支持 (MCP/Function Calling)")
-                
-            
+
             conversation_history = [
                 {
                     "role": "system",
                     "content": system_prompt
                 }
             ]
-            
-            # 添加用户消息
+
+            if history:
+                conversation_history.extend(history)
+
+            # 添加当前用户消息
             conversation_history.append({
                 "role": "user",
                 "content": message
             })
             
-            # 调用魔搭社区API
-            llm_response = requests.post(
-                f"{MODELSCOPE_BASE_URL}/chat/completions",
-                headers={
-                    'Authorization': f'Bearer {MODELSCOPE_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    "model": MODELSCOPE_MODEL,
-                    "messages": conversation_history,
-                    "stream": False
-                },
-                timeout=30
-            )
-            
-            if llm_response.status_code == 200:
-                llm_data = llm_response.json()
-                if 'choices' in llm_data and len(llm_data['choices']) > 0:
-                    ai_response = llm_data['choices'][0]['message']['content']
-                else:
-                    print(f"⚠️ LLM响应格式异常: {llm_data}")
-                    ai_response = "湖南是一个充满魅力的旅游胜地，拥有丰富的自然风光和人文景观。我为您推荐张家界、凤凰古城、岳阳楼等经典景点，每个地方都值得细细品味。"
+            # 如果启用了工具，修改系统提示词或添加工具定义
+            if enable_tools:
+                print("🔧 已启用工具支持 (MCP/Function Calling)")
+                # 获取MCP工具
+                tools = await mcp_client.get_tools()
+                print(f"🔧 可用工具数量: {len(tools)}")
+                print(f"🔧 工具列表: {[tool.name for tool in tools]}")
+                agent = create_agent(
+                    model=llm,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    middleware=[
+                        ToolErrorHandlerMiddleware()
+                    ],  
+                )
+                 # 调用Agent获取最终回答
+                response = await agent.ainvoke({
+                    "messages": conversation_history
+                })
+                print(f"✅ LLM回复生成成功 (工具模式)")
+                print(f"📋 LLM完整响应: {response}")
+
+                # 提取最终消息
+                final_message = response["messages"][-1]
+                ai_response = final_message.content                
+
             else:
-                print(f"⚠️ LLM调用失败，使用默认回复: {llm_response.status_code} - {llm_response.text}")
-                ai_response = "湖南是一个充满魅力的旅游胜地，拥有丰富的自然风光和人文景观。我为您推荐张家界、凤凰古城、岳阳楼等经典景点，每个地方都值得细细品味。"
+                agent = create_agent(
+                    model=llm,
+                    system_prompt=system_prompt,
+                )
+
+                # Run the agent
+                result = agent.invoke(
+                    {"messages": conversation_history}
+                )
+                print(f"✅ LLM回复生成成功 (无工具模式)")
+                # 获取最终回答（最后一条消息）
+                final_message = result["messages"][-1]
+                ai_response = final_message.content
+
+            # 如果工具模式未生成有效回复，回退到无工具模式
+            if not ai_response or ai_response.strip() == "":
+                agent = create_agent(
+                    model=llm,
+                    system_prompt=system_prompt,
+                )
+
+                # Run the agent
+                result = agent.invoke(
+                    {"messages": conversation_history}
+                )
+                print(f"✅ LLM回复生成成功 (无工具模式)")
+                # 获取最终回答（最后一条消息）
+                final_message = result["messages"][-1]
+                ai_response = final_message.content
+                                
                 
         except Exception as llm_error:
             print(f"⚠️ LLM调用异常，使用默认回复: {llm_error}")
             ai_response = "湖南是一个充满魅力的旅游胜地，拥有丰富的自然风光和人文景观。我为您推荐张家界、凤凰古城、岳阳楼等经典景点，每个地方都值得细细品味。"
+
+        # 将本轮对话写入历史（仅工具模式需要上下文）
+        if history is not None:
+            history.extend([
+                {
+                    "role": "user",
+                    "content": message
+                },
+                {
+                    "role": "assistant",
+                    "content": ai_response
+                }
+            ])
+            trim_conversation_history(history)
         
         print(f"✅ AI回复生成成功")
         print(f"📏 AI回复文本长度: {len(ai_response)} 字符")

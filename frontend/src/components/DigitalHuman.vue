@@ -256,7 +256,8 @@ const generateSpotAudio = async (spot) => {
         message: `请为${spotContext.name}这个景点生成一段生动的导游讲解。${spotContext.district ? `位于${spotContext.district}` : ''}${spotContext.city ? `${spotContext.city}市` : ''}。讲解内容要包含景点特色、历史文化背景、游览建议等，语言要生动有趣，时长控制在1-2分钟，大约200-300字。`,
         voice: selectedVoice.value,
         language_type: 'Chinese',
-        include_audio: true
+        include_audio: true,
+        enable_tools: false
       })
     })
     

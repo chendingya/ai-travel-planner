@@ -44,9 +44,10 @@
     <div class="chat-container">
       <div class="chat-messages" ref="messagesContainer">
         <div
-          v-for="(message, index) in messages"
-          :key="index"
+          v-for="message in messages"
+          :key="message.id"
           :class="['message', message.role]"
+          :data-message-id="message.id"
         >
           <div class="message-avatar">
             <div class="avatar" :class="message.role">
@@ -65,11 +66,10 @@
                 <!-- 单段音频 -->
                 <div v-if="message.audioUrl && !message.audioUrls" class="audio-wrapper">
                   <audio
-                    ref="audioPlayers"
                     :src="message.audioUrl"
                     controls
                     preload="none"
-                    @ended="onAudioEnded(index)"
+                    @ended="onAudioEnded(message)"
                     class="audio-element"
                   >
                     您的浏览器不支持音频播放
@@ -89,11 +89,10 @@
                     </div>
                     <div class="audio-wrapper">
                       <audio
-                        :ref="el => { if (el) audioPlayers.push(el) }"
                         :src="audioUrl"
                         controls
                         preload="none"
-                        @ended="onAudioSegmentEnded(index, audioIndex)"
+                        @ended="onAudioSegmentEnded(message, audioIndex)"
                         class="audio-element"
                       >
                         您的浏览器不支持音频播放
@@ -212,21 +211,55 @@
 import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 
+const defaultGreeting = '您好！我是您的AI旅行助手，很高兴为您服务！我可以为您提供湖南旅游的相关建议，包括景点推荐、美食介绍、行程规划等。请问有什么可以帮助您的吗？'
+const createMessageId = () => `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const createMessage = (role, content, extra = {}) => ({
+  id: createMessageId(),
+  role,
+  content,
+  timestamp: new Date(),
+  ...extra
+})
+const createGreetingMessage = () => createMessage('assistant', defaultGreeting)
+
 // 响应式数据 - 初始化就包含欢迎消息
-const messages = ref([
-  {
-    role: 'assistant',
-    content: '您好！我是您的AI旅行助手，很高兴为您服务！我可以为您提供湖南旅游的相关建议，包括景点推荐、美食介绍、行程规划等。请问有什么可以帮助您的吗？',
-    timestamp: new Date()
-  }
-])
+const messages = ref([createGreetingMessage()])
 const chatRef = ref(null)
 const inputMessage = ref('')
 const isLoading = ref(false)
 const selectedVoice = ref('Cherry')
 const autoPlay = ref(true)
-const audioPlayers = ref([])
 const messagesContainer = ref(null)
+const createConversationId = () => `ai-face-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const conversationId = ref(createConversationId())
+const shouldResetHistory = ref(true)
+
+const getMessageElement = (messageId) => {
+  if (!messagesContainer.value) return null
+  return messagesContainer.value.querySelector(`[data-message-id="${messageId}"]`)
+}
+
+const playMessageAudioSegment = (message, segmentIndex = 0) => {
+  const messageElement = getMessageElement(message.id)
+  if (!messageElement) return
+  const audioElements = Array.from(messageElement.querySelectorAll('audio'))
+  if (!audioElements.length) return
+  const targetIndex = message.audioUrls && message.audioUrls.length ? segmentIndex : 0
+  if (targetIndex >= audioElements.length) return
+  const targetAudio = audioElements[targetIndex]
+  message.currentAudioSegment = targetIndex
+  targetAudio.currentTime = 0
+  targetAudio.play().catch(error => {
+    console.error('音频播放失败:', error)
+    MessagePlugin.error('音频播放失败')
+  })
+}
+
+const startAutoPlayForMessage = async (message, segmentIndex = 0) => {
+  if (!autoPlay.value) return
+  await nextTick()
+  playMessageAudioSegment(message, segmentIndex)
+}
 
 // 音色选项
 const voiceOptions = [
@@ -253,11 +286,7 @@ const handleSend = async (message) => {
   if (!message.trim() || isLoading.value) return
   
   // 添加用户消息
-  messages.value.push({
-    role: 'user',
-    content: message,
-    timestamp: new Date()
-  })
+  messages.value.push(createMessage('user', message))
   
   // 滚动到底部
   await nextTick()
@@ -265,6 +294,7 @@ const handleSend = async (message) => {
   
   try {
     isLoading.value = true
+    const resetFlag = shouldResetHistory.value
     
     // 调用AI对话API
     const response = await fetch('http://localhost:5000/api/ai-chat', {
@@ -277,7 +307,9 @@ const handleSend = async (message) => {
         voice: selectedVoice.value,
         language_type: 'Chinese',
         include_audio: true,
-        enable_tools: true // 启用工具支持
+        enable_tools: true,
+        conversation_id: conversationId.value,
+        reset_history: resetFlag
       })
     })
     
@@ -286,18 +318,18 @@ const handleSend = async (message) => {
     }
     
     const data = await response.json()
+    shouldResetHistory.value = false
     
     // 添加AI回复
-    const aiMessage = {
-      role: 'assistant',
-      content: data.ai_response,
-      timestamp: new Date(),
-      audioStatus: data.audio_task_id ? 'processing' : (data.audio_url || data.audio_urls ? 'completed' : null),
+    const hasMultipleSegments = Array.isArray(data.audio_urls) && data.audio_urls.length > 0
+    const aiMessage = createMessage('assistant', data.ai_response, {
+      audioStatus: data.audio_task_id ? 'processing' : (data.audio_url || hasMultipleSegments ? 'completed' : null),
       audioTaskId: data.audio_task_id || null,
-      audioUrl: data.audio_url || null,
-      audioUrls: data.audio_urls || null, // 多段音频URL
-      audioError: data.audio_error || null
-    }
+      audioUrl: hasMultipleSegments ? null : (data.audio_url || null),
+      audioUrls: hasMultipleSegments ? data.audio_urls : null,
+      audioError: data.audio_error || null,
+      currentAudioSegment: hasMultipleSegments ? 0 : null
+    })
     
     messages.value.push(aiMessage)
     
@@ -308,12 +340,10 @@ const handleSend = async (message) => {
     // 如果有音频任务，轮询获取音频
     if (data.audio_task_id) {
       await pollAudioStatus(aiMessage)
-    } else if (data.audio_url) {
-      // 直接播放音频
-      if (autoPlay.value) {
-        await nextTick()
-        playAudio(aiMessage)
-      }
+    } else if (aiMessage.audioUrls && aiMessage.audioUrls.length) {
+      await startAutoPlayForMessage(aiMessage, 0)
+    } else if (aiMessage.audioUrl) {
+      await startAutoPlayForMessage(aiMessage)
     }
     
   } catch (error) {
@@ -335,9 +365,16 @@ const sendMessage = async () => {
   handleSend(userMessage)
 }
 
+const resetConversation = () => {
+  conversationId.value = createConversationId()
+  shouldResetHistory.value = true
+  messages.value = [createGreetingMessage()]
+}
+
 // 清空聊天记录处理函数
 const handleClear = () => {
-  messages.value = []
+  resetConversation()
+  MessagePlugin.success('已开启新的对话')
 }
 
 
@@ -360,13 +397,11 @@ const pollAudioStatus = async (message) => {
       if (data.status === 'completed') {
         // 音频生成完成
         message.audioUrl = data.audio_url
+        message.audioUrls = null
         message.audioStatus = 'completed'
+        message.currentAudioSegment = 0
         
-        // 自动播放
-        if (autoPlay.value) {
-          await nextTick()
-          playAudio(message)
-        }
+        await startAutoPlayForMessage(message)
         break
       } else if (data.status === 'failed') {
         // 音频生成失败
@@ -393,30 +428,29 @@ const pollAudioStatus = async (message) => {
   }
 }
 
-// 播放音频
-const playAudio = (message) => {
-  const audioElement = audioPlayers.value.find(player => 
-    player.src === message.audioUrl
-  )
-  
-  if (audioElement) {
-    audioElement.play().catch(error => {
-      console.error('音频播放失败:', error)
-      MessagePlugin.error('音频播放失败')
-    })
-  }
-}
-
 // 音频播放结束
-const onAudioEnded = (index) => {
-  // 可以在这里添加播放结束后的逻辑
-  console.log(`音频播放结束: ${index}`)
+const onAudioEnded = (message) => {
+  if (message) {
+    message.currentAudioSegment = null
+  }
+  console.log(`音频播放结束: ${message?.id || ''}`)
 }
 
 // 多段音频播放结束
-const onAudioSegmentEnded = (messageIndex, segmentIndex) => {
-  console.log(`多段音频播放结束: 消息${messageIndex}, 片段${segmentIndex}`)
-  // 可以在这里添加多段音频播放结束后的逻辑
+const onAudioSegmentEnded = (message, segmentIndex) => {
+  if (!message.audioUrls || !message.audioUrls.length) return
+  if (segmentIndex < message.audioUrls.length - 1) {
+    if (autoPlay.value) {
+      const nextIndex = segmentIndex + 1
+      message.currentAudioSegment = nextIndex
+      setTimeout(() => {
+        startAutoPlayForMessage(message, nextIndex)
+      }, 300)
+    }
+  } else {
+    message.currentAudioSegment = null
+    console.log(`多段音频播放完成: ${message.id}`)
+  }
 }
 
 // 处理快捷问题
