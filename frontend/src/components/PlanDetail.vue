@@ -47,7 +47,7 @@
 
     <div v-else class="plan-content">
       <!-- 日程安排 -->
-      <t-collapse v-model:value="activePanels" class="plan-collapse" @change="onCollapseChange">
+      <t-collapse v-model="activePanels" class="plan-collapse" @change="onCollapseChange">
         <t-collapse-panel 
           v-for="(day, index) in plan.daily_itinerary" 
           :key="index"

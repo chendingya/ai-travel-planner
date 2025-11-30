@@ -4,17 +4,14 @@
     <div class="digital-human-avatar" @click="toggleExpanded">
       <div class="avatar-container">
         <div class="avatar-image">
-          <div class="avatar-face">
-            <div class="eyes" :class="{ 'blink': isBlinking }">
-              <div class="eye left"></div>
-              <div class="eye right"></div>
-            </div>
-            <div class="mouth" :class="{ 'speaking': isSpeaking }">
-              <div class="mouth-shape"></div>
-            </div>
-          </div>
+          <img 
+            :src="currentGif" 
+            alt="数字人" 
+            class="avatar-gif"
+            :class="{ 'speaking': isSpeaking }"
+            @load="onGifLoad"
+          />
         </div>
-        <div class="avatar-glow" :class="{ 'active': isSpeaking }"></div>
       </div>
       
       <!-- 状态指示器 -->
@@ -172,7 +169,6 @@ const emit = defineEmits(['spot-selected'])
 const isExpanded = ref(false)
 const isSpeaking = ref(false)
 const isGenerating = ref(false)
-const isBlinking = ref(false)
 const showTip = ref(true)
 const errorMessage = ref('')
 const audioUrl = ref('')
@@ -182,6 +178,14 @@ const selectedVoice = ref('Cherry')
 const autoPlay = ref(true)
 const audioPlayer = ref(null)
 const currentAudioIndex = ref(0) // 当前播放的音频索引
+
+// GIF循环播放相关
+const currentGifIndex = ref(0) // 当前GIF索引
+const gifFiles = ['/shuziren.gif', '/shuziren2.gif'] // GIF文件列表
+const gifSwitchTimer = ref(null) // GIF切换定时器
+
+// 计算当前GIF路径
+const currentGif = computed(() => gifFiles[currentGifIndex.value])
 
 // 状态计算
 const status = computed(() => {
@@ -416,6 +420,32 @@ const onAudioEnded = () => {
   }
 }
 
+// GIF加载完成处理
+const onGifLoad = () => {
+  console.log(`🎬 GIF加载完成: ${gifFiles[currentGifIndex.value]}`)
+  
+  // 启动GIF循环切换
+  startGifCycling()
+}
+
+// 启动GIF循环切换
+const startGifCycling = () => {
+  // 清除之前的定时器
+  if (gifSwitchTimer.value) {
+    clearTimeout(gifSwitchTimer.value)
+  }
+  
+  // 设置新的切换定时器（每个GIF播放3秒）
+  gifSwitchTimer.value = setTimeout(() => {
+    // 切换到下一个GIF
+    currentGifIndex.value = (currentGifIndex.value + 1) % gifFiles.length
+    console.log(`🔄 切换到GIF: ${gifFiles[currentGifIndex.value]}`)
+    
+    // 切换后继续循环
+    startGifCycling()
+  }, 3000) // 3秒后切换
+}
+
 // 切换展开状态
 const toggleExpanded = () => {
   isExpanded.value = !isExpanded.value
@@ -424,29 +454,25 @@ const toggleExpanded = () => {
   }
 }
 
-// 眨眼动画
-const startBlinking = () => {
-  setInterval(() => {
-    isBlinking.value = true
-    setTimeout(() => {
-      isBlinking.value = false
-    }, 150)
-  }, 3000 + Math.random() * 2000)
-}
-
 // 组件挂载
 onMounted(() => {
-  startBlinking()
-  
   // 5秒后隐藏提示
   setTimeout(() => {
     showTip.value = false
   }, 5000)
+  
+  // 启动GIF循环
+  startGifCycling()
 })
 
 // 组件卸载
 onUnmounted(() => {
   stopAudio()
+  
+  // 清理GIF切换定时器
+  if (gifSwitchTimer.value) {
+    clearTimeout(gifSwitchTimer.value)
+  }
 })
 </script>
 
@@ -454,15 +480,15 @@ onUnmounted(() => {
 .digital-human {
   position: fixed;
   bottom: 24px;
-  right: 24px;
+  right: 0px;
   z-index: 1000;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .digital-human-avatar {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 160px;
+  height: 160px;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -475,13 +501,9 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 50%;
-  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
 }
 
 .digital-human.speaking .avatar-container {
@@ -490,111 +512,53 @@ onUnmounted(() => {
 
 @keyframes pulse {
   0%, 100% {
-    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+    filter: drop-shadow(0 4px 12px rgba(102, 126, 234, 0.3));
   }
   50% {
-    box-shadow: 0 8px 48px rgba(102, 126, 234, 0.6);
+    filter: drop-shadow(0 8px 24px rgba(102, 126, 234, 0.6));
   }
 }
 
 .avatar-image {
   position: relative;
-  width: 60px;
-  height: 60px;
-  background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
-  border-radius: 50%;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.avatar-face {
-  position: relative;
+.avatar-gif {
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  transition: all 0.3s ease;
+  /* GIF播放优化 */
+  image-rendering: auto;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  /* 减少播放顿挫感 */
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  /* 确保流畅播放 */
+  animation-timing-function: linear;
 }
 
-.eyes {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 12px;
+.avatar-gif.speaking {
+  animation: gif-pulse 1s ease-in-out infinite alternate;
 }
 
-.eye {
-  width: 8px;
-  height: 8px;
-  background: #2d3436;
-  border-radius: 50%;
-  transition: all 0.15s ease;
-}
-
-.eyes.blink .eye {
-  height: 2px;
-}
-
-.mouth {
-  position: absolute;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 16px;
-  height: 8px;
-}
-
-.mouth-shape {
-  width: 100%;
-  height: 100%;
-  background: #e17055;
-  border-radius: 0 0 16px 16px;
-  transition: all 0.2s ease;
-}
-
-.mouth.speaking .mouth-shape {
-  animation: speak 0.3s ease-in-out infinite alternate;
-}
-
-@keyframes speak {
+@keyframes gif-pulse {
   0% {
-    height: 8px;
-    border-radius: 0 0 16px 16px;
+    transform: scale(1);
   }
   100% {
-    height: 12px;
-    border-radius: 0 0 8px 8px;
+    transform: scale(1.05);
   }
 }
 
-.avatar-glow {
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  right: -4px;
-  bottom: -4px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 50%;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  z-index: -1;
-}
-
-.avatar-glow.active {
-  opacity: 0.6;
-  animation: glow 2s ease-in-out infinite;
-}
-
-@keyframes glow {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1.1);
-    opacity: 0.3;
-  }
-}
 
 .status-indicator {
   position: absolute;
@@ -646,7 +610,7 @@ onUnmounted(() => {
 
 .digital-human-panel {
   position: absolute;
-  bottom: 100px;
+  bottom: 170px;
   right: 0;
   width: 360px;
   background: var(--glass-bg);
@@ -800,7 +764,7 @@ onUnmounted(() => {
 
 .tip-bubble {
   position: absolute;
-  bottom: 90px;
+  bottom: 180px;
   right: 0;
   background: var(--text-primary);
   color: white;
@@ -815,7 +779,7 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   bottom: -4px;
-  right: 20px;
+  right: 40px;
   width: 8px;
   height: 8px;
   background: var(--text-primary);
@@ -856,13 +820,8 @@ onUnmounted(() => {
   }
   
   .digital-human-avatar {
-    width: 60px;
-    height: 60px;
-  }
-  
-  .avatar-image {
-    width: 45px;
-    height: 45px;
+    width: 100px;
+    height: 100px;
   }
   
   .digital-human-panel {
