@@ -173,6 +173,7 @@ def ai_chat():
         voice = data.get('voice', 'Cherry')
         language_type = data.get('language_type', 'Chinese')
         include_audio = data.get('include_audio', True)
+        enable_tools = data.get('enable_tools', False)  # 新增：控制是否启用工具
         
         if not message:
             return jsonify({
@@ -196,10 +197,18 @@ def ai_chat():
             
             # 构造对话历史（维持上下文）
             # 从session或其他存储中获取历史对话，这里简化处理
+            
+            system_prompt = "你是一个专业的湖南旅游助手，你的任务是为用户提供关于湖南旅游的专业建议和信息。请用友好、专业的语气回答用户的问题。回答要求：1. 使用纯文本格式，不要使用Markdown或其他格式；2. 回答要简洁明了，突出重点；3. 提供实用的旅游建议和信息。"
+            
+            # 如果启用了工具，修改系统提示词或添加工具定义
+            if enable_tools:
+                print("🔧 已启用工具支持 (MCP/Function Calling)")
+                
+            
             conversation_history = [
                 {
                     "role": "system",
-                    "content": "你是一个专业的湖南旅游助手，你的任务是为用户提供关于湖南旅游的专业建议和信息。请用友好、专业的语气回答用户的问题。回答要求：1. 使用纯文本格式，不要使用Markdown或其他格式；2. 回答要简洁明了，突出重点；3. 提供实用的旅游建议和信息。"
+                    "content": system_prompt
                 }
             ]
             

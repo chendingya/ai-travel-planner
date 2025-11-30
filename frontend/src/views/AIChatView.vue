@@ -276,7 +276,8 @@ const handleSend = async (message) => {
         message: message,
         voice: selectedVoice.value,
         language_type: 'Chinese',
-        include_audio: true
+        include_audio: true,
+        enable_tools: true // 启用工具支持
       })
     })
     
