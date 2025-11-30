@@ -132,33 +132,39 @@ body::before {
   }
 }
 
-/* TDesign 组件自定义 - 玻璃态按钮 */
+/* TDesign 组件自定义 - 美化按钮（移除过度效果） */
 .t-button--primary {
   background: linear-gradient(135deg, var(--primary-color), #0066cc) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(0, 132, 255, 0.2) !important;
+}
+
+.t-button--primary:hover {
   box-shadow: 0 4px 16px rgba(0, 132, 255, 0.3) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
 }
 
-/* 其他按钮的玻璃态效果 */
-.t-button {
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
-}
-
+/* 默认按钮 */
 .t-button--default {
-  background: rgba(255, 255, 255, 0.6) !important;
+  background: white !important;
   border: 1px solid rgba(0, 0, 0, 0.1) !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
 }
 
+.t-button--default:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Outline 按钮 */
 .t-button[variant="outline"] {
-  background: rgba(255, 255, 255, 0.5) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
+  background: white !important;
   border: 1px solid rgba(0, 132, 255, 0.3) !important;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
+}
+
+.t-button[variant="outline"]:hover {
+  background: rgba(0, 132, 255, 0.05) !important;
+  border-color: #0066cc !important;
+  box-shadow: 0 2px 8px rgba(0, 132, 255, 0.15) !important;
 }
 
 /* 全局按钮图标与文字对齐（所有按钮统一） */
@@ -241,40 +247,35 @@ button .t-button__text > * {
   gap: 6px !important;
 }
 
-/* 知乎风格的输入框 - 玻璃态增强 */
-.t-input__inner,
-.t-textarea__inner {
+/* 输入框样式 - 排除 chat 组件 */
+.t-input__inner:not(.t-chat-sender .t-input__inner) {
   border-radius: 12px !important;
-  border: 1px solid var(--glass-border) !important;
-  background: rgba(255, 255, 255, 0.6) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  background: white !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
 }
 
-/* 统一移除输入组件的内部蓝色强调框（焦点态不再高亮） */
-.t-input__inner:focus,
-.t-input__inner:focus-visible,
-.t-input:focus-within .t-input__inner,
-.t-input.t-is-focused .t-input__inner,
-.t-input-number:focus-within .t-input__inner,
-.t-textarea__inner:focus,
-.t-textarea__inner:focus-visible,
-.t-textarea.t-is-focused .t-textarea__inner {
-  outline: none !important;
-  box-shadow: none !important;
-  border-color: var(--glass-border) !important;
-  background: rgba(255, 255, 255, 0.8) !important;
+.t-textarea__inner:not(.t-chat-sender .t-textarea__inner) {
+  border-radius: 12px !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  background: white !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
 }
 
-/* 某些主题使用伪元素绘制强调框，这里统一移除 */
-.t-input__inner::before,
-.t-input__inner::after,
-.t-textarea__inner::before,
-.t-textarea__inner::after {
-  box-shadow: none !important;
+/* 输入框焦点样式 */
+.t-input__inner:not(.t-chat-sender .t-input__inner):focus,
+.t-input__inner:not(.t-chat-sender .t-input__inner):focus-visible,
+.t-input:focus-within .t-input__inner:not(.t-chat-sender .t-input__inner) {
   outline: none !important;
-  border: none !important;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1) !important;
+  border-color: #0066cc !important;
+}
+
+.t-textarea__inner:not(.t-chat-sender .t-textarea__inner):focus,
+.t-textarea__inner:not(.t-chat-sender .t-textarea__inner):focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1) !important;
+  border-color: #0066cc !important;
 }
 
 /* 下拉框、选择器等组件的玻璃态效果 */
@@ -287,17 +288,27 @@ button .t-button__text > * {
   border-radius: 12px !important;
 }
 
-/* 下拉菜单玻璃态效果 */
+/* 下拉菜单样式 - 修复双层问题 */
 .t-popup,
 .t-select-popup,
 .t-dropdown,
 .t-menu {
-  background: rgba(255, 255, 255, 0.85) !important;
-  backdrop-filter: var(--glass-blur-strong) !important;
-  -webkit-backdrop-filter: var(--glass-blur-strong) !important;
-  border: 1px solid var(--glass-border) !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12) !important;
-  border-radius: 16px !important;
+  background: white !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 12px !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Tooltip 样式 - 修复双层问题 */
+.t-tooltip,
+.t-tooltip__content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(0, 0, 0, 0.85) !important;
+  border: none !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3) !important;
 }
 
 /* 动画效果 */

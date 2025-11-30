@@ -4,6 +4,10 @@ const express = require("express");
 const cors = require("cors");
 const OpenAI = require("openai");
 const tencentcloud = require("tencentcloud-sdk-nodejs");
+const { createClient } = require("@supabase/supabase-js");
+const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
+const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio.js");
+const { SSEClientTransport } = require("@modelcontextprotocol/sdk/client/sse.js");
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -29,6 +33,200 @@ if (!process.env.DASHSCOPE_API_KEY && !process.env.AI_API_KEY) {
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.warn("警告: Supabase 配置不完整,相关功能可能无法正常工作");
 }
+
+// 初始化 Supabase 客户端（使用 Service Role Key 用于后端操作）
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+  console.log("✅ Supabase 客户端初始化成功");
+}
+
+// --- MCP 客户端管理器 ---
+class MCPClientManager {
+  constructor() {
+    this.clients = new Map();
+    this.tools = [];
+    this.openAIToolMap = new Map(); // Map<openAIName, { serverName, toolName }>
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+
+    console.log("🔧 正在初始化 MCP 客户端...");
+
+    // MCP 服务器配置
+    const mcpServers = {
+      "12306-mcp": {
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "12306-mcp"],
+      },
+      "bing-cn-mcp-server": {
+        transport: "sse",
+        url: "https://mcp.api-inference.modelscope.net/23494d15514349/sse",
+      },
+    };
+
+    for (const [name, config] of Object.entries(mcpServers)) {
+      try {
+        await this.connectServer(name, config);
+      } catch (error) {
+        console.error(`❌ 连接 MCP 服务器 ${name} 失败:`, error.message);
+      }
+    }
+
+    this.initialized = true;
+    console.log(`✅ MCP 客户端初始化完成，共 ${this.tools.length} 个工具可用`);
+  }
+
+  async connectServer(name, config) {
+    console.log(`  📡 正在连接 ${name}...`);
+
+    const client = new Client(
+      { name: `hunan-travel-${name}`, version: "1.0.0" },
+      { capabilities: { tools: {} } }
+    );
+
+    let transport;
+    if (config.transport === "stdio") {
+      // stdio 模式：使用 StdioClientTransport 启动本地进程
+      console.log(`  🚀 启动进程: ${config.command} ${config.args.join(" ")}`);
+
+      transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args,
+        stderr: "pipe", // 捕获 stderr 以便调试
+      });
+
+      // 监听 stderr 输出
+      const stderrStream = transport.stderr;
+      if (stderrStream) {
+        stderrStream.on("data", (data) => {
+          console.log(`[${name}] ${data.toString()}`);
+        });
+      }
+    } else if (config.transport === "sse") {
+      // SSE 模式：连接远程服务器
+      transport = new SSEClientTransport(new URL(config.url));
+    } else {
+      throw new Error(`不支持的传输类型: ${config.transport}`);
+    }
+
+    await client.connect(transport);
+
+    // 获取该服务器的工具列表
+    const toolsResult = await client.listTools();
+    const serverTools = toolsResult.tools || [];
+
+    console.log(`  ✅ ${name} 已连接，提供 ${serverTools.length} 个工具`);
+
+    // 存储客户端和工具映射
+    this.clients.set(name, { client, tools: serverTools });
+
+    // 将工具添加到总工具列表
+    for (const tool of serverTools) {
+      this.tools.push({
+        serverName: name,
+        ...tool,
+      });
+    }
+  }
+
+  getTools() {
+    return this.tools;
+  }
+
+  // 将 MCP 工具转换为 OpenAI Function Calling 格式
+  getToolsForOpenAI() {
+    this.openAIToolMap.clear();
+    const nameCounts = {};
+    this.tools.forEach(t => { nameCounts[t.name] = (nameCounts[t.name] || 0) + 1; });
+
+    return this.tools.map((tool) => {
+      let openAIName = tool.name;
+      // 只有在名称冲突时才添加前缀
+      if (nameCounts[tool.name] > 1) {
+        openAIName = `${tool.serverName}_${tool.name}`;
+      }
+      
+      // 确保名称符合 OpenAI 要求 (字母、数字、下划线、连字符)
+      openAIName = openAIName.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      this.openAIToolMap.set(openAIName, { serverName: tool.serverName, toolName: tool.name });
+
+      return {
+        type: "function",
+        function: {
+          name: openAIName,
+          description: tool.description || "",
+          parameters: tool.inputSchema || { type: "object", properties: {} },
+        },
+      };
+    });
+  }
+
+  // 调用 MCP 工具
+  async callTool(openAIName, args) {
+    let serverName, toolName;
+    
+    const info = this.openAIToolMap.get(openAIName);
+    if (info) {
+      serverName = info.serverName;
+      toolName = info.toolName;
+    } else {
+      // 兼容旧格式或直接调用
+      if (openAIName.includes('__')) {
+         [serverName, toolName] = openAIName.split('__');
+      } else {
+         throw new Error(`未知的工具名称: ${openAIName}`);
+      }
+    }
+
+    const clientInfo = this.clients.get(serverName);
+
+    if (!clientInfo) {
+      throw new Error(`未找到 MCP 服务器: ${serverName}`);
+    }
+
+    console.log(`🔧 调用工具: ${openAIName} (${serverName} -> ${toolName})`);
+    console.log(`📝 参数:`, JSON.stringify(args, null, 2));
+
+    try {
+      const result = await clientInfo.client.callTool({
+        name: toolName,
+        arguments: args,
+      });
+
+      console.log(`✅ 工具执行成功`);
+      return result;
+    } catch (error) {
+      console.error(`❌ 工具执行失败:`, error);
+      throw error;
+    }
+  }
+
+  async close() {
+    for (const [name, { client }] of this.clients) {
+      try {
+        await client.close();
+        console.log(`🔌 已断开 ${name}`);
+      } catch (error) {
+        console.error(`断开 ${name} 失败:`, error);
+      }
+    }
+    this.clients.clear();
+    this.tools = [];
+    this.openAIToolMap.clear();
+    this.initialized = false;
+  }
+}
+
+// 全局 MCP 客户端管理器实例
+const mcpManager = new MCPClientManager();
 
 // --- 策略模式实现 AI 客户端 ---
 
@@ -1232,6 +1430,463 @@ ${
     res.status(500).json({
       error: "Failed to generate share content",
       message: "生成分享文案时发生错误，请稍后再试",
+    });
+  }
+});
+
+// AI 对话 API（面对面对话功能）
+// 使用 Supabase 持久化存储会话历史
+const MAX_HISTORY_MESSAGES = parseInt(process.env.AI_CHAT_HISTORY_LIMIT || "12");
+
+// 从 Supabase 获取会话历史
+async function getConversationHistory(conversationId) {
+  if (!supabase) {
+    console.warn("⚠️ Supabase 未配置，使用内存存储");
+    return [];
+  }
+  
+  try {
+    const { data, error } = await supabase
+      .from("ai_chat_sessions")
+      .select("messages")
+      .eq("conversation_id", conversationId)
+      .single();
+    
+    if (error && error.code !== "PGRST116") {
+      // PGRST116 = 没找到记录，这是正常的
+      console.error("获取会话历史失败:", error);
+      return [];
+    }
+    
+    return data?.messages || [];
+  } catch (err) {
+    console.error("获取会话历史异常:", err);
+    return [];
+  }
+}
+
+// 保存会话历史到 Supabase
+async function saveConversationHistory(conversationId, messages) {
+  if (!supabase) {
+    return;
+  }
+  
+  // 限制历史消息数量
+  const trimmedMessages = messages.length > MAX_HISTORY_MESSAGES 
+    ? messages.slice(-MAX_HISTORY_MESSAGES) 
+    : messages;
+  
+  try {
+    const { error } = await supabase
+      .from("ai_chat_sessions")
+      .upsert({
+        conversation_id: conversationId,
+        messages: trimmedMessages,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: "conversation_id"
+      });
+    
+    if (error) {
+      console.error("保存会话历史失败:", error);
+    }
+  } catch (err) {
+    console.error("保存会话历史异常:", err);
+  }
+}
+
+// 清空会话历史
+async function clearConversationHistory(conversationId) {
+  if (!supabase) {
+    return;
+  }
+  
+  try {
+    const { error } = await supabase
+      .from("ai_chat_sessions")
+      .delete()
+      .eq("conversation_id", conversationId);
+    
+    if (error) {
+      console.error("清空会话历史失败:", error);
+    }
+  } catch (err) {
+    console.error("清空会话历史异常:", err);
+  }
+}
+
+app.post("/api/ai-chat", async (req, res) => {
+  if (!aiContext || !aiContext.strategy) {
+    return res.status(500).json({
+      error: "AI 功能当前不可用 - 未配置 API 密钥",
+      message: "系统管理员需要配置 AI API 密钥才能使用 AI 对话功能",
+    });
+  }
+
+  try {
+    const {
+      message,
+      conversation_id = "default",
+      reset_history = false,
+      enable_tools = false,  // 新增：控制是否启用 MCP 工具
+    } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        error: "Missing message",
+        message: "请提供对话消息",
+      });
+    }
+
+    console.log(`💬 正在处理AI对话请求...`);
+    console.log(
+      `📝 用户消息: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`
+    );
+    console.log(`🔑 会话ID: ${conversation_id}`);
+    console.log(`🔧 工具模式: ${enable_tools ? "启用" : "禁用"}`);
+
+    // 获取或重置会话历史
+    let history = [];
+    if (reset_history) {
+      await clearConversationHistory(conversation_id);
+      console.log(`🔄 会话历史已重置 (conversation_id: ${conversation_id})`);
+    } else {
+      history = await getConversationHistory(conversation_id);
+      console.log(`📚 已加载 ${history.length} 条历史消息`);
+    }
+
+    // 构造系统提示词
+    const systemPrompt = `你是一个专业的旅游助手。今天是${new Date().toISOString().split('T')[0]}。
+
+当用户询问火车票/高铁票信息时，你必须按以下步骤操作：
+1. 先调用 get-current-date 获取今天日期
+2. 调用 get-station-code-of-citys 获取出发城市和到达城市的站点代码
+3. 根据用户说的"明天"、"后天"等计算出具体日期
+4. 调用 get-tickets 查询车票，参数格式：{"date": "2025-12-01", "from_station": "BJP", "to_station": "CSQ"}
+5. 将查询结果以清晰的列表形式展示给用户
+
+重要：
+- 日期格式必须是 YYYY-MM-DD
+- 必须使用工具返回的站点代码（如 BJP、CSQ）而不是城市名
+- 如果工具返回空结果，请告知用户并建议换个日期或车站
+
+回答要求：简洁明了，突出重点。`;
+
+    let aiResponse;
+
+    if (enable_tools) {
+      // 启用 MCP 工具模式
+      console.log("🔧 已启用工具支持 (MCP/Function Calling)");
+
+      // 确保 MCP 客户端已初始化
+      await mcpManager.initialize();
+
+      const tools = mcpManager.getToolsForOpenAI();
+      console.log(`🔧 可用工具数量: ${tools.length}`);
+      if (tools.length > 0) {
+        console.log(`🔧 工具列表: ${tools.map(t => t.function.name).join(", ")}`);
+        // console.log(`🔧 工具定义详情: ${JSON.stringify(tools, null, 2)}`); // 调试用
+      } else {
+        console.warn("⚠️ 警告: 启用了工具模式但没有发现可用工具");
+      }
+
+      // 构建消息列表
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...history,
+        { role: "user", content: message }
+      ];
+
+      // 使用 OpenAI 客户端进行工具调用
+      let activeClient = aiContext.strategy.client;
+      let activeModel = aiContext.strategy.model;
+      let usedFallback = false;
+
+      console.log(`🚀 发送请求到 AI (Model: ${activeModel})...`);
+      
+      let response;
+      try {
+        response = await activeClient.chat.completions.create({
+          model: activeModel,
+          messages: messages,
+          tools: tools.length > 0 ? tools : undefined,
+          tool_choice: tools.length > 0 ? "auto" : undefined,
+          temperature: 0.7,
+          stream: false, // 显式禁用流式输出
+        });
+      } catch (apiError) {
+        console.error(`❌ AI API 调用失败:`, apiError.message);
+        // 如果是 GitCode 失败且配置了 DashScope，尝试回退
+        if (process.env.DASHSCOPE_API_KEY) {
+          console.log(`⚠️ 尝试回退到 DashScope...`);
+          activeClient = new OpenAI({
+            apiKey: process.env.DASHSCOPE_API_KEY,
+            baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          });
+          activeModel = process.env.DASHSCOPE_AI_MODEL || "qwen-max";
+          usedFallback = true;
+          response = await activeClient.chat.completions.create({
+            model: activeModel,
+            messages: messages,
+            tools: tools.length > 0 ? tools : undefined,
+            tool_choice: tools.length > 0 ? "auto" : undefined,
+            temperature: 0.7,
+            stream: false,
+          });
+        } else {
+          throw apiError;
+        }
+      }
+
+      console.log(`📩 AI 响应原始数据:`, JSON.stringify(response, null, 2));
+
+      // 检查是否返回了错误而不是正常响应
+      if (response.error_code || response.error_message) {
+        console.error(`❌ AI API 返回错误: ${response.error_message}`);
+        // 尝试回退到 DashScope
+        if (process.env.DASHSCOPE_API_KEY && !usedFallback) {
+          console.log(`⚠️ 尝试回退到 DashScope...`);
+          activeClient = new OpenAI({
+            apiKey: process.env.DASHSCOPE_API_KEY,
+            baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          });
+          activeModel = process.env.DASHSCOPE_AI_MODEL || "qwen-max";
+          usedFallback = true;
+          response = await activeClient.chat.completions.create({
+            model: activeModel,
+            messages: messages,
+            tools: tools.length > 0 ? tools : undefined,
+            tool_choice: tools.length > 0 ? "auto" : undefined,
+            temperature: 0.7,
+            stream: false,
+          });
+          console.log(`📩 DashScope 响应:`, JSON.stringify(response, null, 2));
+        } else {
+          throw new Error(`AI API 返回错误: ${response.error_message}`);
+        }
+      }
+
+      if (!response.choices || response.choices.length === 0) {
+        throw new Error("AI 响应格式错误: 未找到 choices");
+      }
+
+      let assistantMessage = response.choices[0].message;
+
+      // 处理工具调用循环（最多 5 次迭代防止无限循环）
+      let iterations = 0;
+      const maxIterations = 5;
+
+      while (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0 && iterations < maxIterations) {
+        iterations++;
+        console.log(`🔄 工具调用迭代 ${iterations}/${maxIterations}`);
+
+        // 将助手消息添加到消息列表
+        messages.push(assistantMessage);
+
+        // 处理每个工具调用
+        for (const toolCall of assistantMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`🔧 执行工具: ${functionName}`);
+          console.log(`📝 参数: ${JSON.stringify(functionArgs)}`);
+
+          let toolResult;
+          try {
+            const result = await mcpManager.callTool(functionName, functionArgs);
+            // MCP 返回的结果可能是 { content: [...] } 格式
+            if (result.content && Array.isArray(result.content)) {
+              toolResult = result.content.map(c => c.text || JSON.stringify(c)).join("\n");
+            } else {
+              toolResult = JSON.stringify(result);
+            }
+            console.log(`✅ 工具执行成功`);
+            console.log(`📋 工具返回结果: ${toolResult.substring(0, 500)}${toolResult.length > 500 ? '...(truncated)' : ''}`);
+          } catch (error) {
+            console.error(`❌ 工具执行失败:`, error);
+            toolResult = `工具 '${functionName}' 执行失败: ${error.message}。请检查参数并重新尝试。`;
+          }
+
+          // 将工具结果添加到消息列表
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: toolResult,
+          });
+        }
+
+        // 继续对话以获取最终响应（使用 activeClient 和 activeModel）
+        console.log(`🔄 继续请求 AI (Model: ${activeModel})...`);
+        try {
+          response = await activeClient.chat.completions.create({
+            model: activeModel,
+            messages: messages,
+            tools: tools.length > 0 ? tools : undefined,
+            tool_choice: tools.length > 0 ? "auto" : undefined,
+            temperature: 0.7,
+            stream: false, // 显式禁用流式输出
+          });
+        } catch (loopApiError) {
+          console.error(`❌ 循环中 AI API 调用失败:`, loopApiError.message);
+          if (process.env.DASHSCOPE_API_KEY && !usedFallback) {
+            console.log(`⚠️ 尝试回退到 DashScope...`);
+            activeClient = new OpenAI({
+              apiKey: process.env.DASHSCOPE_API_KEY,
+              baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            });
+            activeModel = process.env.DASHSCOPE_AI_MODEL || "qwen-max";
+            usedFallback = true;
+            response = await activeClient.chat.completions.create({
+              model: activeModel,
+              messages: messages,
+              tools: tools.length > 0 ? tools : undefined,
+              tool_choice: tools.length > 0 ? "auto" : undefined,
+              temperature: 0.7,
+              stream: false,
+            });
+          } else {
+            throw loopApiError;
+          }
+        }
+
+        // 检查错误响应
+        if (response.error_code || response.error_message) {
+          console.error(`❌ 循环中 AI API 返回错误: ${response.error_message}`);
+          if (process.env.DASHSCOPE_API_KEY && !usedFallback) {
+            console.log(`⚠️ 尝试回退到 DashScope...`);
+            activeClient = new OpenAI({
+              apiKey: process.env.DASHSCOPE_API_KEY,
+              baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            });
+            activeModel = process.env.DASHSCOPE_AI_MODEL || "qwen-max";
+            usedFallback = true;
+            response = await activeClient.chat.completions.create({
+              model: activeModel,
+              messages: messages,
+              tools: tools.length > 0 ? tools : undefined,
+              tool_choice: tools.length > 0 ? "auto" : undefined,
+              temperature: 0.7,
+              stream: false,
+            });
+          } else {
+            throw new Error(`AI API 返回错误: ${response.error_message}`);
+          }
+        }
+
+        if (!response.choices || response.choices.length === 0) {
+          throw new Error("AI 响应格式错误: 未找到 choices");
+        }
+
+        assistantMessage = response.choices[0].message;
+      }
+
+      aiResponse = assistantMessage.content || "";
+
+      // 如果工具模式未生成有效回复，尝试让 AI 基于已收集的工具结果生成回复
+      if (!aiResponse || aiResponse.trim() === "") {
+        console.log("⚠️ 工具模式未生成有效回复，尝试基于工具结果生成回复...");
+        
+        // 检查 messages 中是否有工具结果
+        const toolResults = messages.filter(m => m.role === "tool");
+        if (toolResults.length > 0) {
+          // 构造一个请求，让 AI 基于已有的工具结果生成最终回复
+          const summaryMessages = [
+            { role: "system", content: "你是一个专业的旅游助手。请根据以下工具调用的结果，为用户生成一个清晰、有用的回复。不要再调用任何工具，直接回答用户的问题。" },
+            ...messages.slice(1), // 跳过原始 system prompt，使用新的
+            { role: "user", content: "请根据上述工具返回的信息，为用户生成最终的回复。" }
+          ];
+          
+          try {
+            const summaryResponse = await activeClient.chat.completions.create({
+              model: activeModel,
+              messages: summaryMessages,
+              temperature: 0.7,
+              stream: false,
+            });
+            
+            if (summaryResponse.choices && summaryResponse.choices.length > 0) {
+              aiResponse = summaryResponse.choices[0].message.content || "";
+              console.log(`✅ 基于工具结果生成回复成功`);
+            }
+          } catch (summaryError) {
+            console.error(`❌ 生成汇总回复失败:`, summaryError.message);
+          }
+        }
+        
+        // 如果仍然没有回复，才回退到无工具模式
+        if (!aiResponse || aiResponse.trim() === "") {
+          console.log("⚠️ 回退到无工具模式");
+          aiResponse = await aiContext.generateResponse(
+            systemPrompt,
+            message,
+            { temperature: 0.7 }
+          );
+        }
+      }
+    } else {
+      // 无工具模式：使用简单的上下文对话
+      let userPrompt = message;
+      if (history.length > 0) {
+        const historyContext = history
+          .map((msg) => `${msg.role === "user" ? "用户" : "助手"}: ${msg.content}`)
+          .join("\n");
+        userPrompt = `以下是之前的对话历史：\n${historyContext}\n\n用户现在的问题：${message}`;
+      }
+
+      aiResponse = await aiContext.generateResponse(
+        systemPrompt,
+        userPrompt,
+        { temperature: 0.7 }
+      );
+    }
+
+    console.log(`✅ AI回复生成成功`);
+    console.log(`📏 AI回复文本长度: ${aiResponse.length} 字符`);
+
+    // 将本轮对话添加到历史
+    const newHistory = [
+      ...history,
+      { role: "user", content: message },
+      { role: "assistant", content: aiResponse }
+    ];
+    
+    // 保存到 Supabase
+    await saveConversationHistory(conversation_id, newHistory);
+
+    res.json({
+      user_message: message,
+      ai_response: aiResponse,
+      conversation_id: conversation_id,
+    });
+  } catch (error) {
+    console.error("❌ Error in AI chat:", error);
+    res.status(500).json({
+      error: "Failed to process AI chat",
+      message: "处理AI对话时发生错误，请稍后再试",
+      details: error.message,
+    });
+  }
+});
+
+// 获取可用的 MCP 工具列表
+app.get("/api/mcp-tools", async (req, res) => {
+  try {
+    await mcpManager.initialize();
+    const tools = mcpManager.getTools();
+    res.json({
+      available: tools.length > 0,
+      count: tools.length,
+      tools: tools.map(t => ({
+        server: t.serverName,
+        name: t.name,
+        description: t.description,
+      })),
+    });
+  } catch (error) {
+    console.error("❌ Error getting MCP tools:", error);
+    res.status(500).json({
+      error: "Failed to get MCP tools",
+      message: error.message,
     });
   }
 });

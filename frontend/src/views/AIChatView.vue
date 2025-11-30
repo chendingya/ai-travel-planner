@@ -4,313 +4,229 @@
     <div class="page-header">
       <div class="header-content">
         <div class="title-section">
-          <div class="page-title-wrapper">
-            <h1 class="page-title">AI面对面对话</h1>
-          </div>
-          <p class="page-subtitle">与智能旅行助手进行语音对话，获取专业的旅行建议</p>
+          <h1 class="page-title">AI面对面对话</h1>
+          <p class="page-subtitle">与智能旅行助手进行对话，获取专业的旅行建议</p>
         </div>
-        
-        <!-- 音色设置 -->
-        <div class="voice-settings">
-          <div class="voice-select-wrapper">
-            <div class="setting-label">
-              <t-icon name="sound" />
-              <span>音色选择</span>
+        <div class="header-actions">
+          <!-- 工具模式开关 - 美化版 -->
+          <div 
+            class="tool-mode-toggle" 
+            :class="{ 'is-active': enableTools }"
+            @click="!isLoading && (enableTools = !enableTools)"
+            :title="enableTools ? '已启用MCP工具（火车票查询、网络搜索）' : '启用MCP工具可查询火车票、搜索网络'"
+          >
+            <div class="toggle-bg"></div>
+            <div class="toggle-content">
+              <div class="toggle-icon-wrapper">
+                <t-icon :name="enableTools ? 'tools' : 'chat'" class="toggle-icon" />
+              </div>
+              <span class="toggle-text">{{ enableTools ? '工具模式' : '普通对话' }}</span>
             </div>
-            <t-select
-              v-model="selectedVoice"
-              placeholder="选择音色"
-              class="voice-select"
-            >
-              <t-option v-for="voice in voiceOptions" :key="voice.value" :value="voice.value">
-                {{ voice.label }}
-              </t-option>
-            </t-select>
           </div>
-          
-          <div class="auto-play-wrapper">
-            <span class="switch-label">自动播放</span>
-            <t-switch
-              v-model="autoPlay"
-              :label="''"
-              class="auto-play-switch"
-            />
-          </div>
+
+          <t-button variant="outline" @click="handleClear" shape="round" class="new-chat-btn">
+            <template #icon><t-icon name="refresh" /></template>
+            新对话
+          </t-button>
         </div>
       </div>
     </div>
 
-    <!-- 聊天区域 -->
+    <!-- 聊天区域 - 使用 TDesign Chat 组件 -->
     <div class="chat-container">
-      <div class="chat-messages" ref="messagesContainer">
-        <div
-          v-for="message in messages"
-          :key="message.id"
-          :class="['message', message.role]"
-          :data-message-id="message.id"
-        >
-          <div class="message-avatar">
-            <div class="avatar" :class="message.role">
-              <div class="avatar-inner">
-                {{ message.role === 'user' ? '👤' : '🤖' }}
-              </div>
-            </div>
-          </div>
-          
-          <div class="message-wrapper">
-            <div class="message-content">
-              <div class="message-text">{{ message.content }}</div>
-              
-              <!-- AI消息的音频播放器 -->
-              <div v-if="message.role === 'assistant' && (message.audioUrl || message.audioUrls)" class="audio-player">
-                <!-- 单段音频 -->
-                <div v-if="message.audioUrl && !message.audioUrls" class="audio-wrapper">
-                  <audio
-                    :src="message.audioUrl"
-                    controls
-                    preload="none"
-                    @ended="onAudioEnded(message)"
-                    class="audio-element"
-                  >
-                    您的浏览器不支持音频播放
-                  </audio>
-                </div>
-                
-                <!-- 多段音频 -->
-                <div v-else-if="message.audioUrls" class="multi-audio-player">
-                  <div 
-                    v-for="(audioUrl, audioIndex) in message.audioUrls" 
-                    :key="audioIndex" 
-                    class="audio-segment"
-                  >
-                    <div class="segment-header">
-                      <t-icon name="sound" />
-                      <span class="segment-label">片段 {{ audioIndex + 1 }}</span>
-                    </div>
-                    <div class="audio-wrapper">
-                      <audio
-                        :src="audioUrl"
-                        controls
-                        preload="none"
-                        @ended="onAudioSegmentEnded(message, audioIndex)"
-                        class="audio-element"
-                      >
-                        您的浏览器不支持音频播放
-                      </audio>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <!-- AI消息的音频生成状态 -->
-              <div v-if="message.role === 'assistant' && message.audioStatus === 'processing'" class="audio-status">
-                <div class="status-wrapper">
-                  <t-loading theme="dots" size="small" />
-                  <span>正在生成语音...</span>
-                </div>
-              </div>
-              
-              <!-- AI消息的音频错误 -->
-              <div v-if="message.role === 'assistant' && message.audioError" class="audio-error">
-                <div class="error-wrapper">
-                  <t-icon name="error-circle" />
-                  <span>{{ message.audioError }}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div class="message-time">
-              {{ formatTime(message.timestamp) }}
-            </div>
-          </div>
-        </div>
-        
-        <!-- 加载状态 -->
-        <div v-if="isLoading" class="message assistant">
-          <div class="message-avatar">
-            <div class="avatar assistant">
-              <div class="avatar-inner">
-                🤖
-              </div>
-            </div>
-          </div>
-          <div class="message-wrapper">
-            <div class="message-content">
-              <div class="typing-indicator">
-                <div class="typing-dots">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-                <span>AI正在思考...</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      <!-- 消息列表 -->
+      <t-chat
+        ref="chatRef"
+        :data="chatData"
+        :clear-history="false"
+        :text-loading="isLoading"
+        layout="single"
+        :reverse="false"
+      >
+        <!-- 自定义头像 -->
+        <template #avatar="{ item }">
+          <t-avatar 
+            :image="item.role === 'user' ? userAvatar : assistantAvatar"
+            size="40px"
+          />
+        </template>
+      </t-chat>
 
-    <!-- 输入区域 -->
-    <div class="input-area">
-      <div class="input-container">
-        <div class="input-wrapper">
-          <div class="input-field">
-            <t-textarea
-              v-model="inputMessage"
-              placeholder="请输入您的问题..."
-              :maxlength="500"
-              :autosize="{ minRows: 2, maxRows: 4 }"
-              @keydown.ctrl.enter="sendMessage"
-              :disabled="isLoading"
-              class="message-input"
-            />
-          </div>
-          <div class="send-button-wrapper">
-            <t-button
-              theme="primary"
-              @click="sendMessage"
-              :disabled="!inputMessage.trim() || isLoading"
-              :loading="isLoading"
-              class="send-button"
-            >
-              <template #icon>
-                <t-icon name="send" />
-              </template>
-              发送
-            </t-button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 快捷问题 -->
+      <!-- 快捷问题区域 -->
       <div class="quick-questions">
         <div class="quick-header">
           <t-icon name="lightbulb" />
-          <span class="quick-title">快捷问题</span>
+          <span>快捷问题</span>
+          <t-tag v-if="enableTools" theme="primary" size="small" variant="light">
+            <t-icon name="tools" size="12px" style="margin-right: 4px;" />
+            工具增强
+          </t-tag>
         </div>
         <div class="quick-buttons">
           <t-button
-            v-for="(question, index) in quickQuestions"
+            v-for="question in currentQuickQuestions"
             :key="question"
             variant="outline"
             size="small"
-            @click="handleQuickQuestion(question)"
             :disabled="isLoading"
+            @click="handleQuickQuestion(question)"
             class="quick-btn"
-            :style="{ animationDelay: `${index * 0.1}s` }"
           >
             {{ question }}
           </t-button>
         </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="sender-wrapper">
+        <t-chat-sender
+          v-model="inputValue"
+          :placeholder="currentPlaceholder"
+          :disabled="isLoading"
+          :loading="isLoading"
+          @send="handleSend"
+          @stop="handleStop"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 
-const defaultGreeting = '您好！我是您的AI旅行助手，很高兴为您服务！我可以为您提供湖南旅游的相关建议，包括景点推荐、美食介绍、行程规划等。请问有什么可以帮助您的吗？'
-const createMessageId = () => `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const createMessage = (role, content, extra = {}) => ({
-  id: createMessageId(),
-  role,
-  content,
-  timestamp: new Date(),
-  ...extra
-})
-const createGreetingMessage = () => createMessage('assistant', defaultGreeting)
+// 头像配置
+const userAvatar = 'https://tdesign.gtimg.com/site/avatar.jpg'
+const assistantAvatar = 'https://tdesign.gtimg.com/site/chat-avatar.png'
 
-// 响应式数据 - 初始化就包含欢迎消息
-const messages = ref([createGreetingMessage()])
+// Chat 组件引用
 const chatRef = ref(null)
-const inputMessage = ref('')
-const isLoading = ref(false)
-const selectedVoice = ref('Cherry')
-const autoPlay = ref(true)
-const messagesContainer = ref(null)
+
+// 会话管理
 const createConversationId = () => `ai-face-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const conversationId = ref(createConversationId())
 const shouldResetHistory = ref(true)
 
-const getMessageElement = (messageId) => {
-  if (!messagesContainer.value) return null
-  return messagesContainer.value.querySelector(`[data-message-id="${messageId}"]`)
-}
+// MCP 工具模式开关
+const enableTools = ref(false)
 
-const playMessageAudioSegment = (message, segmentIndex = 0) => {
-  const messageElement = getMessageElement(message.id)
-  if (!messageElement) return
-  const audioElements = Array.from(messageElement.querySelectorAll('audio'))
-  if (!audioElements.length) return
-  const targetIndex = message.audioUrls && message.audioUrls.length ? segmentIndex : 0
-  if (targetIndex >= audioElements.length) return
-  const targetAudio = audioElements[targetIndex]
-  message.currentAudioSegment = targetIndex
-  targetAudio.currentTime = 0
-  targetAudio.play().catch(error => {
-    console.error('音频播放失败:', error)
-    MessagePlugin.error('音频播放失败')
-  })
-}
+// 默认问候消息
+const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您服务！
 
-const startAutoPlayForMessage = async (message, segmentIndex = 0) => {
-  if (!autoPlay.value) return
-  await nextTick()
-  playMessageAudioSegment(message, segmentIndex)
-}
+我可以为您提供湖南旅游的相关建议，包括：
+- **景点推荐**：热门景区、网红打卡地
+- **美食介绍**：特色小吃、地道餐厅
+- **行程规划**：路线设计、时间安排
+- **实用建议**：交通指南、住宿推荐
 
-// 音色选项
-const voiceOptions = [
-  { value: 'Cherry', label: '芊悦 - 阳光积极小姐姐' },
-  { value: 'Ethan', label: '晨煦 - 阳光温暖少年' },
-  { value: 'Eric', label: '四川-程川 - 跳脱市井成都男子' },
-  { value: 'Rocky', label: '粤语-阿强 - 幽默风趣' },
-  { value: 'Kiki', label: '粤语-阿清 - 甜美港妹闺蜜' }
-]
+**提示**：开启右上角的"工具模式"，我还可以：
+- **查询火车票**：查询12306列车信息
+- **网络搜索**：获取最新旅游资讯
 
-// 快捷问题
-const quickQuestions = [
+请问有什么可以帮助您的吗？`
+
+// 消息列表 - 转换为 TChat 需要的格式
+const messages = ref([
+  {
+    role: 'assistant',
+    content: defaultGreeting,
+    datetime: formatTime(new Date()),
+  },
+])
+
+// 转换为 TChat data 格式
+const chatData = computed(() => {
+  return messages.value.map((msg) => ({
+    avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
+    name: msg.role === 'user' ? '我' : 'AI助手',
+    role: msg.role,
+    content: msg.content,
+    datetime: msg.datetime || '',
+  }))
+})
+
+// 状态
+const inputValue = ref('')
+const isLoading = ref(false)
+const abortController = ref(null)
+
+// 普通模式快捷问题
+const normalQuickQuestions = [
   '推荐一些湖南的热门景点',
   '湖南有什么特色美食？',
   '如何规划一次完美的湖南之旅？',
-  '湖南旅游的最佳季节是什么时候？',
-  '湖南有哪些必去的网红打卡地？'
+  '湖南旅游的最佳季节是什么时候？'
 ]
 
+// 工具模式快捷问题
+const toolQuickQuestions = [
+  '查一下明天从北京到长沙的高铁',
+  '搜索一下张家界最新的旅游攻略',
+  '查询下周五从上海到张家界的火车',
+  '帮我搜索凤凰古城的住宿推荐'
+]
 
+// 根据模式切换快捷问题
+const currentQuickQuestions = computed(() => 
+  enableTools.value ? toolQuickQuestions : normalQuickQuestions
+)
 
-// 发送消息处理函数
-const handleSend = async (message) => {
-  if (!message.trim() || isLoading.value) return
+// 根据模式切换占位符
+const currentPlaceholder = computed(() => 
+  enableTools.value 
+    ? '输入问题，可使用火车票查询、网络搜索等工具...' 
+    : '请输入您的问题...'
+)
+
+// 格式化时间
+function formatTime(date) {
+  const hours = date.getHours().toString().padStart(2, '0')
+  const minutes = date.getMinutes().toString().padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
+// 发送消息
+const handleSend = async (value) => {
+  const content = value?.trim() || inputValue.value?.trim()
+  if (!content || isLoading.value) return
   
   // 添加用户消息
-  messages.value.push(createMessage('user', message))
+  messages.value.push({
+    role: 'user',
+    content: content,
+    datetime: formatTime(new Date()),
+  })
+  
+  inputValue.value = ''
   
   // 滚动到底部
   await nextTick()
   scrollToBottom()
   
+  // 调用AI
+  await callAI(content)
+}
+
+// 调用AI接口
+const callAI = async (prompt) => {
+  isLoading.value = true
+  const resetFlag = shouldResetHistory.value
+  abortController.value = new AbortController()
+  
   try {
-    isLoading.value = true
-    const resetFlag = shouldResetHistory.value
-    
-    // 调用AI对话API
-    const response = await fetch('http://localhost:5000/api/ai-chat', {
+    const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        message: message,
-        voice: selectedVoice.value,
-        language_type: 'Chinese',
-        include_audio: true,
-        enable_tools: true,
+        message: prompt,
         conversation_id: conversationId.value,
-        reset_history: resetFlag
-      })
+        reset_history: resetFlag,
+        enable_tools: enableTools.value,  // 传递工具模式状态
+      }),
+      signal: abortController.value.signal,
     })
     
     if (!response.ok) {
@@ -321,275 +237,212 @@ const handleSend = async (message) => {
     shouldResetHistory.value = false
     
     // 添加AI回复
-    const hasMultipleSegments = Array.isArray(data.audio_urls) && data.audio_urls.length > 0
-    const aiMessage = createMessage('assistant', data.ai_response, {
-      audioStatus: data.audio_task_id ? 'processing' : (data.audio_url || hasMultipleSegments ? 'completed' : null),
-      audioTaskId: data.audio_task_id || null,
-      audioUrl: hasMultipleSegments ? null : (data.audio_url || null),
-      audioUrls: hasMultipleSegments ? data.audio_urls : null,
-      audioError: data.audio_error || null,
-      currentAudioSegment: hasMultipleSegments ? 0 : null
+    messages.value.push({
+      role: 'assistant',
+      content: data.ai_response || '抱歉，我暂时无法回答您的问题。',
+      datetime: formatTime(new Date()),
     })
-    
-    messages.value.push(aiMessage)
     
     // 滚动到底部
     await nextTick()
     scrollToBottom()
     
-    // 如果有音频任务，轮询获取音频
-    if (data.audio_task_id) {
-      await pollAudioStatus(aiMessage)
-    } else if (aiMessage.audioUrls && aiMessage.audioUrls.length) {
-      await startAutoPlayForMessage(aiMessage, 0)
-    } else if (aiMessage.audioUrl) {
-      await startAutoPlayForMessage(aiMessage)
-    }
-    
   } catch (error) {
-    console.error('发送消息失败:', error)
-    MessagePlugin.error('发送消息失败，请稍后重试')
+    if (error.name === 'AbortError') {
+      console.log('请求已取消')
+    } else {
+      console.error('AI对话请求失败:', error)
+      MessagePlugin.error('发送消息失败，请稍后重试')
+    }
   } finally {
     isLoading.value = false
+    abortController.value = null
   }
 }
 
-// 发送消息函数
-const sendMessage = async () => {
-  if (!inputMessage.value.trim() || isLoading.value) return
-  
-  const userMessage = inputMessage.value.trim()
-  inputMessage.value = ''
-  
-  // 调用handleSend处理消息
-  handleSend(userMessage)
-}
-
-const resetConversation = () => {
-  conversationId.value = createConversationId()
-  shouldResetHistory.value = true
-  messages.value = [createGreetingMessage()]
-}
-
-// 清空聊天记录处理函数
-const handleClear = () => {
-  resetConversation()
-  MessagePlugin.success('已开启新的对话')
-}
-
-
-
-// 轮询音频状态
-const pollAudioStatus = async (message) => {
-  const maxAttempts = 20 // 最多轮询20次
-  const pollInterval = 2000 // 2秒轮询一次
-  
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const response = await fetch(`http://localhost:5000/api/tts/audio/${message.audioTaskId}`)
-      
-      if (!response.ok) {
-        throw new Error('查询音频状态失败')
-      }
-      
-      const data = await response.json()
-      
-      if (data.status === 'completed') {
-        // 音频生成完成
-        message.audioUrl = data.audio_url
-        message.audioUrls = null
-        message.audioStatus = 'completed'
-        message.currentAudioSegment = 0
-        
-        await startAutoPlayForMessage(message)
-        break
-      } else if (data.status === 'failed') {
-        // 音频生成失败
-        message.audioStatus = 'failed'
-        message.audioError = data.error || '语音生成失败'
-        break
-      }
-      // 继续轮询
-      
-    } catch (error) {
-      console.error('轮询音频状态失败:', error)
-    }
-    
-    // 等待下次轮询
-    if (attempt < maxAttempts - 1) {
-      await new Promise(resolve => setTimeout(resolve, pollInterval))
-    }
+// 停止生成
+const handleStop = () => {
+  if (abortController.value) {
+    abortController.value.abort()
   }
-  
-  // 轮询超时
-  if (message.audioStatus === 'processing') {
-    message.audioStatus = 'timeout'
-    message.audioError = '语音生成超时，请重试'
-  }
-}
-
-// 音频播放结束
-const onAudioEnded = (message) => {
-  if (message) {
-    message.currentAudioSegment = null
-  }
-  console.log(`音频播放结束: ${message?.id || ''}`)
-}
-
-// 多段音频播放结束
-const onAudioSegmentEnded = (message, segmentIndex) => {
-  if (!message.audioUrls || !message.audioUrls.length) return
-  if (segmentIndex < message.audioUrls.length - 1) {
-    if (autoPlay.value) {
-      const nextIndex = segmentIndex + 1
-      message.currentAudioSegment = nextIndex
-      setTimeout(() => {
-        startAutoPlayForMessage(message, nextIndex)
-      }, 300)
-    }
-  } else {
-    message.currentAudioSegment = null
-    console.log(`多段音频播放完成: ${message.id}`)
-  }
-}
-
-// 处理快捷问题
-const handleQuickQuestion = (question) => {
-  inputMessage.value = question
-  sendMessage()
 }
 
 // 滚动到底部
 const scrollToBottom = () => {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  if (chatRef.value?.scrollToBottom) {
+    chatRef.value.scrollToBottom({ behavior: 'smooth' })
   }
 }
 
-// 格式化时间
-const formatTime = (timestamp) => {
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+// 清空对话
+const handleClear = () => {
+  conversationId.value = createConversationId()
+  shouldResetHistory.value = true
+  messages.value = [
+    {
+      role: 'assistant',
+      content: defaultGreeting,
+      datetime: formatTime(new Date()),
+    },
+  ]
+  MessagePlugin.success('已开启新的对话')
 }
 
-// 组件挂载
-onMounted(() => {
-  // 欢迎消息已在初始化时添加
-})
+// 快捷问题
+const handleQuickQuestion = (question) => {
+  if (!isLoading.value) {
+    handleSend(question)
+  }
+}
 </script>
 
 <style scoped>
 .ai-chat-view {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   background: linear-gradient(135deg, #f5f7fa 0%, #e4ecfb 100%);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   width: 100%;
-  margin: 0;
-  padding: 0;
 }
 
 /* 页面头部 */
 .page-header {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  padding: 24px 32px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
-  flex-shrink: 0;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  border-bottom-left-radius: 20px;
-  border-bottom-right-radius: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 16px 32px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
 }
 
 .header-content {
-  max-width: 1400px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 32px;
+  gap: 24px;
 }
 
 .title-section {
   flex: 1;
 }
 
-.page-title-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
-}
-
 .page-title {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: #1d1d1f;
-  margin: 0;
-  letter-spacing: -0.022em;
+  margin: 0 0 4px 0;
+  letter-spacing: -0.5px;
 }
 
 .page-subtitle {
-  font-size: 16px;
+  font-size: 14px;
   color: #86868b;
   margin: 0;
-  line-height: 1.5;
-  font-weight: 400;
 }
 
-/* 音色设置 */
-.voice-settings {
+.header-actions {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
 }
 
-.voice-select-wrapper {
+/* 美化版工具模式开关 */
+.tool-mode-toggle {
+  position: relative;
+  width: 140px;
+  height: 40px;
+  border-radius: 20px;
+  background: #f0f2f5;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  user-select: none;
+}
+
+.tool-mode-toggle:hover {
+  background: #e5e7eb;
+}
+
+.tool-mode-toggle.is-active {
+  background: #e6f4ff;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+.toggle-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #0066cc, #0088ff);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tool-mode-toggle.is-active .toggle-bg {
+  opacity: 0.05;
+}
+
+.toggle-content {
+  position: relative;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   gap: 8px;
+  z-index: 1;
 }
 
-.setting-label {
+.toggle-icon-wrapper {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #86868b;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.voice-select {
-  min-width: 240px;
+.tool-mode-toggle.is-active .toggle-icon-wrapper {
+  background: #0066cc;
+  transform: translateX(4px);
 }
 
-.auto-play-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+.toggle-icon {
+  font-size: 16px;
+  color: #666;
+  transition: color 0.3s ease;
 }
 
-.auto-play-switch {
-  transform: scale(1.2);
+.tool-mode-toggle.is-active .toggle-icon {
+  color: white;
 }
 
-.switch-label {
-  font-size: 12px;
-  color: #86868b;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.toggle-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  transition: all 0.3s ease;
+}
+
+.tool-mode-toggle.is-active .toggle-text {
+  color: #0066cc;
+  transform: translateX(-2px);
+}
+
+.new-chat-btn {
+  height: 40px;
+  border-radius: 20px;
+  font-weight: 600;
 }
 
 /* 聊天区域 */
@@ -597,30 +450,33 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-  position: relative;
+  padding: 24px 0;
   width: 100%;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 32px 32px 24px;
-  max-width: 1400px;
+  max-width: 900px;
   margin: 0 auto;
+}
+
+/* TChat 组件样式覆盖 - 修复类名 (兼容两种类名格式) */
+:deep(.t-chat) {
+  flex: 1;
+  background: transparent;
   width: 100%;
 }
 
-/* 消息样式 */
-.message {
-  display: flex;
-  margin-bottom: 32px;
-  gap: 16px;
-  animation: fadeIn 0.4s ease-out;
+:deep(.t-chat__list) {
+  padding: 0 20px;
 }
 
-@keyframes fadeIn {
+:deep(.t-chat__item),
+:deep(.t-chat-item) {
+  padding: 16px 0;
+  display: flex;
+  flex-direction: row;
+  animation: slideIn 0.3s ease-out;
+  gap: 12px;
+}
+
+@keyframes slideIn {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -631,398 +487,325 @@ onMounted(() => {
   }
 }
 
-.message.user {
+/* AI 消息 - 左对齐 */
+:deep(.t-chat__item--assistant),
+:deep(.t-chat-item--assistant),
+:deep(.t-chat__item:not(.t-chat__item--user):not(.t-chat-item--user)),
+:deep(.t-chat-item:not(.t-chat-item--user):not(.t-chat__item--user)) {
+  justify-content: flex-start;
+}
+
+/* 用户消息 - 右对齐 */
+:deep(.t-chat__item--user),
+:deep(.t-chat-item--user) {
+  justify-content: flex-end;
   flex-direction: row-reverse;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.message-avatar {
-  flex-shrink: 0;
-}
-
-.avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-
-.avatar.user {
-  background: linear-gradient(135deg, #0084ff, #00b8ff);
-  box-shadow: 0 4px 12px rgba(0, 132, 255, 0.3);
-}
-
-.avatar.assistant {
-  background: linear-gradient(135deg, #a8a8a8, #c7c7cc);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.avatar-inner {
-  font-size: 22px;
-  filter: brightness(1.2);
-}
-
-.message-wrapper {
+/* 消息内容容器 */
+:deep(.t-chat__item-main),
+:deep(.t-chat-item__main) {
   display: flex;
   flex-direction: column;
-  max-width: 70%;
+  max-width: 80%;
 }
 
-.message.user .message-wrapper {
+:deep(.t-chat__item--user .t-chat__item-main),
+:deep(.t-chat-item--user .t-chat-item__main) {
   align-items: flex-end;
 }
 
-.message-content {
-  position: relative;
+:deep(.t-chat__item--assistant .t-chat__item-main),
+:deep(.t-chat-item--assistant .t-chat-item__main),
+:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-main),
+:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__main) {
+  align-items: flex-start;
 }
 
-.message-text {
-  background: white;
-  border-radius: 20px;
+/* 对话气泡样式 - 美化 */
+:deep(.t-chat__item-content),
+:deep(.t-chat-item__content) {
   padding: 14px 18px;
-  color: #1d1d1f;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.6;
   word-wrap: break-word;
-  font-size: 16px;
-  font-weight: 400;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.2s ease;
+  word-break: break-word;
+  position: relative;
 }
 
-.message.user .message-text {
-  background: linear-gradient(135deg, #0084ff, #00b8ff);
-  color: white;
-  border: none;
-}
-
-.message-text:hover {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12), 0 8px 20px rgba(0, 0, 0, 0.08);
-}
-
-/* 音频播放器 */
-.audio-player {
-  margin-top: 8px;
-}
-
-.audio-wrapper {
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.audio-element {
-  width: 100%;
-  height: 36px;
-  border-radius: 0;
-}
-
-.multi-audio-player {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.audio-segment {
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 12px;
-  padding: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.segment-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.segment-label {
-  font-size: 12px;
-  color: #86868b;
-  font-weight: 500;
-}
-
-/* 音频状态 */
-.audio-status {
-  margin-top: 8px;
-}
-
-.status-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: #86868b;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-}
-
-.audio-error {
-  margin-top: 8px;
-}
-
-.error-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255, 59, 48, 0.1);
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: #ff3b30;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(255, 59, 48, 0.2);
-}
-
-/* 输入状态 */
-.typing-indicator {
+/* AI 消息气泡 - 左侧 */
+:deep(.t-chat__item--assistant .t-chat__item-content),
+:deep(.t-chat-item--assistant .t-chat-item__content),
+:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-content),
+:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__content) {
   background: white;
-  border-radius: 16px;
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #86868b;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
+  color: #1d1d1f;
+  border-radius: 4px 20px 20px 20px;
   border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
 }
 
-.typing-dots {
-  display: flex;
-  gap: 4px;
+/* 用户消息气泡 - 右侧 */
+:deep(.t-chat__item--user .t-chat__item-content),
+:deep(.t-chat-item--user .t-chat-item__content) {
+  background: linear-gradient(135deg, #0066cc 0%, #0088ff 100%);
+  color: white;
+  border-radius: 20px 4px 20px 20px;
+  border: none;
+  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.2);
 }
 
-.typing-dots span {
-  width: 6px;
-  height: 6px;
+:deep(.t-chat__item--user .t-chat__item-content *),
+:deep(.t-chat-item--user .t-chat-item__content *) {
+  color: white !important;
+}
+
+:deep(.t-chat__item--user .t-chat__item-content a),
+:deep(.t-chat-item--user .t-chat-item__content a) {
+  color: #e0e8ff !important;
+  text-decoration: underline;
+}
+
+/* 头像样式 */
+:deep(.t-chat__item-avatar),
+:deep(.t-chat-item__avatar) {
+  flex-shrink: 0;
+  margin: 0;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background-color: #86868b;
-  animation: typing 1.4s infinite;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.typing-dots span:nth-child(1) {
-  animation-delay: 0s;
+:deep(.t-chat__item--user .t-chat__item-avatar),
+:deep(.t-chat-item--user .t-chat-item__avatar) {
+  margin-left: 12px;
 }
 
-.typing-dots span:nth-child(2) {
-  animation-delay: 0.2s;
+:deep(.t-chat__item--assistant .t-chat__item-avatar),
+:deep(.t-chat-item--assistant .t-chat-item__avatar),
+:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-avatar),
+:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__avatar) {
+  margin-right: 12px;
 }
 
-.typing-dots span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes typing {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  30% {
-    transform: translateY(-6px);
-    opacity: 1;
-  }
-}
-
-/* 消息时间 */
-.message-time {
+/* 名称和时间 */
+:deep(.t-chat__item-name),
+:deep(.t-chat-item__name) {
   font-size: 12px;
   color: #86868b;
-  margin-top: 4px;
+  margin-bottom: 4px;
+  padding: 0 4px;
+}
+
+:deep(.t-chat__item--user .t-chat__item-name),
+:deep(.t-chat-item--user .t-chat-item__name) {
   text-align: right;
-  font-weight: 400;
 }
 
-.message.user .message-time {
-  text-align: left;
+:deep(.t-chat__item-datetime),
+:deep(.t-chat-item__datetime) {
+  font-size: 11px;
+  color: #999;
+  margin-top: 6px;
+  opacity: 0.8;
 }
 
-/* 输入区域 */
-.input-area {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  padding: 20px 32px 32px;
-  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.05);
-  flex-shrink: 0;
-  border-top-left-radius: 20px;
-  border-top-right-radius: 20px;
+:deep(.t-chat__item--user .t-chat__item-datetime),
+:deep(.t-chat-item--user .t-chat-item__datetime) {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.8);
 }
 
-.input-container {
-  max-width: 1400px;
-  margin: 0 auto 24px auto;
+/* Markdown 内容样式 */
+:deep(.t-chat-content) {
+  font-size: 15px;
+  line-height: 1.7;
 }
 
-.input-wrapper {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
+:deep(.t-chat-content h1),
+:deep(.t-chat-content h2),
+:deep(.t-chat-content h3) {
+  margin: 12px 0 8px;
+  font-weight: 600;
+  color: inherit;
 }
 
-.input-field {
-  flex: 1;
+:deep(.t-chat-content ul),
+:deep(.t-chat-content ol) {
+  padding-left: 20px;
+  margin: 8px 0;
 }
 
-.message-input {
-  width: 100%;
-  border-radius: 20px;
+:deep(.t-chat-content li) {
+  margin-bottom: 4px;
 }
 
-.send-button-wrapper {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding-bottom: 6px; /* 与textarea内边距匹配 */
-}
-
-.send-button {
-  border-radius: 20px;
-  height: 40px;
-  min-width: 80px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+:deep(.t-chat-content pre) {
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 10px 0;
+  overflow-x: auto;
 }
 
 /* 快捷问题 */
 .quick-questions {
-  max-width: 1400px;
-  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 16px 20px;
+  margin: 20px 20px 0;
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 .quick-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
-}
-
-.quick-title {
-  font-size: 16px;
-  color: #1d1d1f;
+  margin-bottom: 12px;
+  color: #666;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.016em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .quick-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
 }
 
 .quick-btn {
+  border-radius: 18px;
+  font-size: 13px;
+  padding: 6px 16px;
+  height: 32px;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: #444;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+.quick-btn:hover:not(:disabled) {
+  background: #f8faff;
+  border-color: #0066cc;
+  color: #0066cc;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 102, 204, 0.1);
+}
+
+/* 输入区域 */
+.sender-wrapper {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 24px;
-  font-size: 14px;
-  padding: 8px 16px;
-  height: auto;
-  font-weight: 400;
-  transition: all 0.2s ease;
-  animation: slideUp 0.5s ease-out forwards;
-  opacity: 0;
-  transform: translateY(10px);
+  padding: 8px 12px;
+  margin: 16px 20px 0;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  transition: all 0.3s ease;
 }
 
-@keyframes slideUp {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.quick-btn:hover {
+.sender-wrapper:focus-within {
+  background: white;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* 隐藏上传按钮 */
+:deep(.t-chat-sender__upload) {
+  display: none !important;
+}
+
+/* 输入框样式修复 */
+:deep(.t-chat-sender) {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+:deep(.t-chat-sender__textarea) {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+:deep(.t-chat-sender__inner-header),
+:deep(.t-chat-sender__header) {
+  display: none !important;
+}
+
+:deep(.t-textarea) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 :deep(.t-textarea__inner) {
-  border-radius: 20px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.9);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  min-height: 24px !important;
+  max-height: 120px !important;
+  padding: 8px 12px !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+  resize: none !important;
 }
 
-:deep(.t-chat__input-footer) {
-  display: none; /* 隐藏默认的底部区域，使用自定义的 */
+:deep(.t-textarea__inner:focus),
+:deep(.t-textarea__inner:focus-visible) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
-/* 响应式设计 */
+:deep(.t-chat-sender__footer) {
+  padding: 4px 0 0 0 !important;
+  border: none !important;
+}
+
+:deep(.t-chat-sender__mode) {
+  display: none !important;
+}
+
+/* 隐藏发送按钮 */
+:deep(.t-chat-sender__button) {
+  display: none !important;
+}
+
+/* 响应式 */
 @media (max-width: 768px) {
   .page-header {
-    padding: 16px 20px;
+    padding: 12px 16px;
   }
   
   .header-content {
     flex-direction: column;
     align-items: stretch;
-    gap: 20px;
+    gap: 12px;
   }
   
-  .page-title {
-    font-size: 24px;
+  .header-actions {
+    justify-content: space-between;
   }
   
-  .page-subtitle {
-    font-size: 14px;
+  .chat-container {
+    padding: 12px 0;
   }
   
-  .voice-settings {
-    justify-content: center;
-    flex-wrap: wrap;
+  :deep(.t-chat__item-content) {
+    max-width: 90%;
   }
   
-  .chat-messages {
-    padding: 20px 16px 16px;
+  .quick-questions,
+  .sender-wrapper {
+    margin: 12px 12px 0;
   }
-  
-  .message-wrapper {
-    max-width: 85%;
-  }
-  
-  .input-area {
-    padding: 16px 20px 24px;
-  }
-  
-  .quick-buttons {
-    justify-content: center;
-  }
-}
-
-/* 滚动条样式 */
-.chat-messages::-webkit-scrollbar {
-  width: 4px;
-}
-
-.chat-messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 2px;
-}
-
-.chat-messages::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
 }
 </style>

@@ -68,7 +68,55 @@ CREATE POLICY "Users can delete own plans"
   USING (auth.uid() = user_id);
 
 -- =============================================
+-- 创建 ai_chat_sessions 表（AI对话会话）
+-- =============================================
+CREATE TABLE IF NOT EXISTS public.ai_chat_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL UNIQUE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 创建索引
+CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_conversation_id ON public.ai_chat_sessions(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user_id ON public.ai_chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_updated_at ON public.ai_chat_sessions(updated_at DESC);
+
+-- 更新时间戳触发器
+CREATE TRIGGER set_ai_chat_sessions_updated_at
+  BEFORE UPDATE ON public.ai_chat_sessions
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+-- 启用行级安全策略（RLS）
+ALTER TABLE public.ai_chat_sessions ENABLE ROW LEVEL SECURITY;
+
+-- 允许匿名用户（未登录）通过 conversation_id 访问自己的会话
+CREATE POLICY "Anyone can view sessions by conversation_id"
+  ON public.ai_chat_sessions
+  FOR SELECT
+  USING (true);
+
+CREATE POLICY "Anyone can create sessions"
+  ON public.ai_chat_sessions
+  FOR INSERT
+  WITH CHECK (true);
+
+CREATE POLICY "Anyone can update sessions"
+  ON public.ai_chat_sessions
+  FOR UPDATE
+  USING (true);
+
+CREATE POLICY "Anyone can delete sessions"
+  ON public.ai_chat_sessions
+  FOR DELETE
+  USING (true);
+
+-- =============================================
 -- 验证表是否创建成功
 -- =============================================
 -- 执行后可以运行以下查询来验证：
 -- SELECT * FROM public.plans LIMIT 1;
+-- SELECT * FROM public.ai_chat_sessions LIMIT 1;

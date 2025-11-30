@@ -1,9 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import TDesign from 'tdesign-vue-next'
-import TDesignChat from '@tdesign-vue-next/chat'
+import TDesignChat from '@tdesign-vue-next/chat'; // 引入chat组件
 import 'tdesign-vue-next/es/style/index.css'
-import '@tdesign-vue-next/chat/es/style/index.css'
 import App from './App.vue'
 import router from './router'
 import './styles/custom.css'
