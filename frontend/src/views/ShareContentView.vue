@@ -205,10 +205,11 @@
 
     <!-- 分享内容生成模态框 -->
     <t-dialog
-      v-model:visible="showShareModal"
+      :visible="showShareModal"
       header="✍️ 旅行分享文案"
       width="900px"
       :close-btn="true"
+      @update:visible="showShareModal = $event"
       @close="showShareModal = false"
     >
       <div class="share-modal-container">
