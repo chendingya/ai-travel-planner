@@ -54,7 +54,7 @@
     </div>
 
     <div class="content-section">
-      <!-- 产品特色 - 大卡片设计 -->
+      <!-- 产品特色 - 苹果风格卡片设计 -->
       <section class="feature-section">
         <div class="section-header">
           <span class="section-badge">核心优势</span>
@@ -62,68 +62,149 @@
           <p class="section-subtitle">强大的 AI 技术，为您提供最优质的旅行规划服务</p>
         </div>
         
-        <div class="feature-grid">
-          <div class="feature-card feature-card-primary">
-            <div class="card-glow"></div>
-            <div class="feature-icon-wrapper">
-              <div class="feature-icon">🧠</div>
+        <!-- AI 导航与规划 -->
+        <div class="feature-subsection">
+          <div class="subsection-title">
+            <div class="title-number">01</div>
+            <h3>智能旅行规划</h3>
+          </div>
+          <div class="feature-grid-two">
+            <div class="feature-card feature-card-primary">
+              <div class="card-glow"></div>
+              <div class="feature-icon-wrapper">
+                <div class="feature-icon">🧠</div>
+              </div>
+              <h3 class="feature-title">AI 智能规划</h3>
+              <p class="feature-desc">
+                基于先进的人工智能算法，深度分析您的需求和偏好，
+                自动生成最优化的旅行方案，为您节省时间和精力。
+              </p>
+              <div class="feature-tags">
+                <span class="feature-tag">智能分析</span>
+                <span class="feature-tag">个性定制</span>
+              </div>
             </div>
-            <h3 class="feature-title">AI 智能规划</h3>
-            <p class="feature-desc">
-              基于先进的人工智能算法，深度分析您的需求和偏好，
-              自动生成最优化的旅行方案，为您节省时间和精力。
-            </p>
-            <div class="feature-tags">
-              <span class="feature-tag">智能分析</span>
-              <span class="feature-tag">个性定制</span>
+
+            <div class="feature-card feature-card-secondary">
+              <div class="card-glow"></div>
+              <div class="feature-icon-wrapper">
+                <div class="feature-icon">🗺️</div>
+              </div>
+              <h3 class="feature-title">地图可视化</h3>
+              <p class="feature-desc">
+                在交互式地图上直观展示景点位置，点击活动即可查看具体位置，
+                让您对行程一目了然，规划更加清晰。
+              </p>
+              <div class="feature-tags">
+                <span class="feature-tag">实时定位</span>
+                <span class="feature-tag">路线优化</span>
+              </div>
             </div>
           </div>
+        </div>
 
-          <div class="feature-card feature-card-secondary">
-            <div class="card-glow"></div>
-            <div class="feature-icon-wrapper">
-              <div class="feature-icon">💰</div>
+        <!-- AI 生成功能 -->
+        <div class="feature-subsection">
+          <div class="subsection-title">
+            <div class="title-number">02</div>
+            <h3>AI 生成体验</h3>
+          </div>
+          <div class="feature-grid-ai">
+            <div class="ai-feature-card ai-feature-music">
+              <div class="ai-feature-icon">🎵</div>
+              <div class="ai-feature-content">
+                <h4 class="ai-feature-title">听见·山河</h4>
+                <p class="ai-feature-desc">
+                  基于您的旅行计划和风格偏好，AI将为您创建独一无二的旅途音乐歌单，完美记录您的旅行声音
+                </p>
+                <div class="ai-feature-meta">
+                  <span class="ai-tag">音乐生成</span>
+                  <span class="ai-tag">风格匹配</span>
+                </div>
+              </div>
             </div>
-            <h3 class="feature-title">智能预算管理</h3>
-            <p class="feature-desc">
-              自动分解各项费用明细，包括交通、住宿、餐饮、景点等，
-              帮助您合理分配预算，避免超支，让旅行更省心。
-            </p>
-            <div class="feature-tags">
-              <span class="feature-tag">费用透明</span>
-              <span class="feature-tag">预算优化</span>
+
+            <div class="ai-feature-card ai-feature-postcard">
+              <div class="ai-feature-icon">🎨</div>
+              <div class="ai-feature-content">
+                <h4 class="ai-feature-title">尺素·锦书</h4>
+                <p class="ai-feature-desc">
+                  基于AI生成技术，为您的旅程生成风景明信片设计，结合湖湘文化与传统艺术，定制专属记忆
+                </p>
+                <div class="ai-feature-meta">
+                  <span class="ai-tag">明信片生成</span>
+                  <span class="ai-tag">艺术风格</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-feature-card ai-feature-note">
+              <div class="ai-feature-icon">📷</div>
+              <div class="ai-feature-content">
+                <h4 class="ai-feature-title">拾光·绘影</h4>
+                <p class="ai-feature-desc">
+                  将您的旅行计划转化为精美的视觉卡片，手账风格设计，记录旅程中的精彩瞬间和美好回忆
+                </p>
+                <div class="ai-feature-meta">
+                  <span class="ai-tag">速记卡片</span>
+                  <span class="ai-tag">视觉记录</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-feature-card ai-feature-share">
+              <div class="ai-feature-icon">✍️</div>
+              <div class="ai-feature-content">
+                <h4 class="ai-feature-title">妙笔·云章</h4>
+                <p class="ai-feature-desc">
+                  基于您的旅行计划，AI将为您创作精美的分享文案，适配小红书、朋友圈等社交媒体平台
+                </p>
+                <div class="ai-feature-meta">
+                  <span class="ai-tag">文案生成</span>
+                  <span class="ai-tag">多平台适配</span>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
 
-          <div class="feature-card feature-card-accent">
-            <div class="card-glow"></div>
-            <div class="feature-icon-wrapper">
-              <div class="feature-icon">🗺️</div>
-            </div>
-            <h3 class="feature-title">地图可视化</h3>
-            <p class="feature-desc">
-              在交互式地图上直观展示景点位置，点击活动即可查看具体位置，
-              让您对行程一目了然，规划更加清晰。
-            </p>
-            <div class="feature-tags">
-              <span class="feature-tag">实时定位</span>
-              <span class="feature-tag">路线优化</span>
-            </div>
+        <!-- 实用功能 -->
+        <div class="feature-subsection">
+          <div class="subsection-title">
+            <div class="title-number">03</div>
+            <h3>贴心实用功能</h3>
           </div>
-
-          <div class="feature-card feature-card-info">
-            <div class="card-glow"></div>
-            <div class="feature-icon-wrapper">
-              <div class="feature-icon">💾</div>
+          <div class="feature-grid-two">
+            <div class="feature-card feature-card-accent">
+              <div class="card-glow"></div>
+              <div class="feature-icon-wrapper">
+                <div class="feature-icon">💰</div>
+              </div>
+              <h3 class="feature-title">智能预算管理</h3>
+              <p class="feature-desc">
+                自动分解各项费用明细，包括交通、住宿、餐饮、景点等，
+                帮助您合理分配预算，避免超支，让旅行更省心。
+              </p>
+              <div class="feature-tags">
+                <span class="feature-tag">费用透明</span>
+                <span class="feature-tag">预算优化</span>
+              </div>
             </div>
-            <h3 class="feature-title">方案云存储</h3>
-            <p class="feature-desc">
-              支持保存多个旅行方案到云端，随时随地查看和比较历史规划，
-              方便您做出最佳选择，永不丢失。
-            </p>
-            <div class="feature-tags">
-              <span class="feature-tag">云端同步</span>
-              <span class="feature-tag">多方案对比</span>
+
+            <div class="feature-card feature-card-info">
+              <div class="card-glow"></div>
+              <div class="feature-icon-wrapper">
+                <div class="feature-icon">💾</div>
+              </div>
+              <h3 class="feature-title">方案云存储</h3>
+              <p class="feature-desc">
+                支持保存多个旅行方案到云端，随时随地查看和比较历史规划，
+                方便您做出最佳选择，永不丢失。
+              </p>
+              <div class="feature-tags">
+                <span class="feature-tag">云端同步</span>
+                <span class="feature-tag">多方案对比</span>
+              </div>
             </div>
           </div>
         </div>
@@ -509,9 +590,50 @@ const gotoDemo = () => {
   font-weight: 300;
 }
 
-/* Feature Section - 2x2 大卡片网格 */
+/* Feature Section - 苹果风格层次结构 */
 .feature-section {
-  margin-bottom: 100px;
+  margin-bottom: 120px;
+}
+
+.feature-subsection {
+  margin-bottom: 80px;
+}
+
+.subsection-title {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 48px;
+  justify-content: center;
+  text-align: center;
+}
+
+.title-number {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--td-brand-color-7), var(--td-brand-color-5));
+  color: white;
+  font-size: 28px;
+  font-weight: 700;
+  border-radius: 50%;
+  box-shadow: 0 8px 24px rgba(0, 82, 217, 0.15);
+  transition: all 0.3s ease;
+}
+
+.title-number:hover {
+  transform: scale(1.1);
+  box-shadow: 0 12px 30px rgba(0, 82, 217, 0.2);
+}
+
+.subsection-title h3 {
+  font-size: 36px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0;
+  letter-spacing: -0.3px;
 }
 
 .feature-grid {
@@ -519,6 +641,18 @@ const gotoDemo = () => {
   grid-template-columns: repeat(2, 1fr);
   gap: 32px;
   margin-top: 48px;
+}
+
+.feature-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 40px;
+}
+
+.feature-grid-ai {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 32px;
 }
 
 .feature-card {
@@ -618,6 +752,104 @@ const gotoDemo = () => {
   font-size: 13px;
   font-weight: 500;
   border: 1px solid var(--td-brand-color-focus);
+}
+
+/* AI功能卡片样式 */
+.ai-feature-card {
+  background: white;
+  border-radius: 24px;
+  padding: 0;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 380px;
+}
+
+.ai-feature-card:hover {
+  transform: translateY(-12px);
+  box-shadow: 0 16px 60px rgba(0, 82, 217, 0.15);
+  border-color: rgba(0, 82, 217, 0.2);
+}
+
+.ai-feature-icon {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  background: linear-gradient(135deg, var(--td-brand-color-8) 0%, var(--td-brand-color-5) 100%);
+  color: white;
+  position: relative;
+}
+
+.ai-feature-icon::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--td-brand-color-7), var(--td-brand-color-5));
+  opacity: 0.8;
+}
+
+.ai-feature-content {
+  padding: 32px 28px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-feature-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 16px 0;
+  letter-spacing: -0.2px;
+}
+
+.ai-feature-desc {
+  font-size: 15px;
+  color: #475569;
+  line-height: 1.7;
+  margin: 0 0 24px 0;
+  flex-grow: 1;
+}
+
+.ai-feature-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-tag {
+  padding: 6px 14px;
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--td-brand-color-focus);
+}
+
+/* AI功能卡片特定渐变 */
+.ai-feature-music .ai-feature-icon {
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+}
+
+.ai-feature-postcard .ai-feature-icon {
+  background: linear-gradient(135deg, #ec4899 0%, #f97316 100%);
+}
+
+.ai-feature-note .ai-feature-icon {
+  background: linear-gradient(135deg, #06b6d4 0%, #10b981 100%);
+}
+
+.ai-feature-share .ai-feature-icon {
+  background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
 }
 
 /* Tutorial Section - 4列网格 */
@@ -742,6 +974,16 @@ const gotoDemo = () => {
     grid-template-columns: 1fr;
     gap: 24px;
   }
+  
+  .feature-grid-two {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  
+  .feature-grid-ai {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
 
   .tutorial-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -806,6 +1048,61 @@ const gotoDemo = () => {
 
   .section-subtitle {
     font-size: 16px;
+  }
+
+  .feature-subsection {
+    margin-bottom: 60px;
+  }
+  
+  .subsection-title {
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  
+  .title-number {
+    width: 56px;
+    height: 56px;
+    font-size: 24px;
+  }
+  
+  .subsection-title h3 {
+    font-size: 28px;
+  }
+
+  .feature-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  
+  .feature-grid-two {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  
+  .feature-grid-ai {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  
+  .ai-feature-card {
+    min-height: 320px;
+  }
+  
+  .ai-feature-icon {
+    height: 100px;
+    font-size: 48px;
+  }
+  
+  .ai-feature-content {
+    padding: 24px 20px;
+  }
+  
+  .ai-feature-title {
+    font-size: 20px;
+  }
+  
+  .ai-feature-desc {
+    font-size: 14px;
   }
 
   .tutorial-grid {

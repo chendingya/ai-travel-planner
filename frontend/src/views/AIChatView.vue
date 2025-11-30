@@ -4,30 +4,38 @@
     <div class="page-header">
       <div class="header-content">
         <div class="title-section">
-          <h1 class="page-title">
-            <span class="title-icon">🤖</span>
-            AI面对面对话
-          </h1>
+          <div class="page-title-wrapper">
+            <h1 class="page-title">AI面对面对话</h1>
+          </div>
           <p class="page-subtitle">与智能旅行助手进行语音对话，获取专业的旅行建议</p>
         </div>
         
         <!-- 音色设置 -->
         <div class="voice-settings">
-          <t-select
-            v-model="selectedVoice"
-            placeholder="选择音色"
-            style="width: 200px"
-          >
-            <t-option v-for="voice in voiceOptions" :key="voice.value" :value="voice.value">
-              {{ voice.label }}
-            </t-option>
-          </t-select>
+          <div class="voice-select-wrapper">
+            <div class="setting-label">
+              <t-icon name="sound" />
+              <span>音色选择</span>
+            </div>
+            <t-select
+              v-model="selectedVoice"
+              placeholder="选择音色"
+              class="voice-select"
+            >
+              <t-option v-for="voice in voiceOptions" :key="voice.value" :value="voice.value">
+                {{ voice.label }}
+              </t-option>
+            </t-select>
+          </div>
           
-          <t-switch
-            v-model="autoPlay"
-            :label="'自动播放'"
-            style="margin-left: 16px"
-          />
+          <div class="auto-play-wrapper">
+            <span class="switch-label">自动播放</span>
+            <t-switch
+              v-model="autoPlay"
+              :label="''"
+              class="auto-play-switch"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -41,76 +49,102 @@
           :class="['message', message.role]"
         >
           <div class="message-avatar">
-            <div class="avatar">
-              {{ message.role === 'user' ? '👤' : '🤖' }}
+            <div class="avatar" :class="message.role">
+              <div class="avatar-inner">
+                {{ message.role === 'user' ? '👤' : '🤖' }}
+              </div>
             </div>
           </div>
           
-          <div class="message-content">
-            <div class="message-text">{{ message.content }}</div>
-            
-            <!-- AI消息的音频播放器 -->
-            <div v-if="message.role === 'assistant' && (message.audioUrl || message.audioUrls)" class="audio-player">
-              <!-- 单段音频 -->
-              <audio
-                v-if="message.audioUrl && !message.audioUrls"
-                ref="audioPlayers"
-                :src="message.audioUrl"
-                controls
-                preload="none"
-                @ended="onAudioEnded(index)"
-              >
-                您的浏览器不支持音频播放
-              </audio>
+          <div class="message-wrapper">
+            <div class="message-content">
+              <div class="message-text">{{ message.content }}</div>
               
-              <!-- 多段音频 -->
-              <div v-else-if="message.audioUrls" class="multi-audio-player">
-                <div 
-                  v-for="(audioUrl, audioIndex) in message.audioUrls" 
-                  :key="audioIndex" 
-                  class="audio-segment"
-                >
-                  <div class="segment-label">片段 {{ audioIndex + 1 }}</div>
+              <!-- AI消息的音频播放器 -->
+              <div v-if="message.role === 'assistant' && (message.audioUrl || message.audioUrls)" class="audio-player">
+                <!-- 单段音频 -->
+                <div v-if="message.audioUrl && !message.audioUrls" class="audio-wrapper">
                   <audio
-                    :ref="el => { if (el) audioPlayers.push(el) }"
-                    :src="audioUrl"
+                    ref="audioPlayers"
+                    :src="message.audioUrl"
                     controls
                     preload="none"
-                    @ended="onAudioSegmentEnded(index, audioIndex)"
+                    @ended="onAudioEnded(index)"
+                    class="audio-element"
                   >
                     您的浏览器不支持音频播放
                   </audio>
                 </div>
+                
+                <!-- 多段音频 -->
+                <div v-else-if="message.audioUrls" class="multi-audio-player">
+                  <div 
+                    v-for="(audioUrl, audioIndex) in message.audioUrls" 
+                    :key="audioIndex" 
+                    class="audio-segment"
+                  >
+                    <div class="segment-header">
+                      <t-icon name="sound" />
+                      <span class="segment-label">片段 {{ audioIndex + 1 }}</span>
+                    </div>
+                    <div class="audio-wrapper">
+                      <audio
+                        :ref="el => { if (el) audioPlayers.push(el) }"
+                        :src="audioUrl"
+                        controls
+                        preload="none"
+                        @ended="onAudioSegmentEnded(index, audioIndex)"
+                        class="audio-element"
+                      >
+                        您的浏览器不支持音频播放
+                      </audio>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- AI消息的音频生成状态 -->
+              <div v-if="message.role === 'assistant' && message.audioStatus === 'processing'" class="audio-status">
+                <div class="status-wrapper">
+                  <t-loading theme="dots" size="small" />
+                  <span>正在生成语音...</span>
+                </div>
+              </div>
+              
+              <!-- AI消息的音频错误 -->
+              <div v-if="message.role === 'assistant' && message.audioError" class="audio-error">
+                <div class="error-wrapper">
+                  <t-icon name="error-circle" />
+                  <span>{{ message.audioError }}</span>
+                </div>
               </div>
             </div>
             
-            <!-- AI消息的音频生成状态 -->
-            <div v-if="message.role === 'assistant' && message.audioStatus === 'processing'" class="audio-status">
-              <t-loading theme="dots" size="small" />
-              <span>正在生成语音...</span>
+            <div class="message-time">
+              {{ formatTime(message.timestamp) }}
             </div>
-            
-            <!-- AI消息的音频错误 -->
-            <div v-if="message.role === 'assistant' && message.audioError" class="audio-error">
-              <t-icon name="error-circle" />
-              <span>{{ message.audioError }}</span>
-            </div>
-          </div>
-          
-          <div class="message-time">
-            {{ formatTime(message.timestamp) }}
           </div>
         </div>
         
         <!-- 加载状态 -->
         <div v-if="isLoading" class="message assistant">
           <div class="message-avatar">
-            <div class="avatar">🤖</div>
+            <div class="avatar assistant">
+              <div class="avatar-inner">
+                🤖
+              </div>
+            </div>
           </div>
-          <div class="message-content">
-            <div class="typing-indicator">
-              <t-loading theme="dots" size="small" />
-              <span>AI正在思考...</span>
+          <div class="message-wrapper">
+            <div class="message-content">
+              <div class="typing-indicator">
+                <div class="typing-dots">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <span>AI正在思考...</span>
+              </div>
             </div>
           </div>
         </div>
@@ -120,15 +154,19 @@
     <!-- 输入区域 -->
     <div class="input-area">
       <div class="input-container">
-        <t-input
-          v-model="inputMessage"
-          placeholder="请输入您的问题..."
-          :maxlength="500"
-          @keydown.enter="sendMessage"
-          :disabled="isLoading"
-          class="message-input"
-        >
-          <template #suffix>
+        <div class="input-wrapper">
+          <div class="input-field">
+            <t-textarea
+              v-model="inputMessage"
+              placeholder="请输入您的问题..."
+              :maxlength="500"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              @keydown.ctrl.enter="sendMessage"
+              :disabled="isLoading"
+              class="message-input"
+            />
+          </div>
+          <div class="send-button-wrapper">
             <t-button
               theme="primary"
               @click="sendMessage"
@@ -141,22 +179,26 @@
               </template>
               发送
             </t-button>
-          </template>
-        </t-input>
+          </div>
+        </div>
       </div>
       
       <!-- 快捷问题 -->
       <div class="quick-questions">
-        <div class="quick-title">快捷问题：</div>
+        <div class="quick-header">
+          <t-icon name="lightbulb" />
+          <span class="quick-title">快捷问题</span>
+        </div>
         <div class="quick-buttons">
           <t-button
-            v-for="question in quickQuestions"
+            v-for="(question, index) in quickQuestions"
             :key="question"
             variant="outline"
             size="small"
             @click="handleQuickQuestion(question)"
             :disabled="isLoading"
             class="quick-btn"
+            :style="{ animationDelay: `${index * 0.1}s` }"
           >
             {{ question }}
           </t-button>
@@ -167,17 +209,24 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 
-// 响应式数据
-const messages = ref([])
+// 响应式数据 - 初始化就包含欢迎消息
+const messages = ref([
+  {
+    role: 'assistant',
+    content: '您好！我是您的AI旅行助手，很高兴为您服务！我可以为您提供湖南旅游的相关建议，包括景点推荐、美食介绍、行程规划等。请问有什么可以帮助您的吗？',
+    timestamp: new Date()
+  }
+])
+const chatRef = ref(null)
 const inputMessage = ref('')
 const isLoading = ref(false)
 const selectedVoice = ref('Cherry')
 const autoPlay = ref(true)
-const messagesContainer = ref(null)
 const audioPlayers = ref([])
+const messagesContainer = ref(null)
 
 // 音色选项
 const voiceOptions = [
@@ -197,17 +246,16 @@ const quickQuestions = [
   '湖南有哪些必去的网红打卡地？'
 ]
 
-// 发送消息
-const sendMessage = async () => {
-  if (!inputMessage.value.trim() || isLoading.value) return
-  
-  const userMessage = inputMessage.value.trim()
-  inputMessage.value = ''
+
+
+// 发送消息处理函数
+const handleSend = async (message) => {
+  if (!message.trim() || isLoading.value) return
   
   // 添加用户消息
   messages.value.push({
     role: 'user',
-    content: userMessage,
+    content: message,
     timestamp: new Date()
   })
   
@@ -225,7 +273,7 @@ const sendMessage = async () => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        message: userMessage,
+        message: message,
         voice: selectedVoice.value,
         language_type: 'Chinese',
         include_audio: true
@@ -274,6 +322,24 @@ const sendMessage = async () => {
     isLoading.value = false
   }
 }
+
+// 发送消息函数
+const sendMessage = async () => {
+  if (!inputMessage.value.trim() || isLoading.value) return
+  
+  const userMessage = inputMessage.value.trim()
+  inputMessage.value = ''
+  
+  // 调用handleSend处理消息
+  handleSend(userMessage)
+}
+
+// 清空聊天记录处理函数
+const handleClear = () => {
+  messages.value = []
+}
+
+
 
 // 轮询音频状态
 const pollAudioStatus = async (message) => {
@@ -376,12 +442,7 @@ const formatTime = (timestamp) => {
 
 // 组件挂载
 onMounted(() => {
-  // 添加欢迎消息
-  messages.value.push({
-    role: 'assistant',
-    content: '您好！我是您的AI旅行助手，很高兴为您服务！我可以为您提供湖南旅游的相关建议，包括景点推荐、美食介绍、行程规划等。请问有什么可以帮助您的吗？',
-    timestamp: new Date()
-  })
+  // 欢迎消息已在初始化时添加
 })
 </script>
 
@@ -390,82 +451,164 @@ onMounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(0, 132, 255, 0.03) 0%, rgba(168, 237, 234, 0.05) 100%);
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4ecfb 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  overflow: hidden;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
+/* 页面头部 */
 .page-header {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border-bottom: 1px solid var(--glass-border);
-  padding: 20px 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 24px 32px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: 20px;
+  border-bottom-right-radius: 20px;
 }
 
 .header-content {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 32px;
 }
 
 .title-section {
   flex: 1;
 }
 
-.page-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.title-icon {
-  font-size: 28px;
-}
-
-.page-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0;
-  line-height: 1.5;
-}
-
-.voice-settings {
+.page-title-wrapper {
   display: flex;
   align-items: center;
   gap: 16px;
+  margin-bottom: 8px;
 }
 
+.page-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1d1d1f;
+  margin: 0;
+  letter-spacing: -0.022em;
+}
+
+.page-subtitle {
+  font-size: 16px;
+  color: #86868b;
+  margin: 0;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+/* 音色设置 */
+.voice-settings {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.voice-select-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #86868b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.voice-select {
+  min-width: 240px;
+}
+
+.auto-play-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.auto-play-switch {
+  transform: scale(1.2);
+}
+
+.switch-label {
+  font-size: 12px;
+  color: #86868b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* 聊天区域 */
 .chat-container {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 0;
+  position: relative;
+  width: 100%;
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
-  max-width: 1200px;
+  padding: 32px 32px 24px;
+  max-width: 1400px;
   margin: 0 auto;
   width: 100%;
 }
 
+/* 消息样式 */
 .message {
   display: flex;
-  margin-bottom: 24px;
-  gap: 12px;
+  margin-bottom: 32px;
+  gap: 16px;
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message.user {
   flex-direction: row-reverse;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message-avatar {
@@ -473,39 +616,56 @@ onMounted(() => {
 }
 
 .avatar {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  position: relative;
 }
 
-.message-content {
-  flex: 1;
+.avatar.user {
+  background: linear-gradient(135deg, #0084ff, #00b8ff);
+  box-shadow: 0 4px 12px rgba(0, 132, 255, 0.3);
+}
+
+.avatar.assistant {
+  background: linear-gradient(135deg, #a8a8a8, #c7c7cc);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.avatar-inner {
+  font-size: 22px;
+  filter: brightness(1.2);
+}
+
+.message-wrapper {
+  display: flex;
+  flex-direction: column;
   max-width: 70%;
 }
 
-.message.user .message-content {
-  display: flex;
-  justify-content: flex-end;
+.message.user .message-wrapper {
+  align-items: flex-end;
+}
+
+.message-content {
+  position: relative;
 }
 
 .message-text {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  padding: 12px 16px;
-  color: var(--text-primary);
-  line-height: 1.6;
+  background: white;
+  border-radius: 20px;
+  padding: 14px 18px;
+  color: #1d1d1f;
+  line-height: 1.5;
   word-wrap: break-word;
+  font-size: 16px;
+  font-weight: 400;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s ease;
 }
 
 .message.user .message-text {
@@ -514,14 +674,27 @@ onMounted(() => {
   border: none;
 }
 
+.message-text:hover {
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12), 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+/* 音频播放器 */
 .audio-player {
   margin-top: 8px;
 }
 
-.audio-player audio {
+.audio-wrapper {
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.audio-element {
   width: 100%;
-  height: 32px;
-  border-radius: 8px;
+  height: 36px;
+  border-radius: 0;
 }
 
 .multi-audio-player {
@@ -531,118 +704,268 @@ onMounted(() => {
 }
 
 .audio-segment {
-  background: rgba(0, 132, 255, 0.05);
+  background: rgba(255, 255, 255, 0.7);
   border-radius: 12px;
   padding: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.segment-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .segment-label {
   font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
+  color: #86868b;
   font-weight: 500;
 }
 
+/* 音频状态 */
 .audio-status {
   margin-top: 8px;
+}
+
+.status-wrapper {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary);
-  font-size: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #86868b;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .audio-error {
   margin-top: 8px;
+}
+
+.error-wrapper {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #f5222d;
-  font-size: 14px;
+  background: rgba(255, 59, 48, 0.1);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #ff3b30;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.2);
 }
 
+/* 输入状态 */
 .typing-indicator {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: white;
   border-radius: 16px;
   padding: 12px 16px;
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary);
+  color: #86868b;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
+.typing-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #86868b;
+  animation: typing 1.4s infinite;
+}
+
+.typing-dots span:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+/* 消息时间 */
 .message-time {
   font-size: 12px;
-  color: var(--text-placeholder);
+  color: #86868b;
   margin-top: 4px;
   text-align: right;
+  font-weight: 400;
 }
 
 .message.user .message-time {
   text-align: left;
 }
 
+/* 输入区域 */
 .input-area {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border-top: 1px solid var(--glass-border);
-  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 20px 32px 32px;
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
 }
 
 .input-container {
-  max-width: 1200px;
-  margin: 0 auto 16px auto;
+  max-width: 1400px;
+  margin: 0 auto 24px auto;
+}
+
+.input-wrapper {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-field {
+  flex: 1;
 }
 
 .message-input {
   width: 100%;
+  border-radius: 20px;
+}
+
+.send-button-wrapper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-bottom: 6px; /* 与textarea内边距匹配 */
 }
 
 .send-button {
-  margin-left: 8px;
+  border-radius: 20px;
+  height: 40px;
+  min-width: 80px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
+/* 快捷问题 */
 .quick-questions {
-  max-width: 1200px;
-  margin: 16px auto 0;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.quick-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .quick-title {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
+  font-size: 16px;
+  color: #1d1d1f;
+  font-weight: 600;
+  letter-spacing: -0.016em;
 }
 
 .quick-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
 }
 
 .quick-btn {
+  border-radius: 24px;
+  font-size: 14px;
+  padding: 8px 16px;
+  height: auto;
+  font-weight: 400;
+  transition: all 0.2s ease;
+  animation: slideUp 0.5s ease-out forwards;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+@keyframes slideUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.quick-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:deep(.t-textarea__inner) {
   border-radius: 20px;
-  font-size: 13px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+:deep(.t-chat__input-footer) {
+  display: none; /* 隐藏默认的底部区域，使用自定义的 */
 }
 
 /* 响应式设计 */
 @media (max-width: 768px) {
+  .page-header {
+    padding: 16px 20px;
+  }
+  
   .header-content {
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
+    gap: 20px;
+  }
+  
+  .page-title {
+    font-size: 24px;
+  }
+  
+  .page-subtitle {
+    font-size: 14px;
   }
   
   .voice-settings {
     justify-content: center;
+    flex-wrap: wrap;
   }
   
-  .message-content {
+  .chat-messages {
+    padding: 20px 16px 16px;
+  }
+  
+  .message-wrapper {
     max-width: 85%;
+  }
+  
+  .input-area {
+    padding: 16px 20px 24px;
   }
   
   .quick-buttons {
@@ -652,7 +975,7 @@ onMounted(() => {
 
 /* 滚动条样式 */
 .chat-messages::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-track {
@@ -660,11 +983,11 @@ onMounted(() => {
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(0, 132, 255, 0.3);
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 132, 255, 0.5);
+  background: rgba(0, 0, 0, 0.3);
 }
 </style>

@@ -55,7 +55,10 @@
         <transition name="fade" mode="out-in">
           <component
             :is="Component"
-            :class="{ 'no-padding': currentRoute === '/' }"
+            :class="{
+              'no-padding': currentRoute === '/',
+              'ai-chat-full-width': currentRoute === '/ai-chat'
+            }"
             @locations-updated="updateLocations"
             @fly-to="flyTo"
             @plan-generated="handlePlanGenerated"
@@ -307,6 +310,14 @@ const handleStartPlan = () => {
 .app-container .full-width {
   max-width: 100% !important;
   padding: 0 !important;
+}
+
+.app-container .ai-chat-full-width {
+  padding: 0 !important;
+  max-width: none !important;
+  width: 100vw !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
 
 .content-wrapper {
