@@ -14,8 +14,8 @@
 ## 技术栈
 
 - **框架**: Flask 3.1.2
-- **语音合成**: 阿里云 DashScope (通义千问 TTS)
-- **大语言模型**: 魔搭社区 DeepSeek-V3.2
+- **语音合成**: 阿里云 DashScope (qwen3-tts-flash-2025-11-27)
+- **大语言模型**: 魔搭社区 Qwen/Qwen3-235B-A22B-Instruct-2507
 - **依赖管理**: uv
 - **Python 版本**: 3.11+
 
@@ -66,16 +66,16 @@ pip install -r requirements.txt
 在项目根目录创建 `.env` 文件：
 
 ```env
-# DashScope TTS配置（必需）
+# DashScope API配置
 DASHSCOPE_API_KEY=your_dashscope_api_key_here
-DASHSCOPE_TTS_MODEL=qwen3-tts-flash
+DASHSCOPE_TTS_MODEL=qwen3-tts-flash-2025-11-27
 
-# 魔搭社区LLM配置（必需）
+# 魔搭社区 (ModelScope) 配置
 MODELSCOPE_API_KEY=your_modelscope_api_key_here
-MODELSCOPE_BASE_URL=https://api-inference.modelscope.cn/v1
-MODELSCOPE_MODEL=deepseek-ai/DeepSeek-V3.2-Exp
+MODELSCOPE_BASE_URL=your_modelscope_base_url_here
+MODELSCOPE_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507
 
-# 服务器配置（可选）
+# 服务器端口配置
 PORT=5000
 ```
 
