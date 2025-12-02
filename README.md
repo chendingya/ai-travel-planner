@@ -48,6 +48,16 @@
 - **方案云存储**：保存多个旅行方案到云端，随时查看和管理
 - **多设备同步**：数据云端存储，支持跨设备访问
 
+### 🤖 数字人导游
+- **智能讲解**：根据用户当前浏览的景点信息，实时生成并播放生动的导游讲解
+- **语音播放**：支持多种音色选择，自动播放多段音频，提供暂停、停止等控制功能
+- **交互面板**：显示当前讲解的景点信息，提供音色设置和自动播放开关
+
+### 💬 AI面对面对话
+- **沉浸式聊天界面**：现代化聊天UI设计，区分用户和AI的消息气泡
+- **智能问答**：基于大语言模型，回答关于湖南旅游的各种问题
+- **工具增强**：支持火车票查询、网络搜索等MCP工具，提供更全面的旅行服务
+
 
 ## 🛠️ 技术栈
 
@@ -66,6 +76,8 @@
 - **AI 服务**：阿里云百炼（通义千问）/ GitCode Deepseek V3.2
 - **图片生成**：腾讯云混元生图 / 魔搭社区 ModelScope
 - **API 调用**：OpenAI SDK 兼容模式
+- **TTS 后端**：Flask 服务，提供语音合成和大语言模型对话功能
+- **MCP 工具**：支持火车票查询、网络搜索等工具调用
 
 ### 数据库与认证
 - **数据库**：Supabase (PostgreSQL)
@@ -90,6 +102,7 @@ ai-travel-planner/
 │   ├── src/
 │   │   ├── components/        # Vue 组件
 │   │   │   ├── Auth.vue      # 用户认证组件
+│   │   │   ├── DigitalHuman.vue # 数字人导游组件
 │   │   │   ├── ExpenseTracker.vue # 费用追踪
 │   │   │   ├── GlassButton.vue # 玻璃态按钮组件（支持 light/dark/primary 主题）
 │   │   │   ├── Home.vue      # 首页营销组件
@@ -101,6 +114,7 @@ ai-travel-planner/
 │   │   │   ├── SimpleBarChart.vue # 柱状图
 │   │   │   └── SimplePieChart.vue # 饼图
 │   │   ├── views/            # 页面视图
+│   │   │   ├── AIChatView.vue # AI面对面对话页面
 │   │   │   ├── ExpenseTrackerView.vue
 │   │   │   ├── HomeView.vue
 │   │   │   ├── PlanDetailView.vue
@@ -124,6 +138,10 @@ ai-travel-planner/
 │   ├── vite.config.js
 │   └── 高德地图配置说明.md
 │
+├── tts-flask-backend/         # TTS 后端服务
+│   ├── main.py              # Flask 服务器主文件
+│   ├── .env.example         # 环境变量示例
+│   └── README.md            # TTS 后端说明
 ├── Dockerfile                 # Docker 配置文件
 ├── docker-compose.yml         # Docker Compose 配置
 ├── supabase-setup.sql        # 数据库初始化脚本
@@ -181,6 +199,18 @@ ai-travel-planner/
 - 支持小红书、朋友圈、抖音等平台选择
 - 提供多种文案风格（种草、治愈、攻略、emo、吐槽）
 - 支持复制文案到剪贴板和下载功能
+
+### 9. 数字人导游 (`/plan-detail`)
+- 悬浮在页面上的交互式数字人组件
+- 点击景点时自动展开并生成生动的导游讲解
+- 支持多种音色选择和智能分段语音播放
+- 提供景点信息和讲解内容的同步展示
+
+### 10. AI面对面对话 (`/ai-chat`)
+- 独立的聊天页面，提供与AI旅行助手的深度交流
+- 支持文字，模拟面对面交流体验
+- 提供普通对话和工具增强两种模式
+- 支持火车票查询、网络搜索等MCP工具功能
 
 
 ## 🚀 快速开始
@@ -370,6 +400,9 @@ SUPABASE_SERVICE_ROLE_KEY=eyJxxx...  # Supabase 服务端密钥（严禁暴露�
 TENCENT_SECRET_ID=xxx...             # 腾讯云 SecretId（混元生图）
 TENCENT_SECRET_KEY=xxx...            # 腾讯云 SecretKey
 MODELSCOPE_API_KEY=xxx...            # 魔搭社区 API Key（免费额度充足）
+
+# TTS 后端配置（语音合成）
+DASHSCOPE_API_KEY=xxx...              # 阿里云 DashScope API Key（语音合成）
 
 # 公开配置（前端运行时读取，仍可设置访问白名单）
 PUBLIC_SUPABASE_URL=https://xxx.supabase.co
@@ -565,6 +598,7 @@ taskkill /PID <PID> /F
 
 ### 项目文档
 - [阿里百炼配置说明](./backend/阿里百炼配置说明.md)
+- [数字人及AI面对面对话功能说明](./docs/数字人及AI面对面对话功能说明.md)
 - [AI 速记卡片功能说明](./docs/AI速记卡片功能说明.md)
 - [听见山河BGM歌单功能说明](./docs/听见山河BGM歌单功能说明.md)
 - [尺素锦书旅游明信片功能说明](./docs/尺素锦书旅游明信片功能说明.md)
