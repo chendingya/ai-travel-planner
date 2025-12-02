@@ -82,20 +82,20 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
 
       // 检查是否可能需要 MCP 工具
       const messageText = message.toLowerCase();
-      const needsMcpTools =
-        enable_tools !== false &&
-        mcpManager.isAvailable() &&
-        (messageText.includes("火车") ||
-          messageText.includes("高铁") ||
-          messageText.includes("车票") ||
-          messageText.includes("查询") ||
-          messageText.includes("票价") ||
-          messageText.includes("搜索") ||
-          messageText.includes("最新") ||
-          messageText.includes("今天") ||
-          messageText.includes("明天") ||
-          messageText.includes("新闻") ||
-          messageText.includes("天气"));
+      const hasKeywords =
+        messageText.includes("火车") ||
+        messageText.includes("高铁") ||
+        messageText.includes("车票") ||
+        messageText.includes("查询") ||
+        messageText.includes("票价") ||
+        messageText.includes("搜索") ||
+        messageText.includes("最新") ||
+        messageText.includes("今天") ||
+        messageText.includes("明天") ||
+        messageText.includes("新闻") ||
+        messageText.includes("天气");
+      
+      const needsMcpTools = enable_tools === true && mcpManager.isAvailable() && hasKeywords;
 
       console.log(`🔧 是否启用MCP工具: ${needsMcpTools ? "是" : "否"}`);
 
@@ -295,12 +295,16 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
           );
         }
       } else {
-        // 普通对话请求
-        response = await textGenerator.generateResponse(
-          systemPrompt,
-          [...conversationHistory, { role: "user", content: message }],
-          { temperature: 0.7 }
-        );
+        // 普通对话请求 - 不使用工具
+        console.log(`📝 发送普通文本生成请求...`);
+        const aiResponse = await textGenerator.generateResponse(systemPrompt, message, {
+          temperature: 0.7,
+        });
+        response = {
+          content: aiResponse,
+          message: { content: aiResponse },
+          toolCalls: null,
+        };
       }
 
       if (getAborted()) {

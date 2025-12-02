@@ -19,6 +19,7 @@
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "@vueuse/core": "^14.0.0",
     "leaflet": "^1.9.4",
+    "less": "^4.4.2",
     "pinia": "^2.1.5",
     "tdesign-icons-vue-next": "^0.4.1",
     "tdesign-vue-next": "^1.17.1",

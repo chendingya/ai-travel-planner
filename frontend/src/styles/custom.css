@@ -247,35 +247,21 @@ button .t-button__text > * {
   gap: 6px !important;
 }
 
-/* 输入框样式 - 排除 chat 组件 */
-.t-input__inner:not(.t-chat-sender .t-input__inner) {
-  border-radius: 12px !important;
-  border: 1px solid rgba(0, 0, 0, 0.12) !important;
-  background: white !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
-}
+/* 修复TDesign输入框内层线框问题 - 只针对问题根源 */
+/* TDesign输入框的内层线框可能是由伪元素或内部元素轮廓造成的 */
 
-.t-textarea__inner:not(.t-chat-sender .t-textarea__inner) {
-  border-radius: 12px !important;
-  border: 1px solid rgba(0, 0, 0, 0.12) !important;
-  background: white !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
-}
-
-/* 输入框焦点样式 */
-.t-input__inner:not(.t-chat-sender .t-input__inner):focus,
-.t-input__inner:not(.t-chat-sender .t-input__inner):focus-visible,
-.t-input:focus-within .t-input__inner:not(.t-chat-sender .t-input__inner) {
+/* 只移除输入框内部元素可能导致的内层线框 */
+.t-input:not(.t-chat-sender) .t-input__inner,
+.t-textarea:not(.t-chat-sender) .t-textarea__inner {
   outline: none !important;
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1) !important;
-  border-color: #0066cc !important;
 }
 
-.t-textarea__inner:not(.t-chat-sender .t-textarea__inner):focus,
-.t-textarea__inner:not(.t-chat-sender .t-textarea__inner):focus-visible {
-  outline: none !important;
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1) !important;
-  border-color: #0066cc !important;
+/* 移除可能导致内层线框的伪元素 */
+.t-input:not(.t-chat-sender) .t-input__inner::after,
+.t-input:not(.t-chat-sender) .t-input__inner::before,
+.t-textarea:not(.t-chat-sender) .t-textarea__inner::after,
+.t-textarea:not(.t-chat-sender) .t-textarea__inner::before {
+  display: none !important;
 }
 
 /* 下拉框、选择器等组件的玻璃态效果 */

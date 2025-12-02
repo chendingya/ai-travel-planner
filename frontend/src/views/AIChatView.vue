@@ -8,7 +8,7 @@
           <p class="page-subtitle">与智能旅行助手进行对话，获取专业的旅行建议</p>
         </div>
         <div class="header-actions">
-          <!-- 工具模式开关 - 美化版 -->
+          <!-- 工具模式开关 -->
           <div 
             class="tool-mode-toggle" 
             :class="{ 'is-active': enableTools }"
@@ -32,28 +32,19 @@
       </div>
     </div>
 
-    <!-- 聊天区域 - 使用 TDesign Chat 组件 -->
+    <!-- 聊天区域 -->
     <div class="chat-container">
-      <!-- 消息列表 -->
+      <!-- 消息列表 - 使用 t-chat 组件 -->
       <t-chat
         ref="chatRef"
+        :reverse="false"
         :data="chatData"
         :clear-history="false"
         :text-loading="isLoading"
-        layout="single"
-        :reverse="false"
-      >
-        <!-- 自定义头像 -->
-        <template #avatar="{ item }">
-          <t-avatar 
-            :image="item.role === 'user' ? userAvatar : assistantAvatar"
-            size="40px"
-          />
-        </template>
-      </t-chat>
+      />
 
       <!-- 快捷问题区域 -->
-      <div class="quick-questions">
+      <div v-if="messages.length <= 1" class="quick-questions">
         <div class="quick-header">
           <t-icon name="lightbulb" />
           <span>快捷问题</span>
@@ -126,23 +117,21 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 
 请问有什么可以帮助您的吗？`
 
-// 消息列表 - 转换为 TChat 需要的格式
+// 消息列表
 const messages = ref([
   {
     role: 'assistant',
     content: defaultGreeting,
-    datetime: formatTime(new Date()),
   },
 ])
 
-// 转换为 TChat data 格式
+// 转换为 t-chat 需要的 data 格式
 const chatData = computed(() => {
   return messages.value.map((msg) => ({
     avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
     name: msg.role === 'user' ? '我' : 'AI助手',
     role: msg.role,
     content: msg.content,
-    datetime: msg.datetime || '',
   }))
 })
 
@@ -183,7 +172,7 @@ const currentPlaceholder = computed(() =>
 function formatTime(date) {
   const hours = date.getHours().toString().padStart(2, '0')
   const minutes = date.getMinutes().toString().padStart(2, '0')
-  return `${hours}:${minutes}`
+  return `今天 ${hours}:${minutes}`
 }
 
 // 发送消息
@@ -195,7 +184,6 @@ const handleSend = async (value) => {
   messages.value.push({
     role: 'user',
     content: content,
-    datetime: formatTime(new Date()),
   })
   
   inputValue.value = ''
@@ -224,7 +212,7 @@ const callAI = async (prompt) => {
         message: prompt,
         conversation_id: conversationId.value,
         reset_history: resetFlag,
-        enable_tools: enableTools.value,  // 传递工具模式状态
+        enable_tools: enableTools.value,
       }),
       signal: abortController.value.signal,
     })
@@ -240,7 +228,6 @@ const callAI = async (prompt) => {
     messages.value.push({
       role: 'assistant',
       content: data.ai_response || '抱歉，我暂时无法回答您的问题。',
-      datetime: formatTime(new Date()),
     })
     
     // 滚动到底部
@@ -269,9 +256,15 @@ const handleStop = () => {
 
 // 滚动到底部
 const scrollToBottom = () => {
-  if (chatRef.value?.scrollToBottom) {
-    chatRef.value.scrollToBottom({ behavior: 'smooth' })
-  }
+  nextTick(() => {
+    const chatEl = chatRef.value?.$el
+    if (chatEl) {
+      const scrollContainer = chatEl.querySelector('.t-chat__list') || chatEl
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }
+    }
+  })
 }
 
 // 清空对话
@@ -282,7 +275,6 @@ const handleClear = () => {
     {
       role: 'assistant',
       content: defaultGreeting,
-      datetime: formatTime(new Date()),
     },
   ]
   MessagePlugin.success('已开启新的对话')
@@ -303,7 +295,6 @@ const handleQuickQuestion = (question) => {
   flex-direction: column;
   background: linear-gradient(135deg, #f5f7fa 0%, #e4ecfb 100%);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  width: 100%;
 }
 
 /* 页面头部 */
@@ -315,11 +306,10 @@ const handleQuickQuestion = (question) => {
   position: sticky;
   top: 0;
   z-index: 100;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
 }
 
 .header-content {
-  max-width: 1200px;
+  max-width: 900px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -336,7 +326,6 @@ const handleQuickQuestion = (question) => {
   font-weight: 700;
   color: #1d1d1f;
   margin: 0 0 4px 0;
-  letter-spacing: -0.5px;
 }
 
 .page-subtitle {
@@ -351,7 +340,7 @@ const handleQuickQuestion = (question) => {
   gap: 16px;
 }
 
-/* 美化版工具模式开关 */
+/* 工具模式开关 */
 .tool-mode-toggle {
   position: relative;
   width: 140px;
@@ -359,7 +348,7 @@ const handleQuickQuestion = (question) => {
   border-radius: 20px;
   background: #f0f2f5;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s ease;
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.05);
   user-select: none;
@@ -372,15 +361,11 @@ const handleQuickQuestion = (question) => {
 .tool-mode-toggle.is-active {
   background: #e6f4ff;
   border-color: #0066cc;
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
 }
 
 .toggle-bg {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   background: linear-gradient(90deg, #0066cc, #0088ff);
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -397,7 +382,6 @@ const handleQuickQuestion = (question) => {
   justify-content: center;
   height: 100%;
   gap: 8px;
-  z-index: 1;
 }
 
 .toggle-icon-wrapper {
@@ -409,12 +393,11 @@ const handleQuickQuestion = (question) => {
   border-radius: 50%;
   background: white;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.3s ease;
 }
 
 .tool-mode-toggle.is-active .toggle-icon-wrapper {
   background: #0066cc;
-  transform: translateX(4px);
 }
 
 .toggle-icon {
@@ -431,12 +414,11 @@ const handleQuickQuestion = (question) => {
   font-size: 14px;
   font-weight: 600;
   color: #666;
-  transition: all 0.3s ease;
+  transition: color 0.3s ease;
 }
 
 .tool-mode-toggle.is-active .toggle-text {
   color: #0066cc;
-  transform: translateX(-2px);
 }
 
 .new-chat-btn {
@@ -450,205 +432,81 @@ const handleQuickQuestion = (question) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 24px 0;
-  width: 100%;
   max-width: 900px;
+  width: 100%;
   margin: 0 auto;
+  padding: 24px 20px;
 }
 
-/* TChat 组件样式覆盖 - 修复类名 (兼容两种类名格式) */
+/* t-chat 组件样式 */
 :deep(.t-chat) {
   flex: 1;
   background: transparent;
-  width: 100%;
 }
 
-:deep(.t-chat__list) {
-  padding: 0 20px;
+/* 气泡背景纯白 */
+:deep(.t-chat__text) {
+  background: #ffffff !important;
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-:deep(.t-chat__item),
-:deep(.t-chat-item) {
-  padding: 16px 0;
-  display: flex;
-  flex-direction: row;
-  animation: slideIn 0.3s ease-out;
-  gap: 12px;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* AI 消息 - 左对齐 */
-:deep(.t-chat__item--assistant),
-:deep(.t-chat-item--assistant),
-:deep(.t-chat__item:not(.t-chat__item--user):not(.t-chat-item--user)),
-:deep(.t-chat-item:not(.t-chat-item--user):not(.t-chat__item--user)) {
-  justify-content: flex-start;
-}
-
-/* 用户消息 - 右对齐 */
-:deep(.t-chat__item--user),
-:deep(.t-chat-item--user) {
-  justify-content: flex-end;
-  flex-direction: row-reverse;
-}
-
-/* 消息内容容器 */
-:deep(.t-chat__item-main),
-:deep(.t-chat-item__main) {
-  display: flex;
-  flex-direction: column;
-  max-width: 80%;
-}
-
-:deep(.t-chat__item--user .t-chat__item-main),
-:deep(.t-chat-item--user .t-chat-item__main) {
-  align-items: flex-end;
-}
-
-:deep(.t-chat__item--assistant .t-chat__item-main),
-:deep(.t-chat-item--assistant .t-chat-item__main),
-:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-main),
-:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__main) {
-  align-items: flex-start;
-}
-
-/* 对话气泡样式 - 美化 */
-:deep(.t-chat__item-content),
-:deep(.t-chat-item__content) {
-  padding: 14px 18px;
-  font-size: 15px;
-  line-height: 1.6;
-  word-wrap: break-word;
-  word-break: break-word;
-  position: relative;
-}
-
-/* AI 消息气泡 - 左侧 */
-:deep(.t-chat__item--assistant .t-chat__item-content),
-:deep(.t-chat-item--assistant .t-chat-item__content),
-:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-content),
-:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__content) {
-  background: white;
-  color: #1d1d1f;
-  border-radius: 4px 20px 20px 20px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
-}
-
-/* 用户消息气泡 - 右侧 */
-:deep(.t-chat__item--user .t-chat__item-content),
-:deep(.t-chat-item--user .t-chat-item__content) {
-  background: linear-gradient(135deg, #0066cc 0%, #0088ff 100%);
-  color: white;
-  border-radius: 20px 4px 20px 20px;
-  border: none;
-  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.2);
-}
-
-:deep(.t-chat__item--user .t-chat__item-content *),
-:deep(.t-chat-item--user .t-chat-item__content *) {
-  color: white !important;
-}
-
-:deep(.t-chat__item--user .t-chat__item-content a),
-:deep(.t-chat-item--user .t-chat-item__content a) {
-  color: #e0e8ff !important;
-  text-decoration: underline;
-}
-
-/* 头像样式 */
-:deep(.t-chat__item-avatar),
-:deep(.t-chat-item__avatar) {
-  flex-shrink: 0;
-  margin: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-:deep(.t-chat__item--user .t-chat__item-avatar),
-:deep(.t-chat-item--user .t-chat-item__avatar) {
-  margin-left: 12px;
-}
-
-:deep(.t-chat__item--assistant .t-chat__item-avatar),
-:deep(.t-chat-item--assistant .t-chat-item__avatar),
-:deep(.t-chat__item:not(.t-chat__item--user) .t-chat__item-avatar),
-:deep(.t-chat-item:not(.t-chat-item--user) .t-chat-item__avatar) {
-  margin-right: 12px;
-}
-
-/* 名称和时间 */
-:deep(.t-chat__item-name),
-:deep(.t-chat-item__name) {
-  font-size: 12px;
-  color: #86868b;
-  margin-bottom: 4px;
-  padding: 0 4px;
-}
-
-:deep(.t-chat__item--user .t-chat__item-name),
-:deep(.t-chat-item--user .t-chat-item__name) {
-  text-align: right;
-}
-
-:deep(.t-chat__item-datetime),
-:deep(.t-chat-item__datetime) {
-  font-size: 11px;
-  color: #999;
-  margin-top: 6px;
-  opacity: 0.8;
-}
-
-:deep(.t-chat__item--user .t-chat__item-datetime),
-:deep(.t-chat-item--user .t-chat-item__datetime) {
-  text-align: right;
-  color: rgba(255, 255, 255, 0.8);
-}
-
-/* Markdown 内容样式 */
-:deep(.t-chat-content) {
+:deep(.t-chat__text__content) {
+  padding: 14px 18px !important;
   font-size: 15px;
   line-height: 1.7;
 }
 
-:deep(.t-chat-content h1),
-:deep(.t-chat-content h2),
-:deep(.t-chat-content h3) {
-  margin: 12px 0 8px;
-  font-weight: 600;
-  color: inherit;
+/* 用户消息气泡 - 蓝色 */
+:deep(.t-chat-item--user .t-chat__text) {
+  background: linear-gradient(135deg, #0066cc 0%, #0088ff 100%) !important;
+  border-radius: 16px 4px 16px 16px;
 }
 
-:deep(.t-chat-content ul),
-:deep(.t-chat-content ol) {
+:deep(.t-chat-item--user .t-chat__text__content) {
+  color: white;
+}
+
+/* AI 消息气泡 */
+:deep(.t-chat-item--assistant .t-chat__text) {
+  border-radius: 4px 16px 16px 16px;
+}
+
+/* 头像样式 */
+:deep(.t-chat-item__avatar) {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+:deep(.t-chat-item__avatar .t-avatar) {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Markdown 内容样式 */
+:deep(.t-chat__text__content p) {
+  margin: 0 0 10px 0;
+}
+
+:deep(.t-chat__text__content p:last-child) {
+  margin-bottom: 0;
+}
+
+:deep(.t-chat__text__content ul),
+:deep(.t-chat__text__content ol) {
   padding-left: 20px;
   margin: 8px 0;
 }
 
-:deep(.t-chat-content li) {
-  margin-bottom: 4px;
+:deep(.t-chat__text__content li) {
+  margin-bottom: 6px;
 }
 
-:deep(.t-chat-content pre) {
-  background: rgba(0, 0, 0, 0.8);
-  color: #fff;
-  padding: 12px;
-  border-radius: 8px;
-  margin: 10px 0;
-  overflow-x: auto;
+:deep(.t-chat__text__content strong) {
+  font-weight: 600;
 }
 
 /* 快捷问题 */
@@ -657,7 +515,7 @@ const handleQuickQuestion = (question) => {
   backdrop-filter: blur(10px);
   border-radius: 16px;
   padding: 16px 20px;
-  margin: 20px 20px 0;
+  margin-bottom: 16px;
   border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
@@ -669,8 +527,6 @@ const handleQuickQuestion = (question) => {
   color: #666;
   font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .quick-buttons {
@@ -687,15 +543,12 @@ const handleQuickQuestion = (question) => {
   background: white;
   border: 1px solid rgba(0, 0, 0, 0.08);
   color: #444;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
 .quick-btn:hover:not(:disabled) {
   background: #f8faff;
   border-color: #0066cc;
   color: #0066cc;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0, 102, 204, 0.1);
 }
 
 /* 输入区域 */
@@ -705,78 +558,12 @@ const handleQuickQuestion = (question) => {
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 24px;
   padding: 8px 12px;
-  margin: 16px 20px 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-  transition: all 0.3s ease;
 }
 
 .sender-wrapper:focus-within {
   background: white;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
-}
-
-/* 隐藏上传按钮 */
-:deep(.t-chat-sender__upload) {
-  display: none !important;
-}
-
-/* 输入框样式修复 */
-:deep(.t-chat-sender) {
-  background: transparent !important;
-  padding: 0 !important;
-}
-
-:deep(.t-chat-sender__textarea) {
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-}
-
-:deep(.t-chat-sender__inner-header),
-:deep(.t-chat-sender__header) {
-  display: none !important;
-}
-
-:deep(.t-textarea) {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-:deep(.t-textarea__inner) {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  outline: none !important;
-  min-height: 24px !important;
-  max-height: 120px !important;
-  padding: 8px 12px !important;
-  font-size: 15px !important;
-  line-height: 1.5 !important;
-  resize: none !important;
-}
-
-:deep(.t-textarea__inner:focus),
-:deep(.t-textarea__inner:focus-visible) {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  outline: none !important;
-}
-
-:deep(.t-chat-sender__footer) {
-  padding: 4px 0 0 0 !important;
-  border: none !important;
-}
-
-:deep(.t-chat-sender__mode) {
-  display: none !important;
-}
-
-/* 隐藏发送按钮 */
-:deep(.t-chat-sender__button) {
-  display: none !important;
 }
 
 /* 响应式 */
@@ -796,16 +583,7 @@ const handleQuickQuestion = (question) => {
   }
   
   .chat-container {
-    padding: 12px 0;
-  }
-  
-  :deep(.t-chat__item-content) {
-    max-width: 90%;
-  }
-  
-  .quick-questions,
-  .sender-wrapper {
-    margin: 12px 12px 0;
+    padding: 12px;
   }
 }
 </style>
