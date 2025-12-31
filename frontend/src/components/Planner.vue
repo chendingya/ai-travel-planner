@@ -150,6 +150,33 @@ import { useSpeechRecognition } from '@vueuse/core';
 import { ref, watch, onMounted, computed } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { usePlannerStore } from '../stores/planner';
+import { supabase } from '../supabase';
+
+// 登录状态
+const isLoggedIn = ref(false);
+
+// 检查登录状态
+const checkLoginStatus = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    isLoggedIn.value = !!session;
+  } catch (error) {
+    console.error('检查登录状态失败:', error);
+    isLoggedIn.value = false;
+  }
+};
+
+// 触发登录弹窗
+const triggerLogin = () => {
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button');
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click();
+      return;
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录');
+};
 
 const emit = defineEmits(['locations-updated', 'fly-to', 'plan-generated']);
 const store = usePlannerStore();
@@ -449,6 +476,14 @@ const parseQuickInput = async () => {
 
 // 提交表单
 const handleSubmit = async () => {
+  // 检查登录状态
+  await checkLoginStatus();
+  if (!isLoggedIn.value) {
+    MessagePlugin.warning('请先登录后再使用智能规划功能');
+    triggerLogin();
+    return;
+  }
+  
   if (!isFormValid.value) {
     MessagePlugin.warning('请填写完整的旅行信息');
     return;

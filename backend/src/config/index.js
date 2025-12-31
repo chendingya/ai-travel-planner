@@ -73,6 +73,14 @@ const mcpConfig = {
       transport: "sse",
       url: "https://mcp.api-inference.modelscope.net/23494d15514349/sse",
     },
+    "amap-mcp": {
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "@amap/amap-maps-mcp-server"],
+      env: {
+        AMAP_MAPS_API_KEY: process.env.PUBLIC_AMAP_REST_KEY || process.env.PUBLIC_AMAP_KEY || "",
+      },
+    },
   },
 };
 

@@ -52,10 +52,17 @@ class MCPClientManager {
       // stdio 模式：使用 StdioClientTransport 启动本地进程
       console.log(`  🚀 启动进程: ${config.command} ${config.args.join(" ")}`);
 
+      // 合并当前进程的环境变量和配置中的环境变量
+      const env = {
+        ...process.env,
+        ...(config.env || {}),
+      };
+
       transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
         stderr: "pipe", // 捕获 stderr 以便调试
+        env: env,
       });
 
       // 监听 stderr 输出

@@ -52,7 +52,7 @@
           <div class="history-header">
             <h3>历史对话</h3>
             <div class="history-header-actions">
-              <t-button variant="text" size="small" @click="loadSessions" :loading="isLoadingSessions" title="刷新">
+              <t-button v-if="isLoggedIn" variant="text" size="small" @click="loadSessions" :loading="isLoadingSessions" title="刷新">
                 <t-icon name="refresh" />
               </t-button>
               <t-button variant="text" size="small" @click="showHistoryPanel = false" title="关闭">
@@ -60,47 +60,62 @@
               </t-button>
             </div>
           </div>
-          <div class="history-list" v-if="sessions.length > 0">
-            <div 
-              v-for="session in displayedSessions" 
-              :key="session.conversation_id"
-              class="history-item"
-              :class="{ 'is-active': session.conversation_id === conversationId }"
-            >
-              <div class="history-item-content" @click="loadSession(session.conversation_id)">
-                <div class="history-item-title">{{ session.title }}</div>
-                <div class="history-item-meta">
-                  <span>{{ session.message_count }} 条消息</span>
-                  <span>{{ formatDate(session.updated_at) }}</span>
+          
+          <!-- 未登录提示 -->
+          <div v-if="!isLoggedIn" class="history-login-tip">
+            <t-icon name="user-circle" size="48px" />
+            <p class="login-tip-title">登录后查看历史记录</p>
+            <p class="login-tip-desc">登录账号后，您的对话记录将被保存，方便随时查看</p>
+            <t-button theme="primary" @click="goToLogin">
+              <template #icon><t-icon name="login" style="color: white;" /></template>
+              立即登录
+            </t-button>
+          </div>
+          
+          <!-- 已登录 - 显示历史列表 -->
+          <template v-else>
+            <div class="history-list" v-if="sessions.length > 0">
+              <div 
+                v-for="session in displayedSessions" 
+                :key="session.conversation_id"
+                class="history-item"
+                :class="{ 'is-active': session.conversation_id === conversationId }"
+              >
+                <div class="history-item-content" @click="loadSession(session.conversation_id)">
+                  <div class="history-item-title">{{ session.title }}</div>
+                  <div class="history-item-meta">
+                    <span>{{ session.message_count }} 条消息</span>
+                    <span>{{ formatDate(session.updated_at) }}</span>
+                  </div>
                 </div>
+                <t-button 
+                  variant="text" 
+                  size="small" 
+                  class="history-item-delete"
+                  @click.stop="confirmDeleteSession(session.conversation_id)"
+                  title="删除此对话"
+                >
+                  <t-icon name="delete" />
+                </t-button>
               </div>
-              <t-button 
-                variant="text" 
-                size="small" 
-                class="history-item-delete"
-                @click.stop="confirmDeleteSession(session.conversation_id)"
-                title="删除此对话"
-              >
-                <t-icon name="delete" />
-              </t-button>
+              <!-- 展开更多按钮 -->
+              <div v-if="sessions.length > initialDisplayCount" class="history-expand">
+                <t-button 
+                  variant="text" 
+                  size="small" 
+                  block
+                  @click="showAllSessions = !showAllSessions"
+                >
+                  <t-icon :name="showAllSessions ? 'chevron-up' : 'chevron-down'" />
+                  {{ showAllSessions ? '收起' : `展开更多 (${sessions.length - initialDisplayCount})` }}
+                </t-button>
+              </div>
             </div>
-            <!-- 展开更多按钮 -->
-            <div v-if="sessions.length > initialDisplayCount" class="history-expand">
-              <t-button 
-                variant="text" 
-                size="small" 
-                block
-                @click="showAllSessions = !showAllSessions"
-              >
-                <t-icon :name="showAllSessions ? 'chevron-up' : 'chevron-down'" />
-                {{ showAllSessions ? '收起' : `展开更多 (${sessions.length - initialDisplayCount})` }}
-              </t-button>
+            <div v-else class="history-empty">
+              <t-icon name="chat" size="32px" />
+              <p>暂无历史对话</p>
             </div>
-          </div>
-          <div v-else class="history-empty">
-            <t-icon name="chat" size="32px" />
-            <p>暂无历史对话</p>
-          </div>
+          </template>
         </div>
       </transition>
 
@@ -173,8 +188,26 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { supabase } from '../supabase'
+
+// 登录状态
+const isLoggedIn = ref(false)
+const currentUser = ref(null)
+
+// 检查登录状态
+const checkLoginStatus = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    isLoggedIn.value = !!session
+    currentUser.value = session?.user || null
+  } catch (error) {
+    console.error('检查登录状态失败:', error)
+    isLoggedIn.value = false
+    currentUser.value = null
+  }
+}
 
 // 头像配置
 const userAvatar = 'https://tdesign.gtimg.com/site/avatar.jpg'
@@ -217,6 +250,8 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 
 **提示**：开启右上角的"工具模式"，我还可以：
 - **查询火车票**：查询12306列车信息
+- **天气查询**：查询目的地实时天气
+- **地点搜索**：搜索景点、餐厅、酒店
 - **网络搜索**：获取最新旅游资讯
 
 请问有什么可以帮助您的吗？`
@@ -271,8 +306,8 @@ const normalQuickQuestions = [
 // 工具模式快捷问题
 const toolQuickQuestions = [
   '查一下明天从北京到杭州的高铁',
-  '搜索一下西湖最新的旅游攻略',
-  '查询下周五从上海到杭州的火车',
+  '杭州今天天气怎么样？',
+  '搜索西湖附近的美食餐厅',
   '帮我搜索乌镇的住宿推荐'
 ]
 
@@ -299,6 +334,13 @@ function formatTime(date) {
 const handleSend = async (value) => {
   const content = value?.trim() || inputValue.value?.trim()
   if (!content || isLoading.value) return
+  
+  // 检查登录状态
+  if (!isLoggedIn.value) {
+    MessagePlugin.warning('请先登录后再进行对话')
+    goToLogin()
+    return
+  }
   
   // 添加用户消息
   messages.value.push({
@@ -400,6 +442,12 @@ const handleClear = () => {
 
 // 加载会话列表
 const loadSessions = async () => {
+  // 未登录时不加载历史记录
+  if (!isLoggedIn.value) {
+    sessions.value = []
+    return
+  }
+  
   isLoadingSessions.value = true
   try {
     const response = await fetch('/api/ai-chat/sessions')
@@ -510,9 +558,23 @@ const formatDate = (dateStr) => {
   }
 }
 
-// 页面加载时获取会话列表
-onMounted(() => {
-  loadSessions()
+// 页面加载时检查登录状态并获取会话列表
+onMounted(async () => {
+  await checkLoginStatus()
+  if (isLoggedIn.value) {
+    loadSessions()
+  }
+  
+  // 监听登录状态变化
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    isLoggedIn.value = !!session
+    currentUser.value = session?.user || null
+    if (session) {
+      loadSessions()
+    } else {
+      sessions.value = []
+    }
+  })
 })
 
 // 快捷问题
@@ -520,6 +582,22 @@ const handleQuickQuestion = (question) => {
   if (!isLoading.value) {
     handleSend(question)
   }
+}
+
+// 跳转到登录页面
+const goToLogin = () => {
+  // 触发顶部导航栏的登录弹窗
+  // 通过查找包含"登录"文字的按钮来触发
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button')
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click()
+      showHistoryPanel.value = false
+      return
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录')
+  showHistoryPanel.value = false
 }
 </script>
 
@@ -662,6 +740,38 @@ const handleQuickQuestion = (question) => {
 .history-empty p {
   margin: 0;
   font-size: 14px;
+}
+
+/* 未登录提示样式 */
+.history-login-tip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: #666;
+}
+
+.history-login-tip .t-icon {
+  color: #0066cc;
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+
+.login-tip-title {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.login-tip-desc {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  color: #86868b;
+  line-height: 1.5;
 }
 
 /* 历史按钮样式 */
