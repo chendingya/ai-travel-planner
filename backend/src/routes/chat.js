@@ -14,7 +14,7 @@ const { aiConfig } = require("../config");
  * @param {object} supabaseService Supabase 服务
  */
 function createChatRoutes(textGenerator, mcpManager, supabaseService) {
-  const { getConversationHistory, saveConversationHistory, clearConversationHistory } =
+  const { getConversationHistory, saveConversationHistory, clearConversationHistory, getSupabase } =
     supabaseService;
 
   // 检查 AI 是否可用的中间件
@@ -78,6 +78,7 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
       if (sessionId) {
         const history = await getConversationHistory(sessionId);
         conversationHistory = history.slice(-aiConfig.chat.maxHistoryMessages);
+        console.log(`📚 历史消息数量: ${conversationHistory.length}`);
       }
 
       // 检查是否可能需要 MCP 工具
@@ -104,7 +105,7 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
       }
 
       // 系统提示词 - 让 LLM 根据工具的 inputSchema 自动理解参数
-      const systemPrompt = `你是一个专业的湖南旅游助手，帮助用户查询和规划旅游。
+      const systemPrompt = `你是一个专业的旅游助手，帮助用户查询和规划旅游。
 
 你有权访问多个工具来获取实时信息。请根据用户的需求，使用合适的工具调用。
 
@@ -118,6 +119,26 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
 - 优先调用 get-current-date 获取今天日期（用于计算相对日期）
 - 然后调用 get-station-code-of-citys 获取城市站点代码
 - 最后调用 get-tickets 查询票务信息
+
+【Markdown格式规范 - 必须严格遵守】：
+1. 标题格式：标题（##或###）必须单独一行，前后各空一行
+2. 列表格式：每个列表项（- 开头）必须单独一行，不要在一行内放多个列表项
+3. 粗体格式：**文字** 前后要有空格或在行首行尾
+4. 禁止表格：不要使用 | 表格语法，用列表代替
+5. 段落分隔：不同内容块之间必须空一行
+6. 示例格式：
+
+## 标题
+
+段落内容。
+
+### 子标题
+
+- 列表项1
+- 列表项2
+- 列表项3
+
+另一个段落。
 
 回答风格：
 - 友好、热情、专业
@@ -334,6 +355,88 @@ function createChatRoutes(textGenerator, mcpManager, supabaseService) {
         error: "AI对话失败",
         message: error.message || "请稍后再试",
       });
+    }
+  });
+
+  /**
+   * GET /api/ai-chat/history/:conversationId
+   * 获取指定会话的历史记录
+   */
+  router.get("/ai-chat/history/:conversationId", async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      if (!conversationId) {
+        return res.status(400).json({ error: "会话ID不能为空" });
+      }
+      
+      const history = await getConversationHistory(conversationId);
+      console.log(`📖 获取会话 ${conversationId} 的历史记录，共 ${history.length} 条`);
+      
+      res.json({ 
+        success: true, 
+        conversation_id: conversationId,
+        messages: history 
+      });
+    } catch (error) {
+      console.error("❌ 获取历史记录失败:", error);
+      res.status(500).json({ error: "获取历史记录失败" });
+    }
+  });
+
+  /**
+   * GET /api/ai-chat/sessions
+   * 获取所有会话列表（用于显示历史对话列表）
+   */
+  router.get("/ai-chat/sessions", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) {
+        return res.json({ success: true, sessions: [] });
+      }
+
+      const { data, error } = await supabase
+        .from("ai_chat_sessions")
+        .select("conversation_id, messages, created_at, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error("获取会话列表失败:", error);
+        return res.json({ success: true, sessions: [] });
+      }
+
+      // 格式化会话列表，提取第一条用户消息作为标题
+      const sessions = (data || []).map(session => {
+        // 确保 messages 是数组（可能是 JSON 字符串）
+        let messages = session.messages || [];
+        if (typeof messages === 'string') {
+          try {
+            messages = JSON.parse(messages);
+          } catch {
+            messages = [];
+          }
+        }
+        if (!Array.isArray(messages)) {
+          messages = [];
+        }
+        
+        const userMessages = messages.filter(m => m.role === 'user');
+        const firstUserMessage = userMessages[0]?.content || '新对话';
+        const preview = firstUserMessage.substring(0, 50) + (firstUserMessage.length > 50 ? '...' : '');
+        
+        return {
+          conversation_id: session.conversation_id,
+          title: preview,
+          message_count: messages.length,
+          created_at: session.created_at,
+          updated_at: session.updated_at
+        };
+      });
+
+      res.json({ success: true, sessions });
+    } catch (error) {
+      console.error("❌ 获取会话列表失败:", error);
+      res.status(500).json({ error: "获取会话列表失败" });
     }
   });
 

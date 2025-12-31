@@ -57,7 +57,7 @@ const aiConfig = {
   defaultImageProvider: process.env.IMAGE_PROVIDER || "hunyuan",
   // AI 对话配置
   chat: {
-    maxHistoryMessages: parseInt(process.env.AI_CHAT_HISTORY_LIMIT || "12"),
+    maxHistoryMessages: parseInt(process.env.AI_CHAT_HISTORY_LIMIT || "20"),
   },
 };
 

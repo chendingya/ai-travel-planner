@@ -1,5 +1,5 @@
 /**
- * 湖南旅游助手后端服务入口
+ * 旅游助手后端服务入口
  * 重构版 - 模块化架构
  */
 
@@ -14,7 +14,7 @@ const { serverConfig, runtimeConfig, checkConfig } = require("./config");
 // 导入服务
 const { initTextGenerator } = require("./services/textGenerator");
 const { initImageGenerator } = require("./services/imageGenerator");
-const { initSupabase, getConversationHistory, saveConversationHistory, clearConversationHistory } = require("./services/supabase");
+const { initSupabase, getSupabase, getConversationHistory, saveConversationHistory, clearConversationHistory } = require("./services/supabase");
 const { mcpManager } = require("./services/mcpManager");
 
 // 导入路由
@@ -63,7 +63,7 @@ app.get("/health", (req, res) => {
  * 初始化并启动服务器
  */
 async function startServer() {
-  console.log("\n🚀 正在启动湖南旅游助手后端服务...\n");
+  console.log("\n🚀 正在启动旅游助手后端服务...\n");
 
   // 检查配置
   checkConfig();
@@ -92,6 +92,7 @@ async function startServer() {
     imageGenerator,
     mcpManager,
     supabaseService: {
+      getSupabase,
       getConversationHistory,
       saveConversationHistory,
       clearConversationHistory,

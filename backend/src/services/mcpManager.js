@@ -116,8 +116,8 @@ class MCPClientManager {
         openAIName = `${tool.serverName}_${tool.name}`;
       }
 
-      // 确保名称符合 OpenAI 要求 (字母、数字、下划线、连字符)
-      openAIName = openAIName.replace(/[^a-zA-Z0-9_-]/g, "_");
+      // 确保名称符合 OpenAI 要求 (仅字母、数字、下划线，连字符也替换为下划线)
+      openAIName = openAIName.replace(/[^a-zA-Z0-9_]/g, "_");
 
       this.openAIToolMap.set(openAIName, {
         serverName: tool.serverName,

@@ -38,7 +38,7 @@
           <label class="config-label">重点地点（可选）</label>
           <t-input
             v-model="playlistHighlights"
-            placeholder="如：解放西、橘子洲、茶颜悦色（逗号分隔）"
+            placeholder="如：西湖、灵隐寺、河坊街（逗号分隔）"
             :disabled="loading"
           />
         </div>

@@ -38,7 +38,7 @@ function isSupabaseAvailable() {
 
 // --- 会话历史管理 ---
 
-const MAX_HISTORY_MESSAGES = aiConfig.chat?.maxHistoryMessages || 12;
+const MAX_HISTORY_MESSAGES = aiConfig.chat?.maxHistoryMessages || 20;
 
 /**
  * 从 Supabase 获取会话历史

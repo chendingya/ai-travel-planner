@@ -14,7 +14,7 @@
   "description": "",
   "dependencies": {
     "@supabase/supabase-js": "^2.76.1",
-    "@tdesign-vue-next/chat": "^0.4.6",
+    "@tdesign-vue-next/chat": "^0.5.0-alpha.10",
     "@vitejs/plugin-vue": "^4.6.2",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "@vueuse/core": "^14.0.0",

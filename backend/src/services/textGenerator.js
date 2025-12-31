@@ -333,6 +333,13 @@ class TextGeneratorContext {
 
     try {
       console.log(`🔧 [${this.primaryStrategy.name}] 发送带工具的请求...`);
+      console.log(`📨 消息数量: ${messages.length}, 工具数量: ${tools.length}`);
+      
+      // 调试：打印第一个工具的完整定义
+      if (tools.length > 0) {
+        console.log(`📋 工具示例:`, JSON.stringify(tools[0], null, 2));
+      }
+      
       const completion = await client.chat.completions.create(params);
 
       if (!completion || !completion.choices || completion.choices.length === 0) {
@@ -358,6 +365,15 @@ class TextGeneratorContext {
       };
     } catch (error) {
       console.error(`❌ [${this.primaryStrategy.name}] 工具调用请求失败:`, error.message);
+      // 打印更多调试信息
+      if (error.status === 400) {
+        console.error(`📋 请求参数:`, JSON.stringify({
+          model: params.model,
+          messagesCount: params.messages?.length,
+          toolsCount: params.tools?.length,
+          toolNames: params.tools?.map(t => t.function?.name),
+        }, null, 2));
+      }
       throw error;
     }
   }
