@@ -9,6 +9,98 @@ class PlanService {
     this.langChainManager = langChainManager;
   }
 
+  parseMoneyToNumber(raw) {
+    if (raw == null) return 0;
+    if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+    if (typeof raw === 'boolean') return 0;
+
+    if (typeof raw === 'object') {
+      const candidates = [raw.value, raw.amount, raw.cost, raw.price, raw.money, raw.total];
+      for (const cand of candidates) {
+        const n = this.parseMoneyToNumber(cand);
+        if (n > 0) return n;
+      }
+      return 0;
+    }
+
+    const s = String(raw).trim();
+    if (!s) return 0;
+
+    const compact = s.replace(/[,，\s]/g, '').replace(/[¥￥元块人民币]/g, '');
+    const factor = /[万wW]/.test(compact) ? 10000 : /[千kK]/.test(compact) ? 1000 : 1;
+    const m = compact.match(/-?\d+(\.\d+)?/);
+    if (!m) return 0;
+    const n = Number(m[0]);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n * factor;
+  }
+
+  normalizeBudgetBreakdown(input) {
+    if (input == null) return null;
+
+    if (typeof input === 'string') {
+      const trimmed = input.trim();
+      if (!trimmed) return null;
+      try {
+        const parsed = JSON.parse(trimmed);
+        return this.normalizeBudgetBreakdown(parsed);
+      } catch {
+        return null;
+      }
+    }
+
+    const ignoredKeys = new Set(['total', 'sum', 'total_budget', 'budget', '合计', '总计', '总预算', '预算']);
+    const out = {};
+
+    const add = (k, v) => {
+      const key = String(k ?? '').trim();
+      if (!key || ignoredKeys.has(key) || ignoredKeys.has(key.toLowerCase())) return;
+      const n = this.parseMoneyToNumber(v);
+      out[key] = (out[key] || 0) + n;
+    };
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (Array.isArray(item) && item.length >= 2) {
+          add(item[0], item[1]);
+          continue;
+        }
+        if (!item || typeof item !== 'object') continue;
+        const key = item.key ?? item.category ?? item.type ?? item.name ?? item.label;
+        const val = item.value ?? item.amount ?? item.cost ?? item.price ?? item.money ?? item.total;
+        if (key != null && val != null) add(key, val);
+      }
+      return Object.keys(out).length ? out : null;
+    }
+
+    if (typeof input === 'object') {
+      if (input.budget_breakdown != null) return this.normalizeBudgetBreakdown(input.budget_breakdown);
+      if (Array.isArray(input.items)) return this.normalizeBudgetBreakdown(input.items);
+      if (Array.isArray(input.categories)) return this.normalizeBudgetBreakdown(input.categories);
+
+      for (const [k, v] of Object.entries(input)) add(k, v);
+      return Object.keys(out).length ? out : null;
+    }
+
+    return null;
+  }
+
+  normalizePlanObject(plan) {
+    if (!plan || typeof plan !== 'object') return plan;
+    const normalized = { ...plan };
+
+    const bd = this.normalizeBudgetBreakdown(normalized.budget_breakdown);
+    if (bd) normalized.budget_breakdown = bd;
+    else if (normalized.budget_breakdown != null) normalized.budget_breakdown = null;
+
+    if (normalized.total_budget != null) {
+      const total = this.parseMoneyToNumber(normalized.total_budget);
+      normalized.total_budget = Number.isFinite(total) && total >= 0 ? total : 0;
+    }
+
+    return normalized;
+  }
+
   normalizeGeneratedPlan(result) {
     if (!result) return { isStructured: false, plan: '' };
 
@@ -29,7 +121,7 @@ class PlanService {
     }
 
     if (Array.isArray(result.daily_itinerary)) {
-      return { isStructured: true, plan: result };
+      return { isStructured: true, plan: this.normalizePlanObject(result) };
     }
 
     if (Array.isArray(result.itinerary)) {
@@ -74,7 +166,7 @@ class PlanService {
         tips: Array.isArray(result.tips) ? result.tips : [],
       };
 
-      return { isStructured: true, plan };
+      return { isStructured: true, plan: this.normalizePlanObject(plan) };
     }
 
     return { isStructured: false, plan: JSON.stringify(result, null, 2) };
@@ -128,11 +220,13 @@ class PlanService {
 2) 字段尽量完整，不确定的字段用 null 或空数组/空对象
 3) 行程要真实可行，时间安排合理，活动描述简洁
 4) 请用中文输出
+5) 金额相关字段必须输出数字（整数，单位：元），不要带 ¥/￥/元/万 等单位，不要输出字符串
 
 输出 JSON Schema（示例字段名，按此输出）：
 {
   "destination": "目的地",
   "duration": 3,
+  "total_budget": 30000,
   "daily_itinerary": [
     {
       "day": 1,
@@ -154,7 +248,15 @@ class PlanService {
   "accommodation": [],
   "restaurants": [],
   "transport": {},
-  "budget_breakdown": null,
+  "budget_breakdown": {
+    "transportation": 0,
+    "accommodation": 0,
+    "meals": 0,
+    "attractions": 0,
+    "tickets": 0,
+    "shopping": 0,
+    "other": 0
+  },
   "tips": []
 }`;
 

@@ -539,7 +539,7 @@ const deleteSession = async (sessionId) => {
       
       // 如果删除的是当前会话，开启新对话（不显示提示）
       if (sessionId === conversationId.value) {
-        conversationId.value = createConversationId()
+        conversationId.value = null
         shouldResetHistory.value = true
         messages.value = [{ role: 'assistant', content: defaultGreeting }]
       }

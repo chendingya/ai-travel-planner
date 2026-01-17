@@ -6,6 +6,16 @@ class AIChatController {
     this.aiChatService = aiChatService;
   }
 
+  deriveTitle(session) {
+    const title = session?.title;
+    if (typeof title === 'string' && title.trim()) return title.trim();
+    const messages = Array.isArray(session?.messages) ? session.messages : [];
+    const firstUser = messages.find((m) => m && typeof m === 'object' && m.role === 'user' && typeof m.content === 'string' && m.content.trim());
+    const raw = firstUser?.content?.trim() || '';
+    if (!raw) return '新对话';
+    return raw.length > 18 ? `${raw.slice(0, 18)}...` : raw;
+  }
+
   /**
    * AI 对话
    */
@@ -56,9 +66,13 @@ class AIChatController {
     try {
       const sessions = await this.aiChatService.getSessions();
       const mapped = (Array.isArray(sessions) ? sessions : []).map((s) => ({
-        conversation_id: s.id,
-        title: s.title,
-        message_count: s.message_count || 0,
+        conversation_id: s.conversation_id || s.id,
+        title: this.deriveTitle(s),
+        message_count: typeof s.message_count === 'number'
+          ? s.message_count
+          : Array.isArray(s.messages)
+            ? s.messages.length
+            : 0,
         updated_at: s.updated_at || s.created_at,
         created_at: s.created_at,
       }));
