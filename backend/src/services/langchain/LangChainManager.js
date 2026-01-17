@@ -2,7 +2,6 @@ const ModelScopeAdapter = require('./text/ModelScopeAdapter');
 const GitCodeAdapter = require('./text/GitCodeAdapter');
 const DashScopeAdapter = require('./text/DashScopeAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
-const TencentImageAdapter = require('./image/TencentImageAdapter');
 
 /**
  * LangChain 管理器
@@ -30,8 +29,6 @@ class LangChainManager {
       switch (provider.name) {
         case 'modelscope':
           return new ModelScopeImageAdapter(provider);
-        case 'tencent':
-          return new TencentImageAdapter(provider);
         default:
           console.warn(`Unknown image provider: ${provider.name}`);
           return null;

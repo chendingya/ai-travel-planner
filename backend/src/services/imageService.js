@@ -42,7 +42,8 @@ class ImageService {
       return result;
     } catch (error) {
       console.error('Generate image failed:', error);
-      throw new Error('Failed to generate image');
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message || 'Failed to generate image');
     }
   }
 

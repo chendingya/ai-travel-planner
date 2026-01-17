@@ -289,10 +289,9 @@ const fetchProviders = async () => {
   } catch (err) {
     console.warn('获取提供商列表失败，使用默认值');
     providers.value = [
-      { id: 'hunyuan', name: '腾讯混元', icon: 'cloud' },
       { id: 'modelscope', name: '魔搭社区', icon: 'app' }
     ];
-    selectedProvider.value = 'hunyuan';
+    selectedProvider.value = 'modelscope';
   }
 };
 
@@ -355,9 +354,7 @@ const generatePostcard = async () => {
       body: JSON.stringify({
         prompt: generatedPrompt.value,
         provider: selectedProvider.value,
-        // 明信片使用4:3的宽高比，更适合明信片设计
-        // 混元使用分辨率格式:1024:768，魔搭社区使用尺寸格式:1024x768
-        [selectedProvider.value === 'hunyuan' ? 'resolution' : 'size']: selectedProvider.value === 'hunyuan' ? '1024:768' : '1024x768'
+        size: '1024x768'
       }),
       signal, // 添加signal以支持请求取消
     });

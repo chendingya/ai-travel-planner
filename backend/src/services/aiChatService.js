@@ -164,17 +164,31 @@ class AIChatService {
    */
   async getSessions() {
     try {
-      const primary = await this.supabase
-        .from('ai_chat_sessions')
-        .select('*')
-        .order('updated_at', { ascending: false });
+      const primary = await this.withRetry(async () => {
+        const result = await this.supabase
+          .from('ai_chat_sessions')
+          .select('*')
+          .order('updated_at', { ascending: false });
+
+        if (!result?.error) return result;
+        if (result.error.code === 'PGRST205' || result.error.code === '42703') return result;
+        if (this.isTransientSupabaseError(result.error)) throw result.error;
+        throw result.error;
+      });
 
       if (!primary.error) return primary.data;
       if (primary.error.code === '42703') {
-        const fallbackOrder = await this.supabase
-          .from('ai_chat_sessions')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const fallbackOrder = await this.withRetry(async () => {
+          const result = await this.supabase
+            .from('ai_chat_sessions')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (!result?.error) return result;
+          if (result.error.code === 'PGRST205') return result;
+          if (this.isTransientSupabaseError(result.error)) throw result.error;
+          throw result.error;
+        });
 
         if (!fallbackOrder.error) return fallbackOrder.data;
         if (fallbackOrder.error.code !== 'PGRST205') throw fallbackOrder.error;
@@ -182,15 +196,22 @@ class AIChatService {
         throw primary.error;
       }
 
-      const fallback = await this.supabase
-        .from('chat_sessions')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const fallback = await this.withRetry(async () => {
+        const result = await this.supabase
+          .from('chat_sessions')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!result?.error) return result;
+        if (this.isTransientSupabaseError(result.error)) throw result.error;
+        throw result.error;
+      });
 
       if (fallback.error) throw fallback.error;
       return fallback.data;
     } catch (error) {
       console.error('Get sessions failed:', error);
+      if (this.isTransientSupabaseError(error)) return [];
       throw new Error('Failed to get chat sessions');
     }
   }

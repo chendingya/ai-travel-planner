@@ -14,7 +14,7 @@ const config = {
   // Supabase 配置
   supabase: {
     url: process.env.SUPABASE_URL,
-    key: process.env.SUPABASE_KEY,
+    key: process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY,
   },
 
   // 文本生成提供商配置
@@ -44,18 +44,13 @@ const config = {
   // 图片生成提供商配置
   imageProviders: {
     modelscope: {
-      enabled: process.env.MODELSCOPE_IMAGE_ENABLED === 'true',
-      baseURL: process.env.MODELSCOPE_IMAGE_BASE_URL,
-      apiKey: process.env.MODELSCOPE_IMAGE_API_KEY,
+      enabled: (process.env.MODELSCOPE_IMAGE_ENABLED
+        ? process.env.MODELSCOPE_IMAGE_ENABLED === 'true'
+        : !!(process.env.MODELSCOPE_IMAGE_API_KEY || process.env.MODELSCOPE_API_KEY)),
+      baseURL: process.env.MODELSCOPE_IMAGE_BASE_URL || process.env.MODELSCOPE_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+      apiKey: process.env.MODELSCOPE_IMAGE_API_KEY || process.env.MODELSCOPE_API_KEY,
       model: process.env.MODELSCOPE_IMAGE_MODEL || 'Z-Image-Turbo',
       priority: 1,
-    },
-    tencent: {
-      enabled: process.env.TENCENT_IMAGE_ENABLED === 'true',
-      apiKey: process.env.TENCENT_IMAGE_API_KEY,
-      secretId: process.env.TENCENT_IMAGE_SECRET_ID,
-      region: process.env.TENCENT_IMAGE_REGION || 'ap-guangzhou',
-      priority: 2,
     },
   },
 
@@ -90,9 +85,6 @@ function getEnabledImageProviders() {
   const providers = [];
   if (config.imageProviders.modelscope.enabled) {
     providers.push({ name: 'modelscope', ...config.imageProviders.modelscope });
-  }
-  if (config.imageProviders.tencent.enabled) {
-    providers.push({ name: 'tencent', ...config.imageProviders.tencent });
   }
   return providers.sort((a, b) => a.priority - b.priority);
 }

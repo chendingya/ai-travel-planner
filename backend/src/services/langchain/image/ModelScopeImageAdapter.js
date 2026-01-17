@@ -11,11 +11,21 @@ class ModelScopeImageAdapter extends BaseImageAdapter {
     this.baseURL = config.baseURL;
   }
 
+  normalizedBaseURL() {
+    const raw = typeof this.baseURL === 'string' ? this.baseURL.trim() : '';
+    return raw.replace(/\/+$/, '');
+  }
+
   /**
    * 生成图片
    */
   async generateImage(prompt, options = {}) {
     try {
+      const baseURL = this.normalizedBaseURL();
+      const url = baseURL.endsWith('/v1')
+        ? `${baseURL}/images/generations`
+        : `${baseURL}/v1/images/generations`;
+
       const requestBody = {
         model: this.model,
         input: {
@@ -37,7 +47,7 @@ class ModelScopeImageAdapter extends BaseImageAdapter {
         requestBody.parameters = { size: options.size };
       }
 
-      const response = await fetch(`${this.baseURL}/v1/images/generations`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,6 +83,10 @@ class ModelScopeImageAdapter extends BaseImageAdapter {
       console.error('ModelScope image generation failed:', error);
       throw error;
     }
+  }
+
+  isAvailable() {
+    return this.enabled && !!this.apiKey && !!this.normalizedBaseURL();
   }
 
   /**

@@ -11,7 +11,6 @@ const TextProviderNames = {
 
 const ImageProviderNames = {
   MODELSCOPE: 'modelscope',
-  TENCENT: 'tencent',
 };
 
 // 图片风格选项

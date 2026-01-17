@@ -9,8 +9,6 @@ class ImageController {
   normalizeProviderId(provider) {
     const p = provider ? String(provider).trim().toLowerCase() : '';
     if (!p) return '';
-    if (p === 'hunyuan') return 'tencent';
-    if (p === 'tencent') return 'tencent';
     if (p === 'modelscope') return 'modelscope';
     return p;
   }
@@ -19,9 +17,6 @@ class ImageController {
     if (!size) return '';
     const s = String(size).trim();
     if (!s) return '';
-    if (providerName === 'tencent') {
-      return s.includes('x') ? s.replace('x', ':') : s;
-    }
     if (providerName === 'modelscope') {
       return s.includes(':') ? s.replace(':', 'x') : s;
     }
@@ -29,9 +24,6 @@ class ImageController {
   }
 
   mapProviderToClient(providerName) {
-    if (providerName === 'tencent') {
-      return { id: 'hunyuan', name: '腾讯混元', icon: 'cloud' };
-    }
     if (providerName === 'modelscope') {
       return { id: 'modelscope', name: '魔搭社区', icon: 'app' };
     }

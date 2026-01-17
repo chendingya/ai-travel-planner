@@ -11,6 +11,12 @@ class BaseImageAdapter {
     this.enabled = config.enabled;
   }
 
+  isPlaceholderCredential(value) {
+    const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (!v) return true;
+    return v.startsWith('your_') || v.startsWith('your-') || v === 'changeme' || v === 'replace_me';
+  }
+
   /**
    * 生成图片
    * @param {String} prompt - 图片提示词
@@ -34,7 +40,7 @@ class BaseImageAdapter {
    * @returns {Boolean}
    */
   isAvailable() {
-    return this.enabled && !!this.apiKey;
+    return this.enabled && !!this.apiKey && !this.isPlaceholderCredential(this.apiKey);
   }
 }
 

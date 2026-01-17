@@ -21,7 +21,6 @@
     "express": "^5.1.0",
     "langchain": "^1.2.3",
     "openai": "^6.6.0",
-    "tencentcloud-sdk-nodejs": "^4.1.149",
     "zod": "^4.3.2"
   },
   "engines": {
