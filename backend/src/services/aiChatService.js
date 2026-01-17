@@ -21,6 +21,35 @@ class AIChatService {
     return { data: null, error: lastError };
   }
 
+  isTransientSupabaseError(error) {
+    const msg = `${error?.message || ''}\n${error?.details || ''}`.toLowerCase();
+    return (
+      msg.includes('fetch failed') ||
+      msg.includes('connect timeout') ||
+      msg.includes('und_err_connect_timeout') ||
+      msg.includes('etimedout') ||
+      msg.includes('timeout')
+    );
+  }
+
+  async sleep(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async withRetry(operation, { retries = 2, baseDelayMs = 300 } = {}) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await operation(attempt);
+      } catch (error) {
+        lastError = error;
+        if (!this.isTransientSupabaseError(error) || attempt >= retries) break;
+        await this.sleep(baseDelayMs * (attempt + 1));
+      }
+    }
+    throw lastError;
+  }
+
   safeTitleFromMessages(messages) {
     if (!Array.isArray(messages)) return '新对话';
     const firstUser = messages.find((m) => m && typeof m === 'object' && m.role === 'user' && typeof m.content === 'string' && m.content.trim());
@@ -171,11 +200,19 @@ class AIChatService {
    */
   async getSessionHistory(sessionId) {
     try {
-      const { data, error } = await this.supabase
-        .from('ai_chat_sessions')
-        .select('messages')
-        .eq('conversation_id', sessionId)
-        .maybeSingle();
+      const { data, error } = await this.withRetry(async () => {
+        const result = await this.supabase
+          .from('ai_chat_sessions')
+          .select('messages')
+          .eq('conversation_id', sessionId)
+          .maybeSingle();
+
+        if (!result?.error) return result;
+
+        if (result.error.code === 'PGRST205') return result;
+        if (this.isTransientSupabaseError(result.error)) throw result.error;
+        throw result.error;
+      });
 
       if (!error) {
         const messages = Array.isArray(data?.messages) ? data.messages : [];
@@ -202,7 +239,7 @@ class AIChatService {
       return (fallback.data || []).map((msg) => ({ role: msg.role, content: msg.content }));
     } catch (error) {
       console.error('Get session history failed:', error);
-      return [];
+      throw new Error('Failed to get session history');
     }
   }
 

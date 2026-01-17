@@ -121,21 +121,9 @@
 
       <!-- 聊天区域 -->
       <div class="chat-container">
-      <!-- 消息列表 - 使用 t-chat-list 和 t-chat-message 组件支持 Markdown -->
+      <!-- 消息列表 -->
       <div class="chat-list-wrapper" ref="chatRef">
-        <t-chat-list :clear-history="false">
-          <t-chat-message
-            v-for="(msg, index) in messages"
-            :key="index"
-            :avatar="msg.role === 'user' ? userAvatar : assistantAvatar"
-            :name="msg.role === 'user' ? '我' : 'AI助手'"
-            :role="msg.role"
-            :content="formatMessageContent(msg.content, msg.role)"
-            :status="index === messages.length - 1 && isLoading && msg.role === 'assistant' ? 'pending' : 'complete'"
-            :variant="msg.role === 'user' ? 'base' : 'text'"
-            :placement="msg.role === 'user' ? 'right' : 'left'"
-          />
-        </t-chat-list>
+        <t-chat :clear-history="false" :data="chatData" :reverse="false" :text-loading="isLoading" />
       </div>
 
       <!-- 快捷问题区域 -->
@@ -222,6 +210,8 @@ const sessions = ref([])
 const isLoadingSessions = ref(false)
 const showAllSessions = ref(false)
 const initialDisplayCount = 5
+const isLoadingHistory = ref(false)
+const loadingHistoryId = ref(null)
 
 // 计算显示的会话列表
 const displayedSessions = computed(() => {
@@ -482,29 +472,33 @@ const loadSessions = async () => {
 
 // 加载指定会话的历史记录
 const loadSession = async (sessionId) => {
+  if (isLoadingHistory.value) return
   if (sessionId === conversationId.value) {
     showHistoryPanel.value = false
     return
   }
   
+  isLoadingHistory.value = true
+  loadingHistoryId.value = sessionId
   try {
     const response = await fetch(`/api/ai-chat/history/${sessionId}`)
-    if (response.ok) {
-      const data = await response.json()
-      if (data.messages && data.messages.length > 0) {
-        conversationId.value = sessionId
-        shouldResetHistory.value = false
-        messages.value = data.messages
-        showHistoryPanel.value = false
-        
-        // 滚动到底部
-        await nextTick()
-        scrollToBottom()
-      }
-    }
+    if (!response.ok) throw new Error('请求失败')
+
+    const data = await response.json()
+    const historyMessages = Array.isArray(data?.messages) ? data.messages : []
+    conversationId.value = sessionId
+    shouldResetHistory.value = false
+    messages.value = historyMessages.length ? historyMessages : [{ role: 'assistant', content: '该对话暂无消息' }]
+    showHistoryPanel.value = false
+    
+    await nextTick()
+    scrollToBottom()
   } catch (error) {
     console.error('加载历史记录失败:', error)
     MessagePlugin.error('加载历史记录失败')
+  } finally {
+    isLoadingHistory.value = false
+    loadingHistoryId.value = null
   }
 }
 
