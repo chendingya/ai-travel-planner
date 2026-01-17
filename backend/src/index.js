@@ -1,173 +1,181 @@
 /**
- * 旅游助手后端服务入口
- * 重构版 - 模块化架构
+ * 后端应用入口
  */
 
-require("dotenv").config();
-const path = require("path");
-const express = require("express");
-const cors = require("cors");
+const express = require('express');
+const cors = require('cors');
 
-// 导入配置
-const { serverConfig, runtimeConfig, checkConfig } = require("./config");
+// 配置
+const { config, getEnabledTextProviders, getEnabledImageProviders } = require('./config');
 
-// 导入服务
-const { initTextGenerator } = require("./services/textGenerator");
-const { initImageGenerator } = require("./services/imageGenerator");
-const { initSupabase, getSupabase, getConversationHistory, saveConversationHistory, clearConversationHistory } = require("./services/supabase");
-const { mcpManager } = require("./services/mcpManager");
+// 中间件
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const { requestLogger } = require('./middleware/logger');
 
-// 导入路由
-const { registerRoutes } = require("./routes");
+// LangChain Manager
+const LangChainManager = require('./services/langchain/LangChainManager');
+
+// Services
+const PlanService = require('./services/planService');
+const AIChatService = require('./services/aiChatService');
+const PromptService = require('./services/promptService');
+const ImageService = require('./services/imageService');
+const PlaylistService = require('./services/playlistService');
+const PostcardService = require('./services/postcardService');
+const ShareService = require('./services/shareService');
+
+// Controllers
+const PlanController = require('./controllers/planController');
+const AIChatController = require('./controllers/aiChatController');
+const PromptController = require('./controllers/promptController');
+const ImageController = require('./controllers/imageController');
+const PlaylistController = require('./controllers/playlistController');
+const PostcardController = require('./controllers/postcardController');
+const ShareController = require('./controllers/shareController');
+
+// Supabase
+const supabase = require('./supabase');
+
+// 路由
+const apiRoutes = require('./routes');
 
 // 创建 Express 应用
 const app = express();
 
+// 保持服务器引用，防止进程退出
+let server = null;
+
 // 中间件
-app.use(cors());
-app.use(express.json());
+app.use(cors(config.cors));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(requestLogger);
 
-// 静态资源（前端打包产物）
-const staticDir = path.join(__dirname, "..", "public");
-app.use(express.static(staticDir));
-
-// 供前端在运行时动态加载公开配置
-app.get("/config.js", (req, res) => {
-  res.setHeader("Content-Type", "application/javascript");
-  const safeConfig = {
-    supabaseUrl: runtimeConfig.supabaseUrl,
-    supabaseAnonKey: runtimeConfig.supabaseAnonKey,
-    amapKey: runtimeConfig.amapKey,
-    amapSecurityCode: runtimeConfig.amapSecurityCode,
-    amapRestKey: runtimeConfig.amapRestKey,
-  };
-  res.send(`window.__APP_CONFIG__ = ${JSON.stringify(safeConfig)};`);
-});
-
-// 根路径：优先返回前端 index.html，若不存在则返回文本
-app.get("/", (req, res) => {
-  const indexPath = path.join(staticDir, "index.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      res.send("Hello from AI Travel Planner Backend! 🚀");
-    }
+// 健康检查端点
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    providers: {
+      text: getEnabledTextProviders().length,
+      image: getEnabledImageProviders().length,
+    },
   });
 });
 
-// 健康检查端点
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+// 前端配置注入端点
+app.get('/config.js', (req, res) => {
+  const supabaseUrl = process.env.SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+  const amapKey = process.env.AMAP_KEY || '';
+  const amapSecurityCode = process.env.AMAP_SECURITY_CODE || '';
+  const amapRestKey = process.env.AMAP_REST_KEY || '';
+
+  const runtimeConfig = {
+    supabaseUrl,
+    supabaseAnonKey,
+    amapKey,
+    amapSecurityCode,
+    amapRestKey,
+  };
+
+  // 返回 JavaScript 文件
+  res.setHeader('Content-Type', 'application/javascript');
+  res.send(`window.__APP_CONFIG__ = ${JSON.stringify(runtimeConfig)};`);
 });
 
 /**
- * 初始化并启动服务器
+ * 初始化应用
  */
-async function startServer() {
-  console.log("\n🚀 正在启动旅游助手后端服务...\n");
+async function initializeApp() {
+  try {
+    // 获取启用的提供商
+    const textProviders = getEnabledTextProviders();
+    const imageProviders = getEnabledImageProviders();
 
-  // 检查配置
-  checkConfig();
+    console.log('Available text providers:', textProviders.map(p => p.name));
+    console.log('Available image providers:', imageProviders.map(p => p.name));
 
-  // 初始化服务
-  console.log("\n=== 初始化服务 ===");
-  
-  // 初始化 Supabase
-  initSupabase();
+    // 初始化 LangChain Manager
+    const langChainManager = new LangChainManager(textProviders, imageProviders);
 
-  // 初始化文本生成器
-  const textGenerator = initTextGenerator();
+    // 初始化 Services
+    const planService = new PlanService(langChainManager);
+    const aiChatService = new AIChatService(langChainManager, supabase);
+    const promptService = new PromptService(langChainManager);
+    const imageService = new ImageService(langChainManager, supabase);
+    const playlistService = new PlaylistService(langChainManager, supabase);
+    const postcardService = new PostcardService(promptService, imageService);
+    const shareService = new ShareService(langChainManager);
 
-  // 初始化图片生成器
-  const imageGenerator = initImageGenerator();
+    // 初始化 Controllers
+    const planController = new PlanController(planService);
+    const aiChatController = new AIChatController(aiChatService);
+    const promptController = new PromptController(promptService);
+    const imageController = new ImageController(imageService);
+    const playlistController = new PlaylistController(playlistService);
+    const postcardController = new PostcardController(postcardService);
+    const shareController = new ShareController(shareService);
 
-  // 初始化 MCP 客户端（异步，不阻塞启动）
-  mcpManager.initialize().catch(err => {
-    console.error("❌ MCP 初始化失败:", err.message);
-  });
+    // 注册控制器
+    const controllers = {
+      planController,
+      aiChatController,
+      promptController,
+      imageController,
+      playlistController,
+      postcardController,
+      shareController,
+    };
 
-  // 注册路由
-  console.log("\n=== 注册路由 ===");
-  registerRoutes(app, {
-    textGenerator,
-    imageGenerator,
-    mcpManager,
-    supabaseService: {
-      getSupabase,
-      getConversationHistory,
-      saveConversationHistory,
-      clearConversationHistory,
-    },
-  });
+    // 注册路由（带控制器）- 必须在 404 处理之前
+    app.use('/api', apiRoutes(controllers));
 
-  // SPA 回退：将除 /api 与 /health 外的 GET 请求指向前端 index.html
-  app.get(/^(?!\/api|\/health).*/, (req, res) => {
-    res.sendFile(path.join(staticDir, "index.html"));
-  });
+    // 404 处理 - 必须在所有路由之后
+    app.use(notFoundHandler);
 
-  // 启动服务器
-  const port = serverConfig.port;
-  app.listen(port, () => {
-    console.log(`\n🚀 Server is running on port ${port}`);
-    console.log(`📍 Backend API: http://localhost:${port}`);
+    // 错误处理 - 必须在最后
+    app.use(errorHandler);
 
-    // 显示配置状态
-    console.log("\n=== 配置状态 ===");
-    const textProviders = textGenerator.getAvailableProviders();
-    console.log(
-      `✓ AI 文本服务: ${
-        textGenerator.isAvailable()
-          ? `已配置 ✅ (${textProviders.map(p => p.name).join(" -> ")})`
-          : "未配置 ❌"
-      }`
-    );
-    console.log(
-      `✓ 图片生成提供商: ${
-        imageGenerator.isAvailable()
-          ? `已配置 ✅ (${imageGenerator.getAvailableProviders().join(", ")})`
-          : "未配置 ❌"
-      }`
-    );
-    console.log(`✓ 默认图片提供商: ${imageGenerator.getDefaultProvider() || "无"}`);
-    console.log(
-      `✓ Supabase: ${runtimeConfig.supabaseUrl ? "已配置 ✅" : "未配置 ❌"}`
-    );
-    console.log(
-      `✓ 前端可见 Supabase Anon Key: ${
-        runtimeConfig.supabaseAnonKey ? "已注入 ✅" : "未注入 ❌"
-      }`
-    );
-    console.log(
-      `✓ 高德地图 Key: ${runtimeConfig.amapKey ? "已注入 ✅" : "未注入 ❌"}`
-    );
-    console.log(
-      `✓ MCP 工具: ${mcpManager.isAvailable() ? "已配置 ✅" : "初始化中..."}`
-    );
+    console.log('✓ All services initialized successfully');
 
-    // 显示安全提醒
-    console.log("\n=== 🔒 安全提醒 ===");
-    console.log("✓ 确保您的 API 密钥没有被硬编码在代码中");
-    console.log("✓ 所有的密钥应该通过环境变量配置");
-    console.log("✓ 请勿将 .env 文件提交到版本控制系统中\n");
-  });
+    // 注意：启动时不测试提供商连接，避免因未配置 API key 而失败
+    // 提供商连接将在实际使用时自动处理降级
+
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize application:', error);
+    return false;
+  }
 }
 
-// 优雅关闭处理
-process.on("SIGINT", async () => {
-  console.log("\n🛑 收到关闭信号，正在清理资源...");
-  await mcpManager.close();
-  console.log("👋 服务已停止");
-  process.exit(0);
-});
+/**
+ * 启动服务器
+ */
+async function startServer() {
+  const initialized = await initializeApp();
 
-process.on("SIGTERM", async () => {
-  console.log("\n🛑 收到终止信号，正在清理资源...");
-  await mcpManager.close();
-  console.log("👋 服务已停止");
-  process.exit(0);
-});
+  if (!initialized) {
+    console.error('Failed to initialize application. Exiting...');
+    process.exit(1);
+  }
 
-// 启动服务器
-startServer().catch(err => {
-  console.error("❌ 服务器启动失败:", err);
-  process.exit(1);
-});
+  const PORT = config.server.port;
+  const HOST = config.server.host;
+
+  server = app.listen(PORT, HOST, () => {
+    console.log(`\n🚀 Server is running on http://${HOST}:${PORT}`);
+    console.log(`📚 API documentation: http://${HOST}:${PORT}/api`);
+    console.log(`❤️  Health check: http://${HOST}:${PORT}/health\n`);
+  });
+
+  console.log('Server instance created, keeping process alive...');
+
+  // 保持进程运行 - 防止 Node.js 认为工作完成而退出
+  process.stdin.resume();
+}
+
+// 启动应用
+startServer();
+
+module.exports = app;

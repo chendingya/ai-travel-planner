@@ -232,8 +232,7 @@ const displayedSessions = computed(() => {
 })
 
 // 会话管理
-const createConversationId = () => `ai-face-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const conversationId = ref(createConversationId())
+const conversationId = ref(null)
 const shouldResetHistory = ref(true)
 
 // MCP 工具模式开关
@@ -361,10 +360,25 @@ const handleSend = async (value) => {
 // 调用AI接口
 const callAI = async (prompt) => {
   isLoading.value = true
-  const resetFlag = shouldResetHistory.value
   abortController.value = new AbortController()
   
   try {
+    if (!conversationId.value) {
+      const createResponse = await fetch('/api/ai-chat/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: '新对话' }),
+      })
+      if (createResponse.ok) {
+        const created = await createResponse.json()
+        if (created?.id) {
+          conversationId.value = created.id
+        }
+      }
+    }
+
     const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
@@ -372,9 +386,7 @@ const callAI = async (prompt) => {
       },
       body: JSON.stringify({
         message: prompt,
-        conversation_id: conversationId.value,
-        reset_history: resetFlag,
-        enable_tools: enableTools.value,
+        sessionId: conversationId.value,
       }),
       signal: abortController.value.signal,
     })
@@ -385,11 +397,14 @@ const callAI = async (prompt) => {
     
     const data = await response.json()
     shouldResetHistory.value = false
+    if (!conversationId.value && data?.sessionId) {
+      conversationId.value = data.sessionId
+    }
     
     // 添加AI回复
     messages.value.push({
       role: 'assistant',
-      content: data.ai_response || '抱歉，我暂时无法回答您的问题。',
+      content: data.ai_response || data.message || '抱歉，我暂时无法回答您的问题。',
     })
     
     // 滚动到底部
@@ -429,7 +444,7 @@ const scrollToBottom = () => {
 
 // 清空对话
 const handleClear = () => {
-  conversationId.value = createConversationId()
+  conversationId.value = null
   shouldResetHistory.value = true
   messages.value = [
     {
@@ -438,6 +453,9 @@ const handleClear = () => {
     },
   ]
   MessagePlugin.success('已开启新的对话')
+  if (isLoggedIn.value) {
+    loadSessions()
+  }
 }
 
 // 加载会话列表
@@ -453,7 +471,7 @@ const loadSessions = async () => {
     const response = await fetch('/api/ai-chat/sessions')
     if (response.ok) {
       const data = await response.json()
-      sessions.value = data.sessions || []
+      sessions.value = data.sessions || (Array.isArray(data) ? data : [])
     }
   } catch (error) {
     console.error('加载会话列表失败:', error)
@@ -511,12 +529,8 @@ const confirmDeleteSession = (sessionId) => {
 // 删除指定会话
 const deleteSession = async (sessionId) => {
   try {
-    const response = await fetch('/api/ai-chat/history', {
+    const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ sessionId }),
     })
     
     if (response.ok) {

@@ -352,12 +352,12 @@ const parseQuickInput = async () => {
     console.log('📤 发送解析请求:', quickInput.value);
     
     // 使用 AI 解析文本
-    const response = await fetch('http://localhost:3001/api/parse-travel-info', {
+    const response = await fetch('/api/parse-travel-info', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ text: quickInput.value }),
+      body: JSON.stringify({ quickInput: quickInput.value }),
     });
 
     console.log('📥 收到响应状态:', response.status);
@@ -392,7 +392,7 @@ const parseQuickInput = async () => {
       hasTravelers = true; filledCount++;
     }
     if (data.preferences) {
-      form.value.preferences = data.preferences;
+      form.value.preferences = Array.isArray(data.preferences) ? data.preferences.join('、') : data.preferences;
       hasPreferences = true; filledCount++;
     }
 
@@ -496,7 +496,7 @@ const handleSubmit = async () => {
 const getPlan = async () => {
   loading.value = true;
   try {
-    const response = await fetch('http://localhost:3001/api/plan', {
+    const response = await fetch('/api/plan', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

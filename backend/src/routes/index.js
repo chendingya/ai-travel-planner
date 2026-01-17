@@ -1,51 +1,39 @@
-/**
- * 路由聚合模块
- * 统一注册所有 API 路由
- */
-
-const createPlanRoutes = require("./plan");
-const createImageRoutes = require("./image");
-const createChatRoutes = require("./chat");
-const createShareRoutes = require("./share");
-const createPlaylistRoutes = require("./playlist");
+const express = require('express');
+const router = express.Router();
 
 /**
- * 注册所有路由
- * @param {object} app Express 应用实例
- * @param {object} dependencies 依赖项
+ * 主路由文件
+ * 统一注册所有路由
  */
-function registerRoutes(app, dependencies) {
-  const { textGenerator, imageGenerator, mcpManager, supabaseService } = dependencies;
 
-  // 健康检查路由
-  app.get("/api/health", (req, res) => {
-    res.json({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      services: {
-        textGeneration: textGenerator.isAvailable(),
-        imageGeneration: imageGenerator.isAvailable(),
-        mcp: mcpManager.isAvailable(),
-      },
-    });
-  });
+module.exports = (controllers) => {
+  const {
+    planController,
+    aiChatController,
+    imageController,
+    playlistController,
+    postcardController,
+    shareController,
+    promptController,
+  } = controllers;
 
-  // 注册旅行计划路由 (挂载到 /api 路径下)
-  app.use("/api", createPlanRoutes(textGenerator));
+  // 引入子路由
+  const planRoutes = require('./planRoutes')(planController);
+  const aiChatRoutes = require('./aiChatRoutes')(aiChatController);
+  const imageRoutes = require('./imageRoutes')(imageController);
+  const playlistRoutes = require('./playlistRoutes')(playlistController);
+  const postcardRoutes = require('./postcardRoutes')(postcardController);
+  const shareRoutes = require('./shareRoutes')(shareController);
+  const promptRoutes = require('./promptRoutes')(promptController);
 
-  // 注册图片生成路由
-  app.use("/api", createImageRoutes(textGenerator, imageGenerator));
+  // 注册路由
+  router.use('/', planRoutes);
+  router.use('/', aiChatRoutes);
+  router.use('/', imageRoutes);
+  router.use('/', playlistRoutes);
+  router.use('/', postcardRoutes);
+  router.use('/', shareRoutes);
+  router.use('/', promptRoutes);
 
-  // 注册 AI 聊天路由
-  app.use("/api", createChatRoutes(textGenerator, mcpManager, supabaseService));
-
-  // 注册分享文案路由
-  app.use("/api", createShareRoutes(textGenerator));
-
-  // 注册歌单路由
-  app.use("/api", createPlaylistRoutes(textGenerator));
-
-  console.log("✅ 所有路由已注册");
-}
-
-module.exports = { registerRoutes };
+  return router;
+};

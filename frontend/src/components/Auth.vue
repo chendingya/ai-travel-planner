@@ -61,7 +61,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { supabase } from '../supabase';
+import { supabase, checkSupabaseAvailable } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
 
 const email = ref('');
@@ -74,18 +74,27 @@ const handleLogin = async () => {
     MessagePlugin.warning('请输入邮箱地址');
     return;
   }
+
+  // 检查 Supabase 是否可用
+  if (!checkSupabaseAvailable()) {
+    MessagePlugin.error('认证服务暂不可用，请检查网络连接或稍后再试');
+    return;
+  }
   
   loading.value = true;
   try {
     const { error } = await supabase.auth.signInWithOtp({
       email: email.value,
+      options: {
+        emailRedirectTo: `${window.location.origin}/`,
+      },
     });
     if (error) throw error;
     MessagePlugin.success('登录链接已发送，请查收邮件！');
     showLoginDialog.value = false;
     email.value = '';
   } catch (error) {
-    MessagePlugin.error(error.error_description || error.message);
+    MessagePlugin.error(error.error_description || error.message || '登录失败，请稍后再试');
   } finally {
     loading.value = false;
   }
@@ -103,14 +112,19 @@ const handleLogout = async () => {
 };
 
 const checkUser = async () => {
-  const { data: { session } } = await supabase.auth.getSession();
-  user.value = session?.user || null;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    user.value = session?.user || null;
+  } catch (error) {
+    console.warn('获取用户会话失败:', error.message);
+    user.value = null;
+  }
 };
 
 onMounted(() => {
   checkUser();
   
-  supabase.auth.onAuthStateChange((_event, session) => {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
     user.value = session?.user || null;
   });
 });
