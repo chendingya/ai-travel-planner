@@ -60,30 +60,29 @@ AI面对面对话是一个独立的页面视图，提供与AI旅行助手进行�
 
 ## 3. 后端接口说明
 
-两个功能均依赖于同一个后端服务 `tts-flask-backend`。
+两个功能均依赖于同一个后端服务 `backend`（Node/Express）。
 
 ### 3.1 核心接口 `/api/ai-chat`
 
 *   **Method**: `POST`
-*   **功能**: 接收用户消息，调用LLM生成回复，并可选地调用TTS生成语音。
+*   **功能**: 接收用户消息，调用LLM生成回复，并可选地创建TTS任务生成语音文件。
 *   **请求参数**:
     ```json
     {
       "message": "用户输入的内容或Prompt",
       "voice": "Cherry", // 音色ID
       "language_type": "Chinese",
-      "include_audio": true // 是否生成语音
+      "include_audio": true, // 是否生成语音
+      "enable_tools": false // 是否启用MCP工具
     }
     ```
 *   **响应结构**:
     ```json
     {
-      "user_message": "...",
       "ai_response": "AI回复的文本内容",
-      "voice": "...",
-      "audio_url": "http://...", // 单段音频URL
-      "audio_urls": ["http://...", "http://..."], // 多段音频URL列表（长文本时返回）
-      "audio_task_id": "..." // 异步任务ID（如果音频未立即生成）
+      "conversation_id": "会话ID",
+      "audio_task_id": "TTS任务ID（用于轮询音频）",
+      "audio_error": "可选，音频生成错误信息"
     }
     ```
 
@@ -91,11 +90,8 @@ AI面对面对话是一个独立的页面视图，提供与AI旅行助手进行�
 
 *   **Method**: `GET`
 *   **功能**: 用于轮询异步TTS任务的状态。
-*   **响应**: 返回任务状态 (`processing`, `completed`, `failed`) 和最终的 `audio_url`。
+*   **响应**: 返回任务状态 (`processing`, `completed`, `failed`) 和最终的 `audio_url`（如 `/audio/<task_id>.wav`）。
 
 ## 4. 配置说明
 
-要正常使用上述功能，需要在 `tts-flask-backend/.env` 文件中配置以下密钥：
-
-*   `DASHSCOPE_API_KEY`: 用于语音合成 (阿里云 DashScope)。
-*   `MODELSCOPE_API_KEY`: 用于大模型对话 (魔搭社区)。
+要正常使用上述功能，请在 `backend/.env` 中配置文本模型相关的环境变量；TTS 为本地生成，不需要单独的 Flask 服务。

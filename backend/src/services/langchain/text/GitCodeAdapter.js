@@ -9,7 +9,30 @@ class GitCodeAdapter extends BaseLLMAdapter {
   constructor(config) {
     super(config);
     this.name = 'gitcode';
-    this.baseURL = config.baseURL;
+    const raw = typeof config?.baseURL === 'string' ? config.baseURL.trim() : '';
+    const unwrapped =
+      raw && ((raw.startsWith('`') && raw.endsWith('`')) || (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+        ? raw.slice(1, -1).trim()
+        : raw;
+    this.baseURL = unwrapped;
+  }
+
+  isAvailable() {
+    const baseURL = typeof this.baseURL === 'string' ? this.baseURL.trim() : '';
+    return this.enabled && !!this.apiKey && !!baseURL;
+  }
+
+  requestTimeoutMs() {
+    const fromRequest = Number(process.env.AI_CHAT_MODEL_HTTP_TIMEOUT_MS || '');
+    const fromInvoke = Number(process.env.AI_CHAT_MODEL_INVOKE_TIMEOUT_MS || '');
+    const picked =
+      Number.isFinite(fromRequest) && fromRequest > 0 ? fromRequest : Number.isFinite(fromInvoke) && fromInvoke > 0 ? fromInvoke : 60000;
+    return Math.max(1000, picked);
+  }
+
+  maxRetries() {
+    const raw = Number(process.env.AI_CHAT_MODEL_HTTP_MAX_RETRIES || '0');
+    return Number.isFinite(raw) && raw >= 0 ? raw : 0;
   }
 
   /**
@@ -24,6 +47,8 @@ class GitCodeAdapter extends BaseLLMAdapter {
       modelName: this.model,
       temperature: 0.7,
       maxTokens: 4000,
+      timeout: this.requestTimeoutMs(),
+      maxRetries: this.maxRetries(),
     });
   }
 

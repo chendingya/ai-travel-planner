@@ -4,6 +4,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 // 配置
 const { config, getEnabledTextProviders, getEnabledImageProviders } = require('./config');
@@ -23,6 +24,8 @@ const ImageService = require('./services/imageService');
 const PlaylistService = require('./services/playlistService');
 const PostcardService = require('./services/postcardService');
 const ShareService = require('./services/shareService');
+const MCPService = require('./services/mcpService');
+const TTSService = require('./services/ttsService');
 
 // Controllers
 const PlanController = require('./controllers/planController');
@@ -50,6 +53,9 @@ app.use(cors(config.cors));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);
+
+const audioDir = path.join(process.cwd(), 'runtime', 'audio');
+app.use('/audio', express.static(audioDir));
 
 // 健康检查端点
 app.get('/health', (req, res) => {
@@ -101,7 +107,10 @@ async function initializeApp() {
 
     // 初始化 Services
     const planService = new PlanService(langChainManager);
-    const aiChatService = new AIChatService(langChainManager, supabase);
+    const mcpService = new MCPService();
+    await mcpService.initialize();
+    const ttsService = new TTSService({ audioDir });
+    const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService });
     const promptService = new PromptService(langChainManager);
     const imageService = new ImageService(langChainManager, supabase);
     const playlistService = new PlaylistService(langChainManager, supabase);

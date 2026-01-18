@@ -1,11 +1,434 @@
-/**
- * AI 对话服务
- * 封装 AI 聊天相关的业务逻辑
- */
+const { AsyncLocalStorage } = require('node:async_hooks');
+
 class AIChatService {
-  constructor(langChainManager, supabase) {
+  constructor(langChainManager, supabase, deps = {}) {
     this.langChainManager = langChainManager;
     this.supabase = supabase;
+    this.mcpService = deps.mcpService || null;
+    this.ttsService = deps.ttsService || null;
+    this._toolRateLimitBuckets = new Map();
+    this._toolRateLimitBucketsCleanupAt = 0;
+    this._modelCooldownUntil = new Map();
+    this._traceStore = new AsyncLocalStorage();
+  }
+
+  runWithTrace(trace, runner) {
+    const t = trace && typeof trace === 'object' ? { ...trace } : {};
+    const fn = typeof runner === 'function' ? runner : () => runner;
+    return this._traceStore.run(t, fn);
+  }
+
+  _currentTrace() {
+    const t = this._traceStore.getStore();
+    return t && typeof t === 'object' ? t : null;
+  }
+
+  _isRateLimitError(error) {
+    if (!error) return false;
+    if (error?.status === 429) return true;
+    if (error?.lc_error_code === 'MODEL_RATE_LIMIT') return true;
+    const msg = String(error?.message || error).toLowerCase();
+    return msg.includes('429') || msg.includes('rate limit') || msg.includes('model_rate_limit');
+  }
+
+  _isTimeoutError(error) {
+    if (!error) return false;
+    if (error?.status === 504) return true;
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (code && code.toUpperCase().includes('TIMEOUT')) return true;
+    const msg = String(error?.message || error).toLowerCase();
+    return msg.includes('timeout');
+  }
+
+  _isToolSchemaNotSupportedError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    return (
+      msg.includes('tools') &&
+      (msg.includes('unsupported') ||
+        msg.includes('not supported') ||
+        msg.includes('unknown') ||
+        msg.includes('invalid') ||
+        msg.includes('unexpected'))
+    );
+  }
+
+  _redactText(text) {
+    const raw = typeof text === 'string' ? text : String(text ?? '');
+    return raw
+      .replace(/(bearer\s+)[a-z0-9\-\._~\+\/]+=*/gi, '$1***')
+      .replace(/\b(sk|rk|ak|pk)-[a-z0-9\-_]{8,}\b/gi, '***');
+  }
+
+  _pickHeaders(headersLike) {
+    const out = {};
+    const allow = new Set([
+      'date',
+      'server',
+      'via',
+      'retry-after',
+      'x-request-id',
+      'x-requestid',
+      'x-amzn-requestid',
+      'x-amz-cf-id',
+      'cf-ray',
+      'modelscope-ratelimit-requests-limit',
+      'modelscope-ratelimit-requests-remaining',
+      'modelscope-ratelimit-model-requests-limit',
+      'modelscope-ratelimit-model-requests-remaining',
+      'x-ratelimit-limit-requests',
+      'x-ratelimit-remaining-requests',
+      'x-ratelimit-reset-requests',
+      'x-ratelimit-limit-tokens',
+      'x-ratelimit-remaining-tokens',
+      'x-ratelimit-reset-tokens',
+    ]);
+
+    const setIfOk = (k, v) => {
+      const key = typeof k === 'string' ? k.toLowerCase() : '';
+      if (!key) return;
+      const val = typeof v === 'string' ? v : v == null ? '' : String(v);
+      if (!val) return;
+      if (allow.has(key) || key.startsWith('x-ratelimit-')) out[key] = val;
+    };
+
+    const h = headersLike;
+    if (!h) return out;
+
+    if (typeof h.get === 'function') {
+      for (const k of allow) setIfOk(k, h.get(k));
+      if (typeof h.entries === 'function') {
+        let i = 0;
+        for (const [k, v] of h.entries()) {
+          if (i++ > 40) break;
+          setIfOk(k, v);
+        }
+      }
+      return out;
+    }
+
+    if (h && typeof h === 'object') {
+      for (const [k, v] of Object.entries(h)) setIfOk(k, v);
+      return out;
+    }
+
+    return out;
+  }
+
+  _summarizeError(error) {
+    const e = error || {};
+    const name = typeof e?.name === 'string' ? e.name : '';
+    const rawMessage = typeof e?.message === 'string' ? e.message : String(e);
+    const message = this._redactText(rawMessage).trim();
+    const status =
+      Number.isFinite(Number(e?.status)) ? Number(e.status) : Number.isFinite(Number(e?.response?.status)) ? Number(e.response.status) : null;
+    const code = typeof e?.code === 'string' ? e.code : typeof e?.lc_error_code === 'string' ? e.lc_error_code : '';
+    const type = typeof e?.type === 'string' ? e.type : '';
+    const headers = this._pickHeaders(e?.headers || e?.response?.headers);
+    const out = { name, message, status, code, type, headers };
+    return out;
+  }
+
+  async _probeOpenAIModelsEndpoint({ provider, baseURL, apiKey }) {
+    if (!this._debugEnabled()) return;
+    const providerName = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    if (!providerName || !rawBase || !key) return;
+
+    const trace = this._currentTrace();
+    const markerKey = `${providerName}|${rawBase}`;
+    if (trace) {
+      const map = trace._probes && typeof trace._probes === 'object' ? trace._probes : {};
+      if (map[markerKey]) return;
+      map[markerKey] = true;
+      trace._probes = map;
+    }
+
+    const base = rawBase.replace(/\/+$/, '');
+    const url = `${base}/models`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = this._redactText(text).slice(0, 400);
+      this._debug('provider.probe', {
+        provider: providerName,
+        url,
+        ms: Date.now() - start,
+        status: res.status,
+        headers: this._pickHeaders(res.headers),
+        body_len: text.length,
+        body_preview: preview,
+      });
+    } catch (e) {
+      this._debug('provider.probe.err', {
+        provider: providerName,
+        url,
+        ms: Date.now() - start,
+        error: this._summarizeError(e),
+      });
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async _probeOpenAIChatCompletionsEndpoint({ provider, baseURL, apiKey, model }) {
+    if (!this._debugEnabled()) return;
+    const providerName = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    const modelName = typeof model === 'string' ? model : '';
+    if (!providerName || !rawBase || !key || !modelName) return;
+
+    const trace = this._currentTrace();
+    const markerKey = `${providerName}|${rawBase}|${modelName}|chat_completions`;
+    if (trace) {
+      const map = trace._probes && typeof trace._probes === 'object' ? trace._probes : {};
+      if (map[markerKey]) return;
+      map[markerKey] = true;
+      trace._probes = map;
+    }
+
+    const base = rawBase.replace(/\/+$/, '');
+    const url = `${base}/chat/completions`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [{ role: 'user', content: 'ping' }],
+          temperature: 0,
+        }),
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = this._redactText(text).slice(0, 400);
+      this._debug('provider.probe.chat_completions', {
+        provider: providerName,
+        model: modelName,
+        url,
+        ms: Date.now() - start,
+        status: res.status,
+        headers: this._pickHeaders(res.headers),
+        body_len: text.length,
+        body_preview: preview,
+      });
+    } catch (e) {
+      this._debug('provider.probe.chat_completions.err', {
+        provider: providerName,
+        model: modelName,
+        url,
+        ms: Date.now() - start,
+        error: this._summarizeError(e),
+      });
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  _ensureError(value, fallbackMessage) {
+    if (value instanceof Error) return value;
+    const fallback = typeof fallbackMessage === 'string' && fallbackMessage.trim() ? fallbackMessage.trim() : 'Unknown error';
+    const msg = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+    const err = new Error(msg);
+    err.original = value;
+    return err;
+  }
+
+  _isToolInteropError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    if (!msg) return false;
+    if (msg.includes('tool_call_id') || msg.includes('tool_calls') || msg.includes('function_call')) return true;
+    if (msg.includes("cannot read properties of undefined") && msg.includes("reading 'message'")) return true;
+    return false;
+  }
+
+  _isProviderProtocolError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    if (!msg) return false;
+    if (msg.includes("cannot read properties of undefined") && msg.includes("reading 'message'")) return true;
+    if (msg.includes('invalid json response body')) return true;
+    if (msg.includes('unexpected token') && msg.includes('json')) return true;
+    return false;
+  }
+
+  _modelCooldownConfig() {
+    const cooldownMsRaw = Number(process.env.AI_CHAT_MODEL_COOLDOWN_MS || '60000');
+    const cooldownMs = Number.isFinite(cooldownMsRaw) && cooldownMsRaw > 0 ? cooldownMsRaw : 60000;
+    return { cooldownMs };
+  }
+
+  _setModelCooldown(providerName, msOverride) {
+    const name = typeof providerName === 'string' ? providerName.trim() : '';
+    if (!name) return;
+    const cfg = this._modelCooldownConfig();
+    const msRaw = Number(msOverride);
+    const ms = Number.isFinite(msRaw) && msRaw > 0 ? msRaw : cfg.cooldownMs;
+    this._modelCooldownUntil.set(name, Date.now() + ms);
+  }
+
+  _filterAdaptersByCooldown(adapters) {
+    const raw = Array.isArray(adapters) ? adapters : [];
+    const now = Date.now();
+    const available = raw.filter((a) => {
+      const name = typeof a?.name === 'string' ? a.name : '';
+      if (!name) return true;
+      const until = this._modelCooldownUntil.get(name);
+      return !(typeof until === 'number' && until > now);
+    });
+    return available.length ? available : raw;
+  }
+
+  _toolRateLimitConfig() {
+    const windowMsRaw = Number(process.env.AI_CHAT_TOOL_RATE_LIMIT_WINDOW_MS || '60000');
+    const maxCallsRaw = Number(process.env.AI_CHAT_TOOL_RATE_LIMIT_MAX_CALLS || '20');
+    const windowMs = Number.isFinite(windowMsRaw) && windowMsRaw > 0 ? windowMsRaw : 60000;
+    const maxCalls = Number.isFinite(maxCallsRaw) && maxCallsRaw > 0 ? maxCallsRaw : 20;
+    return { windowMs, maxCalls };
+  }
+
+  _toolRateLimitKey(sessionId, options) {
+    const raw =
+      options?.rate_limit_key ??
+      options?.rateLimitKey ??
+      options?.client_ip ??
+      options?.clientIp ??
+      sessionId ??
+      '';
+    const key = typeof raw === 'string' ? raw.trim() : '';
+    return key ? key : 'global';
+  }
+
+  _safeStringify(value) {
+    if (typeof value === 'string') return value;
+    if (value == null) return '';
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  _truncateText(text, maxChars) {
+    const raw = typeof text === 'string' ? text : String(text ?? '');
+    const limitRaw = Number(maxChars);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 6000;
+    if (raw.length <= limit) return raw;
+    return `${raw.slice(0, limit)}\n\n(内容过长，已截断；原始长度 ${raw.length})`;
+  }
+
+  _consumeToolQuota(key, cost = 1) {
+    const normalizedKey = typeof key === 'string' && key.trim() ? key.trim() : 'global';
+    const cfg = this._toolRateLimitConfig();
+    const now = Date.now();
+
+    if (!this._toolRateLimitBucketsCleanupAt) this._toolRateLimitBucketsCleanupAt = now;
+    if (now - this._toolRateLimitBucketsCleanupAt >= cfg.windowMs) {
+      for (const [k, b] of this._toolRateLimitBuckets.entries()) {
+        if (!b || typeof b !== 'object') {
+          this._toolRateLimitBuckets.delete(k);
+          continue;
+        }
+        if (now - (b.windowStartMs || 0) >= cfg.windowMs) this._toolRateLimitBuckets.delete(k);
+      }
+      this._toolRateLimitBucketsCleanupAt = now;
+    }
+
+    const bucket = this._toolRateLimitBuckets.get(normalizedKey);
+    const within = bucket && typeof bucket === 'object' && now - (bucket.windowStartMs || 0) < cfg.windowMs;
+    const next = within ? { ...bucket } : { windowStartMs: now, count: 0 };
+
+    const c = Number.isFinite(Number(cost)) && Number(cost) > 0 ? Number(cost) : 1;
+    if ((next.count || 0) + c > cfg.maxCalls) {
+      this._toolRateLimitBuckets.set(normalizedKey, next);
+      return false;
+    }
+    next.count = (next.count || 0) + c;
+    this._toolRateLimitBuckets.set(normalizedKey, next);
+    return true;
+  }
+
+  _requireToolQuota(key, meta) {
+    if (this._consumeToolQuota(key, 1)) return;
+    const err = new Error('TOOL_RATE_LIMIT');
+    err.status = 429;
+    err.code = 'TOOL_RATE_LIMIT';
+    if (meta) err.meta = meta;
+    throw err;
+  }
+
+  _withTimeout(promise, timeoutMs, code) {
+    const msRaw = Number(timeoutMs);
+    const ms = Number.isFinite(msRaw) && msRaw > 0 ? msRaw : 30000;
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => {
+        const t = setTimeout(() => {
+          const err = new Error(code || 'TIMEOUT');
+          err.status = 504;
+          err.code = code || 'TIMEOUT';
+          reject(err);
+        }, ms);
+        if (t && typeof t.unref === 'function') t.unref();
+      }),
+    ]);
+  }
+
+  _timeoutConfig() {
+    const modelInvokeTimeoutMsRaw = Number(process.env.AI_CHAT_MODEL_INVOKE_TIMEOUT_MS || '60000');
+    const toolInvokeTimeoutMsRaw = Number(process.env.AI_CHAT_TOOL_INVOKE_TIMEOUT_MS || '90000');
+    const mcpCallTimeoutMsRaw = Number(process.env.AI_CHAT_MCP_CALL_TIMEOUT_MS || '45000');
+    const modelInvokeTimeoutMs =
+      Number.isFinite(modelInvokeTimeoutMsRaw) && modelInvokeTimeoutMsRaw > 0 ? modelInvokeTimeoutMsRaw : 60000;
+    const toolInvokeTimeoutMs =
+      Number.isFinite(toolInvokeTimeoutMsRaw) && toolInvokeTimeoutMsRaw > 0 ? toolInvokeTimeoutMsRaw : 90000;
+    const mcpCallTimeoutMs =
+      Number.isFinite(mcpCallTimeoutMsRaw) && mcpCallTimeoutMsRaw > 0 ? mcpCallTimeoutMsRaw : 45000;
+    return { modelInvokeTimeoutMs, toolInvokeTimeoutMs, mcpCallTimeoutMs };
+  }
+
+  _toolResultConfig() {
+    const maxCharsRaw = Number(process.env.AI_CHAT_TOOL_RESULT_MAX_CHARS || '6000');
+    const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw > 0 ? maxCharsRaw : 6000;
+    return { maxChars };
+  }
+
+  _debugEnabled() {
+    const v = process.env.AI_CHAT_DEBUG;
+    if (!v) return false;
+    return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  _debug(event, data) {
+    if (!this._debugEnabled()) return;
+    const payload = data && typeof data === 'object' ? data : { value: data };
+    const trace = this._currentTrace();
+    const requestId = typeof trace?.requestId === 'string' ? trace.requestId : '';
+    const merged = requestId ? { requestId, ...payload } : payload;
+    const ts = new Date().toISOString();
+    console.log(`[${ts}] ai-chat:${event}`, JSON.stringify(merged));
   }
 
   async tryTables(tableNames, runner) {
@@ -58,6 +481,196 @@ class AIChatService {
     return raw.length > 18 ? `${raw.slice(0, 18)}...` : raw;
   }
 
+  _normalizeMessageContent(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part === 'object') {
+            if (typeof part.text === 'string') return part.text;
+            if (typeof part.content === 'string') return part.content;
+          }
+          return '';
+        })
+        .join('');
+    }
+    if (content == null) return '';
+    return String(content);
+  }
+
+  _tryParseJsonObject(text) {
+    const raw = typeof text === 'string' ? text.trim() : '';
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {}
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m && m[0]) {
+      try {
+        return JSON.parse(m[0]);
+      } catch {}
+    }
+    return null;
+  }
+
+  _normalizeToolCalls(calls) {
+    const rawCalls = Array.isArray(calls) ? calls : [];
+    const out = [];
+    for (const c of rawCalls) {
+      if (!c || typeof c !== 'object') continue;
+      const id = c.id || c.tool_call_id || c.toolCallId || '';
+      const fn = c.function && typeof c.function === 'object' ? c.function : null;
+      const name =
+        (typeof fn?.name === 'string' && fn.name) ||
+        (typeof c.name === 'string' && c.name) ||
+        (typeof c.tool_name === 'string' && c.tool_name) ||
+        '';
+      const args = fn && Object.prototype.hasOwnProperty.call(fn, 'arguments')
+        ? fn.arguments
+        : c.args ?? c.arguments ?? c.input ?? {};
+      if (!name) continue;
+      out.push({ id: id || `${name}-${out.length}`, name, args });
+    }
+    return out;
+  }
+
+  _extractToolCalls(aiMsg) {
+    const direct = Array.isArray(aiMsg?.tool_calls) ? aiMsg.tool_calls : null;
+    if (direct && direct.length) return this._normalizeToolCalls(direct);
+
+    const ak = aiMsg?.additional_kwargs;
+    const akCalls = Array.isArray(ak?.tool_calls) ? ak.tool_calls : null;
+    if (akCalls && akCalls.length) return this._normalizeToolCalls(akCalls);
+
+    const kwargs = aiMsg?.kwargs;
+    const kwCalls = Array.isArray(kwargs?.tool_calls) ? kwargs.tool_calls : null;
+    if (kwCalls && kwCalls.length) return this._normalizeToolCalls(kwCalls);
+
+    const lcKwargs = aiMsg?.lc_kwargs;
+    const lcCalls = Array.isArray(lcKwargs?.tool_calls) ? lcKwargs.tool_calls : null;
+    if (lcCalls && lcCalls.length) return this._normalizeToolCalls(lcCalls);
+
+    const functionCall = ak?.function_call || kwargs?.function_call || null;
+    if (functionCall && typeof functionCall === 'object') {
+      const name = typeof functionCall.name === 'string' ? functionCall.name : '';
+      const argumentsRaw = functionCall.arguments;
+      if (name) return this._normalizeToolCalls([{ id: 'function_call', name, args: argumentsRaw }]);
+    }
+
+    return [];
+  }
+
+  _extractToolCallsFromText(text) {
+    const raw = typeof text === 'string' ? text.trim() : '';
+    if (!raw) return [];
+    const parsed = this._tryParseJsonObject(raw);
+    if (!parsed) return [];
+    if (Array.isArray(parsed)) return this._normalizeToolCalls(parsed);
+    if (Array.isArray(parsed.tool_calls)) return this._normalizeToolCalls(parsed.tool_calls);
+    if (Array.isArray(parsed.toolCalls)) return this._normalizeToolCalls(parsed.toolCalls);
+    if (parsed.tool_call && typeof parsed.tool_call === 'object') return this._normalizeToolCalls([parsed.tool_call]);
+    if (parsed.toolCall && typeof parsed.toolCall === 'object') return this._normalizeToolCalls([parsed.toolCall]);
+    if (parsed.name && Object.prototype.hasOwnProperty.call(parsed, 'arguments')) {
+      return this._normalizeToolCalls([{ id: 'tool_call', name: parsed.name, args: parsed.arguments }]);
+    }
+    return [];
+  }
+
+  _inferTrainTicketIntent(text) {
+    const raw = typeof text === 'string' ? text : '';
+    const hasTicket = /票|余票|车次/.test(raw);
+    const hasTrain = /高铁|动车|火车|列车/.test(raw);
+    if (!hasTicket && !hasTrain) return null;
+
+    const m1 = raw.match(/从(?<from>[\u4e00-\u9fa5]{2,10})(?:到|至)(?<to>[\u4e00-\u9fa5]{2,10})/);
+    const m2 = raw.match(/(?<from>[\u4e00-\u9fa5]{2,10})(?:到|至)(?<to>[\u4e00-\u9fa5]{2,10})/);
+    const cleanup = (s) => {
+      const t = typeof s === 'string' ? s.trim() : '';
+      if (!t) return '';
+      const noSpace = t.replace(/\s+/g, '');
+      const cut = noSpace.replace(/(出发.*)$/u, '').replace(/(的|高铁|动车|火车|列车|余票|车次|票|信息|时刻表|时刻|查询|情况|多少钱|价格|有哪些).*/u, '');
+      return cut.trim();
+    };
+
+    const from = cleanup(m1?.groups?.from || m2?.groups?.from || '');
+    const to = cleanup(m1?.groups?.to || m2?.groups?.to || '');
+    if (!from || !to) return null;
+
+    const trainFilterFlags = /高铁/.test(raw) ? 'G' : /动车/.test(raw) ? 'D' : '';
+
+    let date = '';
+    const iso = raw.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+    if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const cn = raw.match(/\b(20\d{2})年(\d{1,2})月(\d{1,2})日\b/);
+    if (!date && cn) {
+      const mm = String(cn[2]).padStart(2, '0');
+      const dd = String(cn[3]).padStart(2, '0');
+      date = `${cn[1]}-${mm}-${dd}`;
+    }
+
+    const relative = /明天|后天|今天/.test(raw) ? raw.match(/明天|后天|今天/)?.[0] : '';
+    return { from, to, date, relative, trainFilterFlags };
+  }
+
+  async _resolveRelativeDate(relativeWord) {
+    const word = typeof relativeWord === 'string' ? relativeWord : '';
+    if (!word) return '';
+    if (!this.mcpService) return '';
+
+    const currentRaw = await this.mcpService.callTool('12306-mcp', 'get-current-date', {});
+    const currentText = this._normalizeMessageContent(currentRaw?.content);
+    const base = typeof currentText === 'string' ? currentText.trim() : '';
+    const m = base.match(/\b(20\d{2})[-\/\.](\d{1,2})[-\/\.](\d{1,2})\b/);
+    if (!m) return '';
+    const mm0 = String(m[2]).padStart(2, '0');
+    const dd0 = String(m[3]).padStart(2, '0');
+    const d = new Date(`${m[1]}-${mm0}-${dd0}T00:00:00+08:00`);
+    const delta = word === '今天' ? 0 : word === '明天' ? 1 : word === '后天' ? 2 : 0;
+    d.setDate(d.getDate() + delta);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  async _queryTicketsViaMcp({ from, to, date, relative, trainFilterFlags }) {
+    if (!this.mcpService) throw new Error('MCP service not configured');
+
+    const effectiveDate = date || (relative ? await this._resolveRelativeDate(relative) : '');
+    if (!effectiveDate) throw new Error('无法解析查询日期');
+
+    const call12306 = async (toolName, args) => {
+      const { mcpCallTimeoutMs } = this._timeoutConfig();
+      const start = Date.now();
+      const out = await this._withTimeout(
+        this.mcpService.callTool('12306-mcp', toolName, args),
+        mcpCallTimeoutMs,
+        'MCP_CALL_TIMEOUT'
+      );
+      this._debug('mcp.call', { server: '12306-mcp', tool: toolName, ms: Date.now() - start });
+      return out;
+    };
+
+    const cityTextRaw = await call12306('get-station-code-of-citys', { citys: `${from}|${to}` });
+    const cityText = this._normalizeMessageContent(cityTextRaw?.content).trim();
+    const cityMap = this._tryParseJsonObject(cityText);
+    const fromCode = cityMap?.[from]?.station_code ? String(cityMap[from].station_code) : '';
+    const toCode = cityMap?.[to]?.station_code ? String(cityMap[to].station_code) : '';
+    if (!fromCode || !toCode) throw new Error('无法解析出发/到达站编码');
+
+    const ticketsRaw = await call12306('get-tickets', {
+      date: effectiveDate,
+      fromStation: fromCode,
+      toStation: toCode,
+      trainFilterFlags: typeof trainFilterFlags === 'string' ? trainFilterFlags : '',
+      format: 'text',
+      limitedNum: 20,
+    });
+    const ticketsText = this._normalizeMessageContent(ticketsRaw?.content).trim();
+    return { effectiveDate, from, to, fromCode, toCode, ticketsText };
+  }
+
   async ensureAiChatSession(conversationId) {
     const { data, error } = await this.supabase
       .from('ai_chat_sessions')
@@ -79,10 +692,21 @@ class AIChatService {
   /**
    * AI 对话
    */
-  async chat(message, sessionId) {
+  async chat(message, sessionId, options = {}) {
     try {
       // 获取历史消息（如果存在）
       const history = sessionId ? await this.getSessionHistory(sessionId) : [];
+      const enableTools = !!(options.enable_tools ?? options.enableTools);
+      const includeAudio = !!(options.include_audio ?? options.includeAudio);
+      const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
+
+      this._debug('chat.start', {
+        sessionId,
+        enableTools,
+        includeAudio,
+        hasMcp: !!this.mcpService,
+        message: typeof message === 'string' ? message.slice(0, 160) : String(message),
+      });
 
       const systemPrompt = `你是一个专业的旅行助手，擅长解答各类旅行问题。
 
@@ -95,27 +719,441 @@ class AIChatService {
 
 请用中文回答，保持简洁明了。`;
 
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...history,
-        { role: 'user', content: message },
-      ];
+      const toolRateLimitKey = this._toolRateLimitKey(sessionId, options);
+      const maxToolCallsPerChatRaw = Number(process.env.AI_CHAT_TOOL_MAX_CALLS_PER_CHAT || '12');
+      const maxToolCallsPerChat = Number.isFinite(maxToolCallsPerChatRaw) && maxToolCallsPerChatRaw > 0 ? maxToolCallsPerChatRaw : 12;
+      const { modelInvokeTimeoutMs, toolInvokeTimeoutMs } = this._timeoutConfig();
+      const { maxChars: toolResultMaxChars } = this._toolResultConfig();
 
-      const response = await this.langChainManager.invokeText(messages);
+      let response = '';
+      if (enableTools) {
+        if (!this.mcpService) {
+          response = await this.langChainManager.invokeText([
+            { role: 'system', content: systemPrompt },
+            ...history,
+            { role: 'user', content: message },
+          ]);
+        } else {
+          const [{ SystemMessage, HumanMessage, AIMessage, ToolMessage }] = await Promise.all([
+            import('@langchain/core/messages'),
+          ]);
+
+          const { z } = require('zod');
+          const { DynamicStructuredTool } = require('@langchain/core/tools');
+
+          const trainTicketsTool = new DynamicStructuredTool({
+            name: 'query_train_tickets',
+            description:
+              '查询12306火车票/高铁/动车余票信息。输入出发城市from、到达城市to、日期date(YYYY-MM-DD)或相对日期relative(今天/明天/后天)，可选trainFilterFlags(G=高铁,D=动车)。返回可直接展示的文本结果。',
+            schema: z
+              .object({
+                from: z.string().optional(),
+                to: z.string().optional(),
+                date: z.string().optional(),
+                relative: z.enum(['今天', '明天', '后天']).optional(),
+                trainFilterFlags: z.string().optional(),
+              })
+              .passthrough(),
+            func: async (input) => {
+              const from = typeof input?.from === 'string' ? input.from.trim() : '';
+              const to = typeof input?.to === 'string' ? input.to.trim() : '';
+              const date = typeof input?.date === 'string' ? input.date.trim() : '';
+              const relative = typeof input?.relative === 'string' ? input.relative.trim() : '';
+              const trainFilterFlags =
+                typeof input?.trainFilterFlags === 'string' && input.trainFilterFlags.trim()
+                  ? input.trainFilterFlags.trim()
+                  : '';
+
+              if (!from || !to) throw new Error('缺少出发城市from或到达城市to');
+              const start = Date.now();
+              const r = await this._queryTicketsViaMcp({ from, to, date, relative, trainFilterFlags });
+              this._debug('train.result', { ms: Date.now() - start, date: r.effectiveDate, from: r.from, to: r.to, text_len: r.ticketsText.length });
+              const kind = trainFilterFlags === 'G' ? '高铁' : trainFilterFlags === 'D' ? '动车' : '列车';
+              return `已为你查询 ${r.effectiveDate} ${r.from} → ${r.to} 的${kind}余票信息：\n\n${r.ticketsText}`;
+            },
+          });
+
+          let mcpTools = [];
+          try {
+            mcpTools = await this.mcpService.getLangChainTools();
+          } catch (e) {
+            this._debug('tools.list.err', { error: String(e?.message || e) });
+            mcpTools = [];
+          }
+          const baseTools = [...mcpTools, trainTicketsTool];
+          const wrapTool = (t) => {
+            const schema =
+              t && typeof t === 'object' && t.schema && typeof t.schema === 'object'
+                ? t.schema
+                : z.object({}).passthrough();
+            const description = t && typeof t === 'object' && typeof t.description === 'string' ? t.description : '';
+            const name = t && typeof t === 'object' && typeof t.name === 'string' ? t.name : '';
+            return new DynamicStructuredTool({
+              name,
+              description,
+              schema,
+              func: async (input) => {
+                this._requireToolQuota(toolRateLimitKey, { tool: name });
+                return await this._withTimeout(t.invoke(input), toolInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
+              },
+            });
+          };
+
+          const tools = baseTools.map(wrapTool);
+          const toolMap = new Map(tools.map((t) => [t.name, t]));
+
+          const adaptersRaw = Array.isArray(this.langChainManager?.textAdapters)
+            ? this.langChainManager.textAdapters.filter((a) => a && typeof a.createLLM === 'function')
+            : [];
+          const adapters = this._filterAdaptersByCooldown(adaptersRaw);
+          if (!adapters.length) {
+            response = '当前未配置可用的文本大模型提供商，暂时无法处理该请求。请先配置 MODELSCOPE/GITCODE/DASHSCOPE 的文本模型相关环境变量后重试。';
+            if (sessionId) {
+              await this.saveMessage(sessionId, message, response);
+            }
+            this._debug('chat.done', { sessionId, response_len: response.length, audio_task_id: null, audio_error: null });
+            return { message: response, sessionId, audio_task_id: null, audio_error: null };
+          }
+
+          let adapterIndex = 0;
+          const providerSupportsNativeTools = (providerName) => {
+            const name = typeof providerName === 'string' ? providerName.trim().toLowerCase() : '';
+            if (!name) return true;
+            if (name === 'gitcode') return false;
+            return true;
+          };
+          let nativeToolsEnabled = providerSupportsNativeTools(adapters[adapterIndex]?.name);
+          const buildModel = (idx) => {
+            const a = adapters[idx];
+            const llm = a.createLLM();
+            if (!nativeToolsEnabled) return llm;
+            return typeof llm.bindTools === 'function' ? llm.bindTools(tools) : llm;
+          };
+          let model = buildModel(adapterIndex);
+          this._debug('tools.ready', { tool_count: tools.length, native_tools: nativeToolsEnabled, provider: adapters[adapterIndex]?.name });
+
+          const toolNamesForPrompt = tools.map((t) => t?.name).filter(Boolean).slice(0, 32);
+          const toolDescLines = tools
+            .map((t) => {
+              const name = typeof t?.name === 'string' ? t.name : '';
+              const desc = typeof t?.description === 'string' ? t.description.trim() : '';
+              if (!name) return '';
+              return desc ? `${name}: ${desc.slice(0, 120)}` : name;
+            })
+            .filter(Boolean)
+            .slice(0, 12);
+
+          const toolSystemPromptNative = `${systemPrompt}
+
+工具使用规则（很重要）：
+1. 当问题需要实时信息（车票/天气/搜索/网页等）时，先调用合适工具，再基于工具结果作答；不要编造实时数据。
+2. 车票/高铁/动车余票查询：优先调用 query_train_tickets，补全 from、to，以及 date(YYYY-MM-DD) 或 relative(今天/明天/后天)。
+3. 工具返回后，用中文把关键信息整理成清晰结果（可用列表/表格），并说明信息可能随时变动。
+4. 如果工具失败或返回为空，说明原因并给出下一步建议（比如让用户补充信息）。
+
+可用工具：${toolNamesForPrompt.join(', ')}`;
+
+          const toolSystemPromptManual = `${toolSystemPromptNative}
+
+如果你需要调用工具，请只输出 JSON（不要输出任何额外文字），格式如下：
+{"tool_calls":[{"id":"call_1","name":"工具名","arguments":{}}]}
+
+工具清单（部分）：
+${toolDescLines.join('\n')}`;
+
+          const lcMessages = [
+            new SystemMessage(nativeToolsEnabled ? toolSystemPromptNative : toolSystemPromptManual),
+            ...(Array.isArray(history) ? history : [])
+              .map((m) => {
+                if (!m || typeof m !== 'object') return null;
+                if (m.role === 'user') return new HumanMessage(m.content);
+                if (m.role === 'assistant') return new AIMessage(m.content);
+                if (m.role === 'system') return new SystemMessage(m.content);
+                return null;
+              })
+              .filter(Boolean),
+            new HumanMessage(message),
+          ];
+
+          const downgradeToManualTools = () => {
+            if (!nativeToolsEnabled) return;
+            nativeToolsEnabled = false;
+            model = buildModel(adapterIndex);
+            lcMessages[0] = new SystemMessage(toolSystemPromptManual);
+            for (let k = 1; k < lcMessages.length; k++) {
+              const m = lcMessages[k];
+              if (m instanceof ToolMessage) {
+                const body = this._normalizeMessageContent(m?.content);
+                lcMessages[k] = new HumanMessage(`工具结果:\n${body}`);
+              }
+            }
+          };
+
+          const pushToolResult = ({ id, name, content }) => {
+            const toolId = typeof id === 'string' && id ? id : `tool-${Date.now()}`;
+            const toolName = typeof name === 'string' ? name : '';
+            const body = typeof content === 'string' ? content : String(content ?? '');
+            if (nativeToolsEnabled) {
+              lcMessages.push(
+                new ToolMessage({
+                  tool_call_id: toolId,
+                  content: body,
+                })
+              );
+              return;
+            }
+            const label = toolName ? `工具结果(${toolName})` : '工具结果';
+            lcMessages.push(new HumanMessage(`${label}:\n${body}`));
+          };
+
+          const maxIterationsRaw = Number(process.env.AI_CHAT_AGENT_MAX_ITERATIONS || '8');
+          const maxIterations = Number.isFinite(maxIterationsRaw) && maxIterationsRaw > 0 ? maxIterationsRaw : 8;
+          let lastAiMessage = null;
+          let toolCallsUsed = 0;
+          for (let i = 0; i < maxIterations; i++) {
+            let aiMsg = null;
+            try {
+              let switched = 0;
+              while (true) {
+                const invokeStart = Date.now();
+                try {
+                  aiMsg = await this._withTimeout(model.invoke(lcMessages), modelInvokeTimeoutMs, 'MODEL_INVOKE_TIMEOUT');
+                  if (!aiMsg || typeof aiMsg !== 'object') {
+                    throw new Error('MODEL_EMPTY_RESPONSE');
+                  }
+                  this._debug('model.invoke', { iter: i + 1, ms: Date.now() - invokeStart, provider: adapters[adapterIndex]?.name });
+                  break;
+                } catch (e) {
+                  const summary = this._summarizeError(e);
+                  const adapter = adapters[adapterIndex] || null;
+                  const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
+                  const modelName = typeof adapter?.model === 'string' ? adapter.model : '';
+                  const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
+                  this._debug('model.invoke.err', {
+                    iter: i + 1,
+                    ms: Date.now() - invokeStart,
+                    provider: adapter?.name,
+                    model: modelName,
+                    baseURL,
+                    baseURLHasV1,
+                    error: summary,
+                  });
+                  if (this._isRateLimitError(e) && typeof adapter?.name === 'string' && adapter.name.startsWith('modelscope')) {
+                    await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
+                    await this._probeOpenAIChatCompletionsEndpoint({
+                      provider: adapter?.name,
+                      baseURL,
+                      apiKey: adapter?.apiKey,
+                      model: modelName,
+                    });
+                  }
+                  if (this._isProviderProtocolError(e) && adapter?.name === 'gitcode') {
+                    await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
+                    await this._probeOpenAIChatCompletionsEndpoint({
+                      provider: adapter?.name,
+                      baseURL,
+                      apiKey: adapter?.apiKey,
+                      model: modelName,
+                    });
+                  }
+                  if (this._isRateLimitError(e)) {
+                    this._setModelCooldown(adapters[adapterIndex]?.name);
+                  }
+                  if (nativeToolsEnabled && this._isToolSchemaNotSupportedError(e)) {
+                    downgradeToManualTools();
+                    this._debug('model.tools.fallback', { iter: i + 1, provider: adapters[adapterIndex]?.name });
+                    continue;
+                  }
+                  if (nativeToolsEnabled && this._isToolInteropError(e)) {
+                    downgradeToManualTools();
+                    this._debug('model.tools.interop_fallback', { iter: i + 1, provider: adapters[adapterIndex]?.name });
+                    continue;
+                  }
+                  if (this._isProviderProtocolError(e) && adapterIndex + 1 < adapters.length) {
+                    this._setModelCooldown(adapters[adapterIndex]?.name);
+                    adapterIndex += 1;
+                    if (nativeToolsEnabled && !providerSupportsNativeTools(adapters[adapterIndex]?.name)) {
+                      downgradeToManualTools();
+                    } else {
+                      model = buildModel(adapterIndex);
+                    }
+                    switched += 1;
+                    this._debug('model.switch', { iter: i + 1, to: adapters[adapterIndex]?.name, count: switched, reason: 'provider_protocol_error' });
+                    continue;
+                  }
+                  if ((this._isRateLimitError(e) || this._isTimeoutError(e)) && adapterIndex + 1 < adapters.length) {
+                    adapterIndex += 1;
+                    if (nativeToolsEnabled && !providerSupportsNativeTools(adapters[adapterIndex]?.name)) {
+                      downgradeToManualTools();
+                    } else {
+                      model = buildModel(adapterIndex);
+                    }
+                    switched += 1;
+                    this._debug('model.switch', { iter: i + 1, to: adapters[adapterIndex]?.name, count: switched });
+                    continue;
+                  }
+                  throw this._ensureError(e, 'MODEL_INVOKE_FAILED');
+                }
+              }
+            } catch (e) {
+              if (this._isRateLimitError(e) || this._isTimeoutError(e)) {
+                response = this._isTimeoutError(e)
+                  ? '当前模型响应超时，我暂时无法完成这个请求。请稍后重试。'
+                  : '当前请求过于频繁，我暂时无法完成这个请求。请稍后重试。';
+                lastAiMessage = null;
+                break;
+              }
+              if (this._isProviderProtocolError(e)) {
+                response = '当前模型服务接口不兼容或配置异常（可能 baseURL 指向了非 OpenAI 兼容接口）。请检查该提供商的 baseURL 与 API Key 配置后重试。';
+                lastAiMessage = null;
+                break;
+              }
+              throw this._ensureError(e, 'MODEL_INVOKE_FAILED');
+            }
+            lastAiMessage = aiMsg;
+            lcMessages.push(aiMsg);
+
+            const toolCalls = nativeToolsEnabled
+              ? this._extractToolCalls(aiMsg)
+              : this._extractToolCallsFromText(this._normalizeMessageContent(aiMsg?.content));
+            this._debug('tool.calls', { iter: i + 1, count: toolCalls.length, names: toolCalls.map((c) => c.name).slice(0, 8) });
+            if (!toolCalls.length) {
+              if (i === 0) {
+                const inferred = this._inferTrainTicketIntent(message);
+                const trainTool = inferred ? toolMap.get('query_train_tickets') : null;
+                if (inferred && trainTool && toolCallsUsed < maxToolCallsPerChat) {
+                  const id = `auto-query_train_tickets-${Date.now()}`;
+                  try {
+                    this._debug('tool.invoke', { name: 'query_train_tickets', id });
+                    toolCallsUsed += 1;
+                    const out = await trainTool.invoke(inferred);
+                    const outText = this._safeStringify(out);
+                    this._debug('tool.invoke.ok', { name: 'query_train_tickets', id, out_len: outText.length });
+                    pushToolResult({ id, name: 'query_train_tickets', content: this._truncateText(outText, toolResultMaxChars) });
+                    continue;
+                  } catch (e) {
+                    this._debug('tool.invoke.err', { name: 'query_train_tickets', id, error: String(e?.message || e) });
+                    pushToolResult({ id, name: 'query_train_tickets', content: `工具执行失败: query_train_tickets; ${String(e?.message || e)}` });
+                    continue;
+                  }
+                }
+              }
+              break;
+            }
+
+            for (const call of toolCalls) {
+              if (toolCallsUsed >= maxToolCallsPerChat) {
+                const name = call?.name ? String(call.name) : '';
+                const id = call?.id ? String(call.id) : `${name}-${i}`;
+                pushToolResult({ id, name, content: `工具调用次数已达上限: ${name || 'unknown'}` });
+                continue;
+              }
+              const name = call?.name ? String(call.name) : '';
+              const id = call?.id ? String(call.id) : `${name}-${i}`;
+              let args = call?.args ?? call?.arguments ?? {};
+              if (typeof args === 'string') {
+                try {
+                  args = JSON.parse(args);
+                } catch {
+                  args = { input: args };
+                }
+              }
+
+              const tool = toolMap.get(name);
+              if (!tool) {
+                pushToolResult({ id, name, content: `工具不存在: ${name}` });
+                continue;
+              }
+
+              try {
+                this._debug('tool.invoke', { name, id });
+                toolCallsUsed += 1;
+                const out = await tool.invoke(args);
+                const outText = this._safeStringify(out);
+                this._debug('tool.invoke.ok', { name, id, out_len: outText.length });
+                pushToolResult({ id, name, content: this._truncateText(outText, toolResultMaxChars) });
+              } catch (e) {
+                this._debug('tool.invoke.err', { name, id, error: String(e?.message || e) });
+                if (this._isRateLimitError(e) || this._isTimeoutError(e)) {
+                  pushToolResult({ id, name, content: `工具调用受限: ${name}; ${String(e?.message || e)}` });
+                  continue;
+                }
+                pushToolResult({ id, name, content: `工具执行失败: ${name}; ${String(e?.message || e)}` });
+              }
+            }
+          }
+
+          if (!response) {
+            const normalized = this._normalizeMessageContent(lastAiMessage?.content);
+            response = normalized && normalized.trim() ? normalized : '未能生成最终回答，请重试。';
+          }
+        }
+      } else {
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...history,
+          { role: 'user', content: message },
+        ];
+        response = await this.langChainManager.invokeText(messages, options);
+      }
 
       // 保存对话记录
       if (sessionId) {
         await this.saveMessage(sessionId, message, response);
       }
 
+      let audio_task_id = null;
+      let audio_error = null;
+      if (includeAudio) {
+        if (!this.ttsService) {
+          audio_error = 'TTS功能不可用';
+        } else {
+          try {
+            const created = await this.ttsService.createTask({ text: response, voice });
+            audio_task_id = created.taskId;
+          } catch (e) {
+            audio_error = String(e?.message || e);
+          }
+        }
+      }
+
+      this._debug('chat.done', { sessionId, response_len: response.length, audio_task_id, audio_error });
       return {
         message: response,
         sessionId,
+        audio_task_id,
+        audio_error,
       };
     } catch (error) {
       console.error('AI chat failed:', error);
-      throw new Error('Failed to get AI response');
+      const msg = error && typeof error === 'object' && typeof error.message === 'string'
+        ? error.message
+        : 'Failed to get AI response';
+      throw new Error(msg);
     }
+  }
+
+  async getMcpStatus(scope) {
+    if (!this.mcpService) {
+      return {
+        servers: {},
+        per_server: null,
+        tool_probe: { ok: false, duration_ms: 0, tool_count: 0, tool_names: [], error: 'MCP service not configured' },
+      };
+    }
+    return await this.mcpService.status({ scope });
+  }
+
+  async createTtsTask(text, voice) {
+    if (!this.ttsService) {
+      throw new Error('TTS service not configured');
+    }
+    return await this.ttsService.createTask({ text, voice });
+  }
+
+  getTtsTask(taskId) {
+    if (!this.ttsService) return null;
+    return this.ttsService.getTask(taskId);
   }
 
   /**

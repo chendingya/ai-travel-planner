@@ -52,7 +52,7 @@
           <div class="history-header">
             <h3>历史对话</h3>
             <div class="history-header-actions">
-              <t-button v-if="isLoggedIn" variant="text" size="small" @click="loadSessions" :loading="isLoadingSessions" title="刷新">
+              <t-button v-if="isLoggedIn" variant="text" size="small" @click="handleManualRefreshSessions" :loading="isLoadingSessions" title="刷新">
                 <t-icon name="refresh" />
               </t-button>
               <t-button variant="text" size="small" @click="showHistoryPanel = false" title="关闭">
@@ -176,7 +176,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { supabase } from '../supabase'
 
@@ -212,6 +212,7 @@ const showAllSessions = ref(false)
 const initialDisplayCount = 5
 const isLoadingHistory = ref(false)
 const loadingHistoryId = ref(null)
+let authSubscription = null
 
 // 计算显示的会话列表
 const displayedSessions = computed(() => {
@@ -353,22 +354,6 @@ const callAI = async (prompt) => {
   abortController.value = new AbortController()
   
   try {
-    if (!conversationId.value) {
-      const createResponse = await fetch('/api/ai-chat/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ title: '新对话' }),
-      })
-      if (createResponse.ok) {
-        const created = await createResponse.json()
-        if (created?.id) {
-          conversationId.value = created.id
-        }
-      }
-    }
-
     const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
@@ -376,7 +361,8 @@ const callAI = async (prompt) => {
       },
       body: JSON.stringify({
         message: prompt,
-        sessionId: conversationId.value,
+        sessionId: conversationId.value || undefined,
+        enable_tools: enableTools.value,
       }),
       signal: abortController.value.signal,
     })
@@ -443,9 +429,6 @@ const handleClear = () => {
     },
   ]
   MessagePlugin.success('已开启新的对话')
-  if (isLoggedIn.value) {
-    loadSessions()
-  }
 }
 
 // 加载会话列表
@@ -455,6 +438,7 @@ const loadSessions = async () => {
     sessions.value = []
     return
   }
+  if (isLoadingSessions.value) return
   
   isLoadingSessions.value = true
   try {
@@ -468,6 +452,11 @@ const loadSessions = async () => {
   } finally {
     isLoadingSessions.value = false
   }
+}
+
+const handleManualRefreshSessions = (e) => {
+  if (e && e.isTrusted === false) return
+  loadSessions()
 }
 
 // 加载指定会话的历史记录
@@ -569,20 +558,22 @@ const formatDate = (dateStr) => {
 // 页面加载时检查登录状态并获取会话列表
 onMounted(async () => {
   await checkLoginStatus()
-  if (isLoggedIn.value) {
-    loadSessions()
-  }
   
   // 监听登录状态变化
-  supabase.auth.onAuthStateChange(async (event, session) => {
+  authSubscription = supabase.auth.onAuthStateChange(async (event, session) => {
     isLoggedIn.value = !!session
     currentUser.value = session?.user || null
-    if (session) {
-      loadSessions()
-    } else {
+    if (!session) {
       sessions.value = []
+      return
     }
   })
+})
+
+onUnmounted(() => {
+  const sub = authSubscription?.data?.subscription
+  if (sub && typeof sub.unsubscribe === 'function') sub.unsubscribe()
+  authSubscription = null
 })
 
 // 快捷问题

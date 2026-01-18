@@ -76,7 +76,7 @@
 - **AI 服务**：阿里云百炼（通义千问）/ GitCode Deepseek V3.2
 - **图片生成**：腾讯云混元生图 / 魔搭社区 ModelScope
 - **API 调用**：OpenAI SDK 兼容模式
-- **TTS 后端**：Flask 服务，提供语音合成和大语言模型对话功能
+- **TTS**：后端内置本地合成（Windows 使用 System.Speech 生成音频文件）
 - **MCP 工具**：支持火车票查询、网络搜索等工具调用
 
 ### 数据库与认证
@@ -138,10 +138,6 @@ ai-travel-planner/
 │   ├── vite.config.js
 │   └── 高德地图配置说明.md
 │
-├── tts-flask-backend/         # TTS 后端服务
-│   ├── main.py              # Flask 服务器主文件
-│   ├── .env.example         # 环境变量示例
-│   └── README.md            # TTS 后端说明
 ├── Dockerfile                 # Docker 配置文件
 ├── docker-compose.yml         # Docker Compose 配置
 ├── supabase-setup.sql        # 数据库初始化脚本

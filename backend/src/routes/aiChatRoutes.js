@@ -11,6 +11,18 @@ module.exports = (aiChatController) => {
     aiChatController.chat(req, res);
   });
 
+  router.get('/mcp/status', (req, res) => {
+    aiChatController.mcpStatus(req, res);
+  });
+
+  router.post('/tts', (req, res) => {
+    aiChatController.tts(req, res);
+  });
+
+  router.get('/tts/audio/:task_id', (req, res) => {
+    aiChatController.getTtsAudio(req, res);
+  });
+
   // 创建会话
   router.post('/ai-chat/sessions', (req, res) => {
     aiChatController.createSession(req, res);

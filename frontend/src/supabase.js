@@ -53,38 +53,30 @@ const initSupabase = async () => {
 			return createMockClient()
 		}
 
-		// 测试连接 - 使用简单的健康检查
+		supabaseInstance = createRealClient(supabaseUrl, supabaseAnonKey)
+
 		const controller = new AbortController()
 		const timeoutId = setTimeout(() => controller.abort(), 5000)
-		
 		try {
 			const response = await fetch(`${supabaseUrl}/auth/v1/health`, {
 				signal: controller.signal,
 				headers: {
-					'apikey': supabaseAnonKey
+					apikey: supabaseAnonKey
 				}
 			})
-			clearTimeout(timeoutId)
-			
-			if (response.ok) {
-				isSupabaseAvailable = true
-				console.log('✅ Supabase 连接成功')
-				supabaseInstance = createRealClient(supabaseUrl, supabaseAnonKey)
-			} else {
-				throw new Error(`Health check failed: ${response.status}`)
-			}
+			isSupabaseAvailable = response.ok
+			if (response.ok) console.log('✅ Supabase 连接成功')
 		} catch (connErr) {
-			clearTimeout(timeoutId)
-			console.warn('⚠️ Supabase 连接失败，将使用离线模式:', connErr.message)
+			console.warn('⚠️ Supabase 健康检查失败（不影响已缓存登录态）:', connErr.message)
 			isSupabaseAvailable = false
-			supabaseInstance = null
+		} finally {
+			clearTimeout(timeoutId)
 		}
 
-		return supabaseInstance || createMockClient()
+		return supabaseInstance
 	} catch (error) {
 		console.error('❌ Supabase 初始化失败:', error)
-		clearCorruptedSession()
-		return createMockClient()
+		return supabaseInstance || createMockClient()
 	}
 }
 

@@ -13,6 +13,19 @@ class DashScopeAdapter extends BaseLLMAdapter {
     this.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
   }
 
+  requestTimeoutMs() {
+    const fromRequest = Number(process.env.AI_CHAT_MODEL_HTTP_TIMEOUT_MS || '');
+    const fromInvoke = Number(process.env.AI_CHAT_MODEL_INVOKE_TIMEOUT_MS || '');
+    const picked =
+      Number.isFinite(fromRequest) && fromRequest > 0 ? fromRequest : Number.isFinite(fromInvoke) && fromInvoke > 0 ? fromInvoke : 60000;
+    return Math.max(1000, picked);
+  }
+
+  maxRetries() {
+    const raw = Number(process.env.AI_CHAT_MODEL_HTTP_MAX_RETRIES || '0');
+    return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+  }
+
   /**
    * 创建 LLM 实例
    */
@@ -25,6 +38,8 @@ class DashScopeAdapter extends BaseLLMAdapter {
       modelName: this.model,
       temperature: 0.7,
       maxTokens: 4000,
+      timeout: this.requestTimeoutMs(),
+      maxRetries: this.maxRetries(),
     });
   }
 

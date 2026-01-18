@@ -12,17 +12,12 @@ class LangChainManager {
   constructor(textProviders, imageProviders) {
     // 初始化文本生成适配器
     this.textAdapters = textProviders.map(provider => {
-      switch (provider.name) {
-        case 'modelscope':
-          return new ModelScopeAdapter(provider);
-        case 'gitcode':
-          return new GitCodeAdapter(provider);
-        case 'dashscope':
-          return new DashScopeAdapter(provider);
-        default:
-          console.warn(`Unknown text provider: ${provider.name}`);
-          return null;
-      }
+      const name = typeof provider?.name === 'string' ? provider.name : '';
+      if (name === 'modelscope' || name.startsWith('modelscope_')) return new ModelScopeAdapter(provider);
+      if (name === 'gitcode') return new GitCodeAdapter(provider);
+      if (name === 'dashscope') return new DashScopeAdapter(provider);
+      console.warn(`Unknown text provider: ${provider.name}`);
+      return null;
     }).filter(adapter => adapter !== null && adapter.isAvailable());
 
     // 初始化图片生成适配器
@@ -37,6 +32,96 @@ class LangChainManager {
     }).filter(adapter => adapter !== null && adapter.isAvailable());
 
     console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
+  }
+
+  _debugEnabled() {
+    const v = process.env.AI_CHAT_DEBUG;
+    if (!v) return false;
+    return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  _stringifyErrorMessage(error) {
+    return String(error?.message || error || '');
+  }
+
+  _pickHeaders(headersLike) {
+    const out = {};
+    const allow = new Set([
+      'date',
+      'server',
+      'via',
+      'retry-after',
+      'x-request-id',
+      'x-requestid',
+      'x-amzn-requestid',
+      'x-amz-cf-id',
+      'cf-ray',
+      'modelscope-ratelimit-requests-limit',
+      'modelscope-ratelimit-requests-remaining',
+      'modelscope-ratelimit-model-requests-limit',
+      'modelscope-ratelimit-model-requests-remaining',
+      'x-ratelimit-limit-requests',
+      'x-ratelimit-remaining-requests',
+      'x-ratelimit-reset-requests',
+      'x-ratelimit-limit-tokens',
+      'x-ratelimit-remaining-tokens',
+      'x-ratelimit-reset-tokens',
+    ]);
+
+    const setIfOk = (k, v) => {
+      const key = typeof k === 'string' ? k.toLowerCase() : '';
+      if (!key) return;
+      const val = typeof v === 'string' ? v : v == null ? '' : String(v);
+      if (!val) return;
+      if (allow.has(key) || key.startsWith('x-ratelimit-')) out[key] = val;
+    };
+
+    const h = headersLike;
+    if (!h) return out;
+
+    if (typeof h.get === 'function') {
+      for (const k of allow) setIfOk(k, h.get(k));
+      if (typeof h.entries === 'function') {
+        let i = 0;
+        for (const [k, v] of h.entries()) {
+          if (i++ > 40) break;
+          setIfOk(k, v);
+        }
+      }
+      return out;
+    }
+
+    if (h && typeof h === 'object') {
+      for (const [k, v] of Object.entries(h)) setIfOk(k, v);
+      return out;
+    }
+
+    return out;
+  }
+
+  _summarizeProviderError(adapter, error) {
+    const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : Number.isFinite(Number(error?.response?.status)) ? Number(error.response.status) : null;
+    const code = typeof error?.code === 'string' ? error.code : typeof error?.lc_error_code === 'string' ? error.lc_error_code : '';
+    const type = typeof error?.type === 'string' ? error.type : '';
+    const name = typeof error?.name === 'string' ? error.name : '';
+    const message = this._stringifyErrorMessage(error);
+    const headers = this._pickHeaders(error?.headers || error?.response?.headers);
+    const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
+    return { provider: adapter?.name, model, baseURL, baseURLHasV1, status, code, type, name, message, headers };
+  }
+
+  selectTextProviderByName(name) {
+    if (!name) return this.selectTextProvider();
+    const hit = this.textAdapters.find((a) => a && a.name === name);
+    return hit || this.selectTextProvider();
+  }
+
+  createTextChatModel(options = {}) {
+    const preferred = typeof options.provider === 'string' ? options.provider : '';
+    const adapter = this.selectTextProviderByName(preferred);
+    return adapter.createLLM();
   }
 
   /**
@@ -80,7 +165,8 @@ class LangChainManager {
       console.log(`Successfully completed ${operationName} with provider: ${adapter.name}`);
       return result;
     } catch (error) {
-      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, error.message);
+      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, this._stringifyErrorMessage(error));
+      if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
       
       if (retries < maxRetries) {
         console.log(`Falling back to next provider...`);
@@ -112,7 +198,8 @@ class LangChainManager {
         return await adapter.invoke(filteredMessages);
       } catch (error) {
         lastError = error;
-        console.warn(`Provider ${adapter.name} failed for invokeText:`, error.message);
+        console.warn(`Provider ${adapter.name} failed for invokeText:`, this._stringifyErrorMessage(error));
+        if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
       }
     }
 
@@ -137,7 +224,8 @@ class LangChainManager {
       console.log(`Successfully completed ${operationName} with provider: ${adapter.name}`);
       return result;
     } catch (error) {
-      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, error.message);
+      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, this._stringifyErrorMessage(error));
+      if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
       
       if (retries < maxRetries) {
         console.log(`Falling back to next provider...`);
@@ -181,7 +269,8 @@ class LangChainManager {
         return await adapter.generateImage(promptToSend, options);
       } catch (error) {
         lastError = error;
-        console.warn(`Provider ${adapter.name} failed for generateImage:`, error.message);
+        console.warn(`Provider ${adapter.name} failed for generateImage:`, this._stringifyErrorMessage(error));
+        if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
 
         const canRetry = sensitiveFilter.isInvalidPromptError(error);
         if (canRetry) {
@@ -196,7 +285,8 @@ class LangChainManager {
               return await adapter.generateImage(fallbackPrompt, options);
             } catch (retryError) {
               lastError = retryError;
-              console.warn(`Provider ${adapter.name} failed for generateImage retry:`, retryError.message);
+              console.warn(`Provider ${adapter.name} failed for generateImage retry:`, this._stringifyErrorMessage(retryError));
+              if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, retryError)));
             }
           }
         }

@@ -4,6 +4,28 @@
  */
 require('dotenv').config();
 
+function sanitizeUrlEnv(value) {
+  if (value == null) return value;
+  const raw = String(value).trim();
+  if (!raw) return '';
+  const unwrapped = (() => {
+    const s = raw;
+    if ((s.startsWith('`') && s.endsWith('`')) || (s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      return s.slice(1, -1).trim();
+    }
+    return s;
+  })();
+  return unwrapped.replace(/\s+/g, '');
+}
+
+function parsePriority(value, fallback) {
+  const raw = value == null ? '' : String(value).trim();
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  const fb = Number(fallback);
+  return Number.isFinite(fb) && fb > 0 ? Math.floor(fb) : 1;
+}
+
 const config = {
   // 服务器配置
   server: {
@@ -21,23 +43,23 @@ const config = {
   textProviders: {
     modelscope: {
       enabled: process.env.MODELSCOPE_TEXT_ENABLED === 'true',
-      baseURL: process.env.MODELSCOPE_TEXT_BASE_URL,
+      baseURL: sanitizeUrlEnv(process.env.MODELSCOPE_TEXT_BASE_URL),
       apiKey: process.env.MODELSCOPE_TEXT_API_KEY,
       model: process.env.MODELSCOPE_TEXT_MODEL || 'deepseek-ai/DeepSeek-V3.2',
-      priority: 1,
+      priority: parsePriority(process.env.MODELSCOPE_TEXT_PRIORITY, 1),
     },
     gitcode: {
       enabled: process.env.GITCODE_TEXT_ENABLED === 'true',
-      baseURL: process.env.GITCODE_TEXT_BASE_URL,
+      baseURL: sanitizeUrlEnv(process.env.GITCODE_TEXT_BASE_URL),
       apiKey: process.env.GITCODE_TEXT_API_KEY,
       model: process.env.GITCODE_TEXT_MODEL || 'deepseek-ai/DeepSeek-V3.2',
-      priority: 2,
+      priority: parsePriority(process.env.GITCODE_TEXT_PRIORITY, 10),
     },
     dashscope: {
       enabled: process.env.DASHSCOPE_ENABLED === 'true',
       apiKey: process.env.DASHSCOPE_API_KEY,
       model: process.env.DASHSCOPE_MODEL || 'qwen3-max-preview',
-      priority: 3,
+      priority: parsePriority(process.env.DASHSCOPE_TEXT_PRIORITY, 20),
     },
   },
 
@@ -47,7 +69,7 @@ const config = {
       enabled: (process.env.MODELSCOPE_IMAGE_ENABLED
         ? process.env.MODELSCOPE_IMAGE_ENABLED === 'true'
         : !!(process.env.MODELSCOPE_IMAGE_API_KEY || process.env.MODELSCOPE_API_KEY)),
-      baseURL: process.env.MODELSCOPE_IMAGE_BASE_URL || process.env.MODELSCOPE_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+      baseURL: sanitizeUrlEnv(process.env.MODELSCOPE_IMAGE_BASE_URL || process.env.MODELSCOPE_BASE_URL || 'https://api-inference.modelscope.cn/v1'),
       apiKey: process.env.MODELSCOPE_IMAGE_API_KEY || process.env.MODELSCOPE_API_KEY,
       fallbackApiKey: process.env.MODELSCOPE_TEXT_API_KEY,
       model: process.env.MODELSCOPE_IMAGE_MODEL || 'Tongyi-MAI/Z-Image-Turbo',
@@ -68,13 +90,20 @@ const config = {
 function getEnabledTextProviders() {
   const providers = [];
   if (config.textProviders.modelscope.enabled) {
-    providers.push({ name: 'modelscope', ...config.textProviders.modelscope });
+    const base = { ...config.textProviders.modelscope };
+    const baseModel = base.model || 'deepseek-ai/DeepSeek-V3.2';
+    const p1 = parsePriority(process.env.MODELSCOPE_TEXT_PRIORITY, base.priority);
+    const p2 = parsePriority(process.env.MODELSCOPE_GLM47_PRIORITY, p1 + 1);
+    const p3 = parsePriority(process.env.MODELSCOPE_QWEN3_235B_PRIORITY, p1 + 2);
+    providers.push({ name: 'modelscope', ...base, model: baseModel, priority: p1 });
+    providers.push({ name: 'modelscope_glm47', ...base, model: 'ZhipuAI/GLM-4.7', priority: p2 });
+    providers.push({ name: 'modelscope_qwen3_235b', ...base, model: 'Qwen/Qwen3-235B-A22B-Instruct-2507', priority: p3 });
   }
   if (config.textProviders.gitcode.enabled) {
-    providers.push({ name: 'gitcode', ...config.textProviders.gitcode });
+    providers.push({ name: 'gitcode', ...config.textProviders.gitcode, priority: config.textProviders.gitcode.priority });
   }
   if (config.textProviders.dashscope.enabled) {
-    providers.push({ name: 'dashscope', ...config.textProviders.dashscope });
+    providers.push({ name: 'dashscope', ...config.textProviders.dashscope, priority: config.textProviders.dashscope.priority });
   }
   return providers.sort((a, b) => a.priority - b.priority);
 }
