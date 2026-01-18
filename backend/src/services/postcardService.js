@@ -18,7 +18,7 @@ class PostcardService {
 
       // 生成图片
       const imageResult = await this.imageService.generateImage(
-        `Beautiful travel postcard of ${imageData.destination}, ${prompt}`,
+        `旅游明信片，目的地：${imageData.destination}。${prompt}`,
         imageOptions
       );
 

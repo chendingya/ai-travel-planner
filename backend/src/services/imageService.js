@@ -8,6 +8,25 @@ class ImageService {
     this.supabase = supabase;
   }
 
+  sanitizePrompt(input) {
+    let s = '';
+    if (input === null || input === undefined) s = '';
+    else s = typeof input === 'string' ? input : String(input);
+
+    s = s.replace(/```[\s\S]*?```/g, ' ');
+    s = s.replace(/[\u0000-\u001F\u007F]/g, ' ');
+    s = s.replace(/\s+/g, ' ').trim();
+    s = s.replace(/^["'“”‘’]+/, '').replace(/["'“”‘’]+$/, '').trim();
+    return s;
+  }
+
+  limitPrompt(prompt, maxLen) {
+    const s = typeof prompt === 'string' ? prompt : String(prompt ?? '');
+    if (!maxLen || maxLen <= 0) return s;
+    if (s.length <= maxLen) return s;
+    return s.slice(0, maxLen).trim();
+  }
+
   enhancePrompt(originalPrompt, style) {
     const styleMap = {
       realistic: ', photorealistic, 8K, ultra detailed, professional photography',
@@ -26,13 +45,33 @@ class ImageService {
    */
   async generateImage(prompt, options = {}) {
     try {
-      const enhancedPrompt = this.enhancePrompt(prompt, options.style);
+      const shouldLogPrompt = process.env.IMAGE_LOG_PROMPT === 'true';
+      const basePrompt = this.sanitizePrompt(prompt);
       const { style: _style, ...forwardOptions } = options || {};
+
+      const buildSentPrompt = (p) =>
+        this.limitPrompt(this.enhancePrompt(p, options.style), 2000);
+
+      const enhancedPrompt = buildSentPrompt(basePrompt);
+
+      if (!enhancedPrompt) {
+        throw new Error('prompt is invalid');
+      }
+
+      if (shouldLogPrompt) {
+        const originalLen = typeof prompt === 'string' ? prompt.length : String(prompt ?? '').length;
+        console.log('[image] prompt_len', originalLen, 'sanitized_len', basePrompt.length, 'sent_len', enhancedPrompt.length);
+        console.log('[image] prompt_sent', enhancedPrompt);
+      }
+
       const result = await this.langChainManager.generateImage(enhancedPrompt, forwardOptions);
+      const promptUsed = typeof result?.prompt === 'string' && result.prompt.trim()
+        ? result.prompt.trim()
+        : enhancedPrompt;
 
       // 保存生成记录
       await this.saveGenerationRecord({
-        prompt: enhancedPrompt,
+        prompt: promptUsed,
         provider: result.provider,
         model: result.model,
         url: result.url,

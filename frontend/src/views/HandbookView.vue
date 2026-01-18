@@ -230,20 +230,20 @@ const artStyles = ref([
     promptSuffix: '龙泉青瓷风格，南宋官窑青瓷艺术，梅子青釉彩配色，精致的开片纹样，传统陶瓷工艺美学，品茶赏花的古雅意境，瓷器质感纹理'
   },
   {
-    id: 'dongting',
-    name: '油画印象风',
-    description: '欧洲油画风格，色彩层次丰富',
-    promptSuffix: '油画印象风格，厚涂油画质感，笔触明显，色彩饱和度高，光影对比强烈，欧洲古典油画美学，适合打印收藏，高级艺术感'
+    id: 'qiantang',
+    name: '钱塘油画风',
+    description: '钱塘江与城市光影的油画质感，色彩层次丰富',
+    promptSuffix: '油画印象风格，厚涂油画质感，笔触明显，色彩饱和度高，光影对比强烈，融入钱塘江与杭州城市天际线的光影氛围，欧洲古典油画美学，适合打印收藏，高级艺术感'
   },
   {
-    id: 'changsha',
-    name: '古风插画风',
-    description: '古典美女插画，诗意唯美的东方风',
-    promptSuffix: '古风插画风格，古典美女形象，中国传统服饰，唯美诗意的构图，淡雅水彩笔触，琴棋书画等文化元素，柔和的色调搭配，民国风情与古典美学融合'
+    id: 'songyun',
+    name: '宋韵插画风',
+    description: '宋韵江南意境，诗意唯美的东方插画',
+    promptSuffix: '宋韵古风插画风格，江南雅致意境，中国传统服饰与宋代审美，唯美诗意的构图，淡雅水彩笔触，书画、茶器、纸伞等文化元素，柔和的色调搭配，西湖与粉墙黛瓦的江南风情'
   }
 ]);
 
-const selectedStyle = ref('xiangxiu');
+const selectedStyle = ref('sichou');
 
 // 提供商相关
 const providers = ref([]);

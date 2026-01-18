@@ -2,6 +2,7 @@ const ModelScopeAdapter = require('./text/ModelScopeAdapter');
 const GitCodeAdapter = require('./text/GitCodeAdapter');
 const DashScopeAdapter = require('./text/DashScopeAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
+const sensitiveFilter = require('../../utils/sensitiveFilter');
 
 /**
  * LangChain 管理器
@@ -91,6 +92,10 @@ class LangChainManager {
   }
 
   async invokeText(messages, options = {}) {
+    const filteredMessages = sensitiveFilter.prepareMessages(messages, {
+      mode: options?.sensitiveFilterMode,
+    });
+
     const preferred = typeof options.provider === 'string' ? options.provider : '';
     const adapters = (() => {
       if (!preferred) return this.textAdapters;
@@ -104,7 +109,7 @@ class LangChainManager {
     for (const adapter of adapters) {
       try {
         console.log(`Attempting invokeText with provider: ${adapter.name}`);
-        return await adapter.invoke(messages);
+        return await adapter.invoke(filteredMessages);
       } catch (error) {
         lastError = error;
         console.warn(`Provider ${adapter.name} failed for invokeText:`, error.message);
@@ -147,6 +152,19 @@ class LangChainManager {
    * 生成图片
    */
   async generateImage(prompt, options = {}) {
+    const shouldLogPrompt = process.env.IMAGE_LOG_PROMPT === 'true';
+    const { normalized: normalizedPrompt, prepared: preparedPrompt, matched } =
+      sensitiveFilter.prepareImagePrompt(prompt);
+    const promptToSend = preparedPrompt || normalizedPrompt;
+
+    if (shouldLogPrompt && matched.length) {
+      console.log('[image] sensitive_matched', matched.join(','));
+      if (promptToSend !== normalizedPrompt) {
+        console.log('[image] prompt_softened_len', promptToSend.length);
+        console.log('[image] prompt_softened_sent', promptToSend);
+      }
+    }
+
     const preferred = typeof options.provider === 'string' ? options.provider : '';
     const adapters = (() => {
       if (!preferred) return this.imageAdapters;
@@ -160,10 +178,28 @@ class LangChainManager {
     for (const adapter of adapters) {
       try {
         console.log(`Attempting generateImage with provider: ${adapter.name}`);
-        return await adapter.generateImage(prompt, options);
+        return await adapter.generateImage(promptToSend, options);
       } catch (error) {
         lastError = error;
         console.warn(`Provider ${adapter.name} failed for generateImage:`, error.message);
+
+        const canRetry = sensitiveFilter.isInvalidPromptError(error);
+        if (canRetry) {
+          const fallbackPrompt = sensitiveFilter.soften(normalizedPrompt, 2);
+          const shouldRetry = fallbackPrompt && fallbackPrompt !== promptToSend;
+          if (shouldRetry) {
+            if (shouldLogPrompt) {
+              console.log('[image] prompt_retry_softened_len', fallbackPrompt.length);
+              console.log('[image] prompt_retry_softened_sent', fallbackPrompt);
+            }
+            try {
+              return await adapter.generateImage(fallbackPrompt, options);
+            } catch (retryError) {
+              lastError = retryError;
+              console.warn(`Provider ${adapter.name} failed for generateImage retry:`, retryError.message);
+            }
+          }
+        }
       }
     }
 
