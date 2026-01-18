@@ -529,27 +529,47 @@ class AIChatService {
       const args = fn && Object.prototype.hasOwnProperty.call(fn, 'arguments')
         ? fn.arguments
         : c.args ?? c.arguments ?? c.input ?? {};
-      if (!name) continue;
-      out.push({ id: id || `${name}-${out.length}`, name, args });
+      const normalizedName = typeof name === 'string' ? name : '';
+      const fallbackIdBase = normalizedName || 'tool';
+      out.push({ id: id || `${fallbackIdBase}-${out.length}`, name: normalizedName, args });
     }
     return out;
   }
 
   _extractToolCalls(aiMsg) {
-    const direct = Array.isArray(aiMsg?.tool_calls) ? aiMsg.tool_calls : null;
-    if (direct && direct.length) return this._normalizeToolCalls(direct);
+    const normalizeFlexible = (value) => {
+      if (!value) return [];
+      if (Array.isArray(value)) return this._normalizeToolCalls(value);
+      if (typeof value === 'string') {
+        const parsed = this._tryParseJsonObject(value);
+        if (Array.isArray(parsed)) return this._normalizeToolCalls(parsed);
+        if (parsed && typeof parsed === 'object') return this._normalizeToolCalls([parsed]);
+        return [];
+      }
+      if (value && typeof value === 'object') {
+        if (Object.prototype.hasOwnProperty.call(value, 'id') || Object.prototype.hasOwnProperty.call(value, 'function') || Object.prototype.hasOwnProperty.call(value, 'name')) {
+          return this._normalizeToolCalls([value]);
+        }
+        const numericKeys = Object.keys(value).filter((k) => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
+        if (numericKeys.length) return this._normalizeToolCalls(numericKeys.map((k) => value[k]).filter(Boolean));
+      }
+      return [];
+    };
+
+    const direct = normalizeFlexible(aiMsg?.tool_calls);
+    if (direct.length) return direct;
 
     const ak = aiMsg?.additional_kwargs;
-    const akCalls = Array.isArray(ak?.tool_calls) ? ak.tool_calls : null;
-    if (akCalls && akCalls.length) return this._normalizeToolCalls(akCalls);
+    const akCalls = normalizeFlexible(ak?.tool_calls);
+    if (akCalls.length) return akCalls;
 
     const kwargs = aiMsg?.kwargs;
-    const kwCalls = Array.isArray(kwargs?.tool_calls) ? kwargs.tool_calls : null;
-    if (kwCalls && kwCalls.length) return this._normalizeToolCalls(kwCalls);
+    const kwCalls = normalizeFlexible(kwargs?.tool_calls);
+    if (kwCalls.length) return kwCalls;
 
     const lcKwargs = aiMsg?.lc_kwargs;
-    const lcCalls = Array.isArray(lcKwargs?.tool_calls) ? lcKwargs.tool_calls : null;
-    if (lcCalls && lcCalls.length) return this._normalizeToolCalls(lcCalls);
+    const lcCalls = normalizeFlexible(lcKwargs?.tool_calls);
+    if (lcCalls.length) return lcCalls;
 
     const functionCall = ak?.function_call || kwargs?.function_call || null;
     if (functionCall && typeof functionCall === 'object') {
@@ -734,7 +754,7 @@ class AIChatService {
             { role: 'user', content: message },
           ]);
         } else {
-          const [{ SystemMessage, HumanMessage, AIMessage, ToolMessage }] = await Promise.all([
+          const [{ SystemMessage, HumanMessage, AIMessage }] = await Promise.all([
             import('@langchain/core/messages'),
           ]);
 
@@ -781,6 +801,7 @@ class AIChatService {
             mcpTools = [];
           }
           const baseTools = [...mcpTools, trainTicketsTool];
+          let toolCallsInChat = 0;
           const wrapTool = (t) => {
             const schema =
               t && typeof t === 'object' && t.schema && typeof t.schema === 'object'
@@ -793,14 +814,22 @@ class AIChatService {
               description,
               schema,
               func: async (input) => {
+                toolCallsInChat += 1;
+                if (toolCallsInChat > maxToolCallsPerChat) {
+                  const err = new Error('TOOL_CALLS_EXCEEDED');
+                  err.code = 'TOOL_CALLS_EXCEEDED';
+                  err.status = 429;
+                  throw err;
+                }
                 this._requireToolQuota(toolRateLimitKey, { tool: name });
-                return await this._withTimeout(t.invoke(input), toolInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
+                const raw = await this._withTimeout(t.invoke(input), toolInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
+                const text = this._normalizeMessageContent(raw);
+                return this._truncateText(text, toolResultMaxChars);
               },
             });
           };
 
           const tools = baseTools.map(wrapTool);
-          const toolMap = new Map(tools.map((t) => [t.name, t]));
 
           const adaptersRaw = Array.isArray(this.langChainManager?.textAdapters)
             ? this.langChainManager.textAdapters.filter((a) => a && typeof a.createLLM === 'function')
@@ -815,33 +844,9 @@ class AIChatService {
             return { message: response, sessionId, audio_task_id: null, audio_error: null };
           }
 
-          let adapterIndex = 0;
-          const providerSupportsNativeTools = (providerName) => {
-            const name = typeof providerName === 'string' ? providerName.trim().toLowerCase() : '';
-            if (!name) return true;
-            if (name === 'gitcode') return false;
-            return true;
-          };
-          let nativeToolsEnabled = providerSupportsNativeTools(adapters[adapterIndex]?.name);
-          const buildModel = (idx) => {
-            const a = adapters[idx];
-            const llm = a.createLLM();
-            if (!nativeToolsEnabled) return llm;
-            return typeof llm.bindTools === 'function' ? llm.bindTools(tools) : llm;
-          };
-          let model = buildModel(adapterIndex);
-          this._debug('tools.ready', { tool_count: tools.length, native_tools: nativeToolsEnabled, provider: adapters[adapterIndex]?.name });
+          this._debug('tools.ready', { tool_count: tools.length, providers: adapters.map((a) => a?.name).filter(Boolean).slice(0, 8) });
 
           const toolNamesForPrompt = tools.map((t) => t?.name).filter(Boolean).slice(0, 32);
-          const toolDescLines = tools
-            .map((t) => {
-              const name = typeof t?.name === 'string' ? t.name : '';
-              const desc = typeof t?.description === 'string' ? t.description.trim() : '';
-              if (!name) return '';
-              return desc ? `${name}: ${desc.slice(0, 120)}` : name;
-            })
-            .filter(Boolean)
-            .slice(0, 12);
 
           const toolSystemPromptNative = `${systemPrompt}
 
@@ -850,242 +855,100 @@ class AIChatService {
 2. 车票/高铁/动车余票查询：优先调用 query_train_tickets，补全 from、to，以及 date(YYYY-MM-DD) 或 relative(今天/明天/后天)。
 3. 工具返回后，用中文把关键信息整理成清晰结果（可用列表/表格），并说明信息可能随时变动。
 4. 如果工具失败或返回为空，说明原因并给出下一步建议（比如让用户补充信息）。
+5. 工具调用最多 ${maxToolCallsPerChat} 次；达到上限后必须停止工具调用并输出当前结论或让用户补充信息。
 
 可用工具：${toolNamesForPrompt.join(', ')}`;
 
-          const toolSystemPromptManual = `${toolSystemPromptNative}
-
-如果你需要调用工具，请只输出 JSON（不要输出任何额外文字），格式如下：
-{"tool_calls":[{"id":"call_1","name":"工具名","arguments":{}}]}
-
-工具清单（部分）：
-${toolDescLines.join('\n')}`;
-
-          const lcMessages = [
-            new SystemMessage(nativeToolsEnabled ? toolSystemPromptNative : toolSystemPromptManual),
-            ...(Array.isArray(history) ? history : [])
-              .map((m) => {
-                if (!m || typeof m !== 'object') return null;
-                if (m.role === 'user') return new HumanMessage(m.content);
-                if (m.role === 'assistant') return new AIMessage(m.content);
-                if (m.role === 'system') return new SystemMessage(m.content);
-                return null;
-              })
-              .filter(Boolean),
-            new HumanMessage(message),
-          ];
-
-          const downgradeToManualTools = () => {
-            if (!nativeToolsEnabled) return;
-            nativeToolsEnabled = false;
-            model = buildModel(adapterIndex);
-            lcMessages[0] = new SystemMessage(toolSystemPromptManual);
-            for (let k = 1; k < lcMessages.length; k++) {
-              const m = lcMessages[k];
-              if (m instanceof ToolMessage) {
-                const body = this._normalizeMessageContent(m?.content);
-                lcMessages[k] = new HumanMessage(`工具结果:\n${body}`);
-              }
-            }
-          };
-
-          const pushToolResult = ({ id, name, content }) => {
-            const toolId = typeof id === 'string' && id ? id : `tool-${Date.now()}`;
-            const toolName = typeof name === 'string' ? name : '';
-            const body = typeof content === 'string' ? content : String(content ?? '');
-            if (nativeToolsEnabled) {
-              lcMessages.push(
-                new ToolMessage({
-                  tool_call_id: toolId,
-                  content: body,
-                })
-              );
-              return;
-            }
-            const label = toolName ? `工具结果(${toolName})` : '工具结果';
-            lcMessages.push(new HumanMessage(`${label}:\n${body}`));
-          };
-
           const maxIterationsRaw = Number(process.env.AI_CHAT_AGENT_MAX_ITERATIONS || '8');
-          const maxIterations = Number.isFinite(maxIterationsRaw) && maxIterationsRaw > 0 ? maxIterationsRaw : 8;
-          let lastAiMessage = null;
-          let toolCallsUsed = 0;
-          for (let i = 0; i < maxIterations; i++) {
-            let aiMsg = null;
-            try {
-              let switched = 0;
-              while (true) {
-                const invokeStart = Date.now();
-                try {
-                  aiMsg = await this._withTimeout(model.invoke(lcMessages), modelInvokeTimeoutMs, 'MODEL_INVOKE_TIMEOUT');
-                  if (!aiMsg || typeof aiMsg !== 'object') {
-                    throw new Error('MODEL_EMPTY_RESPONSE');
-                  }
-                  this._debug('model.invoke', { iter: i + 1, ms: Date.now() - invokeStart, provider: adapters[adapterIndex]?.name });
-                  break;
-                } catch (e) {
-                  const summary = this._summarizeError(e);
-                  const adapter = adapters[adapterIndex] || null;
-                  const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
-                  const modelName = typeof adapter?.model === 'string' ? adapter.model : '';
-                  const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
-                  this._debug('model.invoke.err', {
-                    iter: i + 1,
-                    ms: Date.now() - invokeStart,
-                    provider: adapter?.name,
-                    model: modelName,
-                    baseURL,
-                    baseURLHasV1,
-                    error: summary,
-                  });
-                  if (this._isRateLimitError(e) && typeof adapter?.name === 'string' && adapter.name.startsWith('modelscope')) {
-                    await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
-                    await this._probeOpenAIChatCompletionsEndpoint({
-                      provider: adapter?.name,
-                      baseURL,
-                      apiKey: adapter?.apiKey,
-                      model: modelName,
-                    });
-                  }
-                  if (this._isProviderProtocolError(e) && adapter?.name === 'gitcode') {
-                    await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
-                    await this._probeOpenAIChatCompletionsEndpoint({
-                      provider: adapter?.name,
-                      baseURL,
-                      apiKey: adapter?.apiKey,
-                      model: modelName,
-                    });
-                  }
-                  if (this._isRateLimitError(e)) {
-                    this._setModelCooldown(adapters[adapterIndex]?.name);
-                  }
-                  if (nativeToolsEnabled && this._isToolSchemaNotSupportedError(e)) {
-                    downgradeToManualTools();
-                    this._debug('model.tools.fallback', { iter: i + 1, provider: adapters[adapterIndex]?.name });
-                    continue;
-                  }
-                  if (nativeToolsEnabled && this._isToolInteropError(e)) {
-                    downgradeToManualTools();
-                    this._debug('model.tools.interop_fallback', { iter: i + 1, provider: adapters[adapterIndex]?.name });
-                    continue;
-                  }
-                  if (this._isProviderProtocolError(e) && adapterIndex + 1 < adapters.length) {
-                    this._setModelCooldown(adapters[adapterIndex]?.name);
-                    adapterIndex += 1;
-                    if (nativeToolsEnabled && !providerSupportsNativeTools(adapters[adapterIndex]?.name)) {
-                      downgradeToManualTools();
-                    } else {
-                      model = buildModel(adapterIndex);
-                    }
-                    switched += 1;
-                    this._debug('model.switch', { iter: i + 1, to: adapters[adapterIndex]?.name, count: switched, reason: 'provider_protocol_error' });
-                    continue;
-                  }
-                  if ((this._isRateLimitError(e) || this._isTimeoutError(e)) && adapterIndex + 1 < adapters.length) {
-                    adapterIndex += 1;
-                    if (nativeToolsEnabled && !providerSupportsNativeTools(adapters[adapterIndex]?.name)) {
-                      downgradeToManualTools();
-                    } else {
-                      model = buildModel(adapterIndex);
-                    }
-                    switched += 1;
-                    this._debug('model.switch', { iter: i + 1, to: adapters[adapterIndex]?.name, count: switched });
-                    continue;
-                  }
-                  throw this._ensureError(e, 'MODEL_INVOKE_FAILED');
-                }
-              }
-            } catch (e) {
-              if (this._isRateLimitError(e) || this._isTimeoutError(e)) {
-                response = this._isTimeoutError(e)
-                  ? '当前模型响应超时，我暂时无法完成这个请求。请稍后重试。'
-                  : '当前请求过于频繁，我暂时无法完成这个请求。请稍后重试。';
-                lastAiMessage = null;
-                break;
-              }
-              if (this._isProviderProtocolError(e)) {
-                response = '当前模型服务接口不兼容或配置异常（可能 baseURL 指向了非 OpenAI 兼容接口）。请检查该提供商的 baseURL 与 API Key 配置后重试。';
-                lastAiMessage = null;
-                break;
-              }
-              throw this._ensureError(e, 'MODEL_INVOKE_FAILED');
+          const maxIterationsParsed = Number.isFinite(maxIterationsRaw) && maxIterationsRaw > 0 ? maxIterationsRaw : 8;
+          const maxIterations = Math.min(Math.max(1, maxIterationsParsed), 30);
+          const recursionLimitEnvRaw = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '');
+          const recursionLimit =
+            Number.isFinite(recursionLimitEnvRaw) && recursionLimitEnvRaw > 0
+              ? recursionLimitEnvRaw
+              : Math.max(50, maxIterations * 12 + 20, maxToolCallsPerChat * 8 + 20);
+
+          const toBaseMessages = (items) => {
+            const out = [];
+            for (const m of Array.isArray(items) ? items : []) {
+              if (!m || typeof m !== 'object') continue;
+              if (m.role === 'user') out.push(new HumanMessage(m.content));
+              else if (m.role === 'assistant') out.push(new AIMessage(m.content));
+              else if (m.role === 'system') out.push(new SystemMessage(m.content));
             }
-            lastAiMessage = aiMsg;
-            lcMessages.push(aiMsg);
+            return out;
+          };
 
-            const toolCalls = nativeToolsEnabled
-              ? this._extractToolCalls(aiMsg)
-              : this._extractToolCallsFromText(this._normalizeMessageContent(aiMsg?.content));
-            this._debug('tool.calls', { iter: i + 1, count: toolCalls.length, names: toolCalls.map((c) => c.name).slice(0, 8) });
-            if (!toolCalls.length) {
-              if (i === 0) {
-                const inferred = this._inferTrainTicketIntent(message);
-                const trainTool = inferred ? toolMap.get('query_train_tickets') : null;
-                if (inferred && trainTool && toolCallsUsed < maxToolCallsPerChat) {
-                  const id = `auto-query_train_tickets-${Date.now()}`;
-                  try {
-                    this._debug('tool.invoke', { name: 'query_train_tickets', id });
-                    toolCallsUsed += 1;
-                    const out = await trainTool.invoke(inferred);
-                    const outText = this._safeStringify(out);
-                    this._debug('tool.invoke.ok', { name: 'query_train_tickets', id, out_len: outText.length });
-                    pushToolResult({ id, name: 'query_train_tickets', content: this._truncateText(outText, toolResultMaxChars) });
-                    continue;
-                  } catch (e) {
-                    this._debug('tool.invoke.err', { name: 'query_train_tickets', id, error: String(e?.message || e) });
-                    pushToolResult({ id, name: 'query_train_tickets', content: `工具执行失败: query_train_tickets; ${String(e?.message || e)}` });
-                    continue;
-                  }
+          const baseMessages = [...toBaseMessages(history), new HumanMessage(message)];
+
+          const modelscopeMaxRequestsRaw = Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20');
+          const modelscopeMaxRequestsPerChat =
+            Number.isFinite(modelscopeMaxRequestsRaw) && modelscopeMaxRequestsRaw > 0 ? modelscopeMaxRequestsRaw : 20;
+
+          let lastErr = null;
+          try {
+            this._debug('agent.invoke', { provider: 'auto', recursionLimit, tool_count: tools.length });
+            const started = Date.now();
+            const out = await this.langChainManager.invokeToolCallingAgent({
+              adapters,
+              messages: baseMessages,
+              tools,
+              prompt: toolSystemPromptNative,
+              recursionLimit,
+              modelInvokeTimeoutMs,
+              modelscopeMaxRequestsPerChat,
+              onAdapterStart: async ({ adapter }) => {
+                const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+                if (provider) this._debug('agent.invoke.try', { provider });
+              },
+              onAdapterError: async ({ adapter, error }) => {
+                const provider = adapter?.name;
+                const summary = this._summarizeError(error);
+                const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
+                const modelName = typeof adapter?.model === 'string' ? adapter.model : '';
+                const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
+                this._debug('agent.invoke.err', { provider, model: modelName, baseURL, baseURLHasV1, error: summary });
+
+                if (
+                  typeof adapter?.name === 'string' &&
+                  adapter.name.startsWith('modelscope') &&
+                  (this._isRateLimitError(error) || error?.code === 'MODEL_EMPTY_RESPONSE' || this._isProviderProtocolError(error) || this._isTimeoutError(error))
+                ) {
+                  await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
+                  await this._probeOpenAIChatCompletionsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey, model: modelName });
                 }
-              }
-              break;
+
+                if (this._isRateLimitError(error)) this._setModelCooldown(provider);
+              },
+            });
+            this._debug('agent.invoke.ok', { provider: out?.provider || '', ms: Date.now() - started });
+            response = typeof out?.text === 'string' ? out.text : '';
+            if (!response) {
+              lastErr = new Error('MODEL_EMPTY_RESPONSE');
+              lastErr.code = 'MODEL_EMPTY_RESPONSE';
             }
-
-            for (const call of toolCalls) {
-              if (toolCallsUsed >= maxToolCallsPerChat) {
-                const name = call?.name ? String(call.name) : '';
-                const id = call?.id ? String(call.id) : `${name}-${i}`;
-                pushToolResult({ id, name, content: `工具调用次数已达上限: ${name || 'unknown'}` });
-                continue;
-              }
-              const name = call?.name ? String(call.name) : '';
-              const id = call?.id ? String(call.id) : `${name}-${i}`;
-              let args = call?.args ?? call?.arguments ?? {};
-              if (typeof args === 'string') {
-                try {
-                  args = JSON.parse(args);
-                } catch {
-                  args = { input: args };
-                }
-              }
-
-              const tool = toolMap.get(name);
-              if (!tool) {
-                pushToolResult({ id, name, content: `工具不存在: ${name}` });
-                continue;
-              }
-
-              try {
-                this._debug('tool.invoke', { name, id });
-                toolCallsUsed += 1;
-                const out = await tool.invoke(args);
-                const outText = this._safeStringify(out);
-                this._debug('tool.invoke.ok', { name, id, out_len: outText.length });
-                pushToolResult({ id, name, content: this._truncateText(outText, toolResultMaxChars) });
-              } catch (e) {
-                this._debug('tool.invoke.err', { name, id, error: String(e?.message || e) });
-                if (this._isRateLimitError(e) || this._isTimeoutError(e)) {
-                  pushToolResult({ id, name, content: `工具调用受限: ${name}; ${String(e?.message || e)}` });
-                  continue;
-                }
-                pushToolResult({ id, name, content: `工具执行失败: ${name}; ${String(e?.message || e)}` });
-              }
-            }
+          } catch (e) {
+            lastErr = e;
           }
 
           if (!response) {
-            const normalized = this._normalizeMessageContent(lastAiMessage?.content);
-            response = normalized && normalized.trim() ? normalized : '未能生成最终回答，请重试。';
+            if (lastErr && (this._isRateLimitError(lastErr) || this._isTimeoutError(lastErr))) {
+              response = this._isTimeoutError(lastErr)
+                ? '当前模型响应超时，我暂时无法完成这个请求。请稍后重试。'
+                : '当前请求过于频繁，我暂时无法完成这个请求。请稍后重试。';
+            } else if (lastErr && (lastErr?.code === 'GRAPH_RECURSION_LIMIT' || lastErr?.name === 'GraphRecursionError')) {
+              response = '模型在工具调用上进入了过多步骤/循环，我已中止本次执行。请你补充更明确的出发地、目的地、日期等关键信息，或换个更具体的问法后重试。';
+            } else if (lastErr && lastErr?.code === 'TOOL_CALLS_EXCEEDED') {
+              response = `本次对话的工具调用次数已达到上限（${maxToolCallsPerChat} 次），我已停止继续调用工具。请补充更明确的信息后重试（例如城市/日期/筛选条件）。`;
+            } else if (lastErr && lastErr?.code === 'MODELSCOPE_REQUEST_LIMIT') {
+              response = '魔搭模型在本次请求中已达到调用上限（单次最多20次），我已停止继续使用该提供商并尝试切换模型，但仍未能得到最终回答。请稍后重试或切换其它提供商。';
+            } else if (lastErr && (lastErr?.code === 'MODEL_EMPTY_RESPONSE' || lastErr?.message === 'MODEL_EMPTY_RESPONSE')) {
+              response = '模型未返回有效内容（可能被限流/超时或未能完成工具调用链）。我已尝试切换模型但仍失败，请稍后重试或更换更具体的问题。';
+            } else if (lastErr && this._isProviderProtocolError(lastErr)) {
+              response = '当前模型服务接口不兼容或配置异常（可能 baseURL 指向了非 OpenAI 兼容接口）。请检查该提供商的 baseURL 与 API Key 配置后重试。';
+            } else {
+              response = '未能生成最终回答，请重试。';
+            }
           }
         }
       } else {
@@ -1268,7 +1131,7 @@ ${toolDescLines.join('\n')}`;
 
         if (!result?.error) return result;
 
-        if (result.error.code === 'PGRST205') return result;
+        if (result.error.code === 'PGRST205' || result.error.code === 'PGRST116') return result;
         if (this.isTransientSupabaseError(result.error)) throw result.error;
         throw result.error;
       });
@@ -1286,6 +1149,7 @@ ${toolDescLines.join('\n')}`;
           .filter(Boolean);
       }
 
+      if (error.code === 'PGRST116') return [];
       if (error.code !== 'PGRST205') throw error;
 
       const fallback = await this.supabase
@@ -1328,6 +1192,40 @@ ${toolDescLines.join('\n')}`;
           .update({ messages: nextMessages })
           .eq('conversation_id', sessionId);
 
+        if (updateError) throw updateError;
+        return;
+      }
+
+      if (error.code === 'PGRST116') {
+        const nextMessages = [
+          { role: 'user', content: userMessage, created_at: now },
+          { role: 'assistant', content: aiResponse, created_at: now },
+        ];
+
+        const { error: insertError } = await this.supabase
+          .from('ai_chat_sessions')
+          .insert([{ conversation_id: sessionId, messages: nextMessages }]);
+
+        if (!insertError) return;
+        if (insertError.code !== '23505') throw insertError;
+
+        const { data: refetched, error: refetchError } = await this.supabase
+          .from('ai_chat_sessions')
+          .select('messages')
+          .eq('conversation_id', sessionId)
+          .maybeSingle();
+
+        if (refetchError) throw refetchError;
+        const current = Array.isArray(refetched?.messages) ? refetched.messages : [];
+        const merged = [
+          ...current,
+          { role: 'user', content: userMessage, created_at: now },
+          { role: 'assistant', content: aiResponse, created_at: now },
+        ];
+        const { error: updateError } = await this.supabase
+          .from('ai_chat_sessions')
+          .update({ messages: merged })
+          .eq('conversation_id', sessionId);
         if (updateError) throw updateError;
         return;
       }

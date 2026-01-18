@@ -45,8 +45,8 @@ class AIChatController {
 
       let effectiveSessionId = sessionId || conversation_id;
       if (!effectiveSessionId) {
-        const session = await this.aiChatService.createSession('新对话');
-        effectiveSessionId = session?.id;
+        const { randomUUID } = require('crypto');
+        effectiveSessionId = randomUUID();
       }
 
       const forwarded = req.headers?.['x-forwarded-for'];
@@ -112,17 +112,22 @@ class AIChatController {
       const sessions = await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/sessions.list' }, () =>
         this.aiChatService.getSessions()
       );
-      const mapped = (Array.isArray(sessions) ? sessions : []).map((s) => ({
-        conversation_id: s.conversation_id || s.id,
-        title: this.deriveTitle(s),
-        message_count: typeof s.message_count === 'number'
-          ? s.message_count
-          : Array.isArray(s.messages)
-            ? s.messages.length
-            : 0,
-        updated_at: s.updated_at || s.created_at,
-        created_at: s.created_at,
-      }));
+      const mapped = (Array.isArray(sessions) ? sessions : [])
+        .map((s) => {
+          const message_count = typeof s.message_count === 'number'
+            ? s.message_count
+            : Array.isArray(s.messages)
+              ? s.messages.length
+              : 0;
+          return {
+            conversation_id: s.conversation_id || s.id,
+            title: this.deriveTitle(s),
+            message_count,
+            updated_at: s.updated_at || s.created_at,
+            created_at: s.created_at,
+          };
+        })
+        .filter((s) => typeof s.message_count === 'number' && s.message_count > 0);
       res.json({ sessions: mapped });
     } catch (error) {
       console.error('Get sessions error:', error);

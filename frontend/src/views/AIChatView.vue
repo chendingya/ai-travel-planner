@@ -11,7 +11,7 @@
           <!-- 历史会话按钮 -->
           <t-button 
             variant="outline" 
-            @click="showHistoryPanel = !showHistoryPanel" 
+            @click="toggleHistoryPanel" 
             shape="round" 
             class="history-btn"
             :class="{ 'is-active': showHistoryPanel }"
@@ -176,7 +176,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { supabase } from '../supabase'
 
@@ -208,6 +208,7 @@ const chatRef = ref(null)
 const showHistoryPanel = ref(false)
 const sessions = ref([])
 const isLoadingSessions = ref(false)
+const sessionsLoadedOnce = ref(false)
 const showAllSessions = ref(false)
 const initialDisplayCount = 5
 const isLoadingHistory = ref(false)
@@ -446,6 +447,7 @@ const loadSessions = async () => {
     if (response.ok) {
       const data = await response.json()
       sessions.value = data.sessions || (Array.isArray(data) ? data : [])
+      sessionsLoadedOnce.value = true
     }
   } catch (error) {
     console.error('加载会话列表失败:', error)
@@ -457,6 +459,15 @@ const loadSessions = async () => {
 const handleManualRefreshSessions = (e) => {
   if (e && e.isTrusted === false) return
   loadSessions()
+}
+
+const toggleHistoryPanel = async () => {
+  const next = !showHistoryPanel.value
+  showHistoryPanel.value = next
+  if (!next) return
+  if (!isLoggedIn.value) return
+  if (sessionsLoadedOnce.value) return
+  await loadSessions()
 }
 
 // 加载指定会话的历史记录
@@ -541,18 +552,24 @@ const deleteSession = async (sessionId) => {
 const formatDate = (dateStr) => {
   if (!dateStr) return ''
   const date = new Date(dateStr)
+  if (!Number.isFinite(date.getTime())) return ''
   const now = new Date()
-  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24))
-  
-  if (diffDays === 0) {
-    return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
-  } else if (diffDays === 1) {
-    return '昨天'
-  } else if (diffDays < 7) {
-    return `${diffDays}天前`
-  } else {
-    return `${date.getMonth() + 1}/${date.getDate()}`
-  }
+
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const diffDays = Math.round((nowOnly - dateOnly) / (1000 * 60 * 60 * 24))
+
+  const hh = date.getHours().toString().padStart(2, '0')
+  const mm = date.getMinutes().toString().padStart(2, '0')
+
+  if (diffDays === 0) return `今天 ${hh}:${mm}`
+  if (diffDays === 1) return `昨天 ${hh}:${mm}`
+  if (diffDays > 1 && diffDays < 7) return `${diffDays}天前`
+  const y = date.getFullYear()
+  const m = (date.getMonth() + 1).toString().padStart(2, '0')
+  const d = date.getDate().toString().padStart(2, '0')
+  if (y === now.getFullYear()) return `${m}/${d}`
+  return `${y}/${m}/${d}`
 }
 
 // 页面加载时检查登录状态并获取会话列表
@@ -565,6 +582,7 @@ onMounted(async () => {
     currentUser.value = session?.user || null
     if (!session) {
       sessions.value = []
+      sessionsLoadedOnce.value = false
       return
     }
   })
@@ -574,6 +592,13 @@ onUnmounted(() => {
   const sub = authSubscription?.data?.subscription
   if (sub && typeof sub.unsubscribe === 'function') sub.unsubscribe()
   authSubscription = null
+})
+
+watch(isLoggedIn, async (loggedIn) => {
+  if (!loggedIn) return
+  if (!showHistoryPanel.value) return
+  if (sessionsLoadedOnce.value) return
+  await loadSessions()
 })
 
 // 快捷问题
