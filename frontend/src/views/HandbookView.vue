@@ -212,38 +212,38 @@ const usedStyle = ref('');
 // 艺术风格选项
 const artStyles = ref([
   {
-    id: 'xiangxiu',
-    name: '湖南湘绣风',
-    description: '传统湘绣针法艺术，丝线交织的华美图案',
-    promptSuffix: '湖南湘绣艺术风格，精致的刺绣针法纹理，丝线交织的华美图案，传统湘绣配色（红、绿、蓝、紫），绣面质感，中国传统工艺美学'
+    id: 'sichou',
+    name: '杭州丝绸风',
+    description: '传统丝绸织锦艺术，细腻柔美的华贵图案',
+    promptSuffix: '杭州丝绸艺术风格，精致的织锦纹理，丝绸光泽的华美图案，传统江南配色（淡雅、素净、雅致），丝绸质感，中国传统工艺美学'
   },
   {
-    id: 'zhangjiajie',
-    name: '张家界水墨风',
-    description: '云雾缭绕的奇峰，写意山水画意境',
-    promptSuffix: '张家界水墨画风格，云雾缭绕的奇峰异石，中国传统山水画意境，写意泼墨技法，黑白灰层次分明，留白艺术，空灵禅意'
+    id: 'xihu',
+    name: '西湖水墨风',
+    description: '烟雨江南的湖光山色，写意山水画意境',
+    promptSuffix: '西湖水墨画风格，烟雨朦胧的湖光山色，中国传统山水画意境，写意泼墨技法，黑白灰层次分明，留白艺术，空灵禅意'
   },
   {
-    id: 'mawangdui',
-    name: '长沙瓷器彩绘风',
-    description: '长沙窑彩绘陶瓷，古雅精致的色彩',
-    promptSuffix: '长沙瓷器彩绘风格，长沙窑古陶瓷艺术，青绿釉彩配色，精致的彩绘纹样，传统陶瓷工艺美学，品茶赏花的古雅意境，陶瓷质感纹理'
+    id: 'longquan',
+    name: '龙泉青瓷风',
+    description: '龙泉青瓷艺术，温润如玉的色彩',
+    promptSuffix: '龙泉青瓷风格，南宋官窑青瓷艺术，梅子青釉彩配色，精致的开片纹样，传统陶瓷工艺美学，品茶赏花的古雅意境，瓷器质感纹理'
   },
   {
-    id: 'dongting',
-    name: '油画印象风',
-    description: '欧洲油画风格，色彩层次丰富',
-    promptSuffix: '油画印象风格，厚涂油画质感，笔触明显，色彩饱和度高，光影对比强烈，欧洲古典油画美学，适合打印收藏，高级艺术感'
+    id: 'qiantang',
+    name: '钱塘油画风',
+    description: '钱塘江与城市光影的油画质感，色彩层次丰富',
+    promptSuffix: '油画印象风格，厚涂油画质感，笔触明显，色彩饱和度高，光影对比强烈，融入钱塘江与杭州城市天际线的光影氛围，欧洲古典油画美学，适合打印收藏，高级艺术感'
   },
   {
-    id: 'changsha',
-    name: '古风插画风',
-    description: '古典美女插画，诗意唯美的东方风',
-    promptSuffix: '古风插画风格，古典美女形象，中国传统服饰，唯美诗意的构图，淡雅水彩笔触，琴棋书画等文化元素，柔和的色调搭配，民国风情与古典美学融合'
+    id: 'songyun',
+    name: '宋韵插画风',
+    description: '宋韵江南意境，诗意唯美的东方插画',
+    promptSuffix: '宋韵古风插画风格，江南雅致意境，中国传统服饰与宋代审美，唯美诗意的构图，淡雅水彩笔触，书画、茶器、纸伞等文化元素，柔和的色调搭配，西湖与粉墙黛瓦的江南风情'
   }
 ]);
 
-const selectedStyle = ref('xiangxiu');
+const selectedStyle = ref('sichou');
 
 // 提供商相关
 const providers = ref([]);
@@ -289,10 +289,9 @@ const fetchProviders = async () => {
   } catch (err) {
     console.warn('获取提供商列表失败，使用默认值');
     providers.value = [
-      { id: 'hunyuan', name: '腾讯混元', icon: 'cloud' },
       { id: 'modelscope', name: '魔搭社区', icon: 'app' }
     ];
-    selectedProvider.value = 'hunyuan';
+    selectedProvider.value = 'modelscope';
   }
 };
 
@@ -355,9 +354,7 @@ const generatePostcard = async () => {
       body: JSON.stringify({
         prompt: generatedPrompt.value,
         provider: selectedProvider.value,
-        // 明信片使用4:3的宽高比，更适合明信片设计
-        // 混元使用分辨率格式:1024:768，魔搭社区使用尺寸格式:1024x768
-        [selectedProvider.value === 'hunyuan' ? 'resolution' : 'size']: selectedProvider.value === 'hunyuan' ? '1024:768' : '1024x768'
+        size: '1024x768'
       }),
       signal, // 添加signal以支持请求取消
     });

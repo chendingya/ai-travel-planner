@@ -8,6 +8,18 @@
           <p class="page-subtitle">与智能旅行助手进行对话，获取专业的旅行建议</p>
         </div>
         <div class="header-actions">
+          <!-- 历史会话按钮 -->
+          <t-button 
+            variant="outline" 
+            @click="toggleHistoryPanel" 
+            shape="round" 
+            class="history-btn"
+            :class="{ 'is-active': showHistoryPanel }"
+          >
+            <template #icon><t-icon name="time" /></template>
+            历史记录
+          </t-button>
+          
           <!-- 工具模式开关 -->
           <div 
             class="tool-mode-toggle" 
@@ -32,16 +44,87 @@
       </div>
     </div>
 
-    <!-- 聊天区域 -->
-    <div class="chat-container">
-      <!-- 消息列表 - 使用 t-chat 组件 -->
-      <t-chat
-        ref="chatRef"
-        :reverse="false"
-        :data="chatData"
-        :clear-history="false"
-        :text-loading="isLoading"
-      />
+    <!-- 主体区域 -->
+    <div class="main-content">
+      <!-- 历史会话侧边栏 -->
+      <transition name="slide-left">
+        <div v-if="showHistoryPanel" class="history-panel">
+          <div class="history-header">
+            <h3>历史对话</h3>
+            <div class="history-header-actions">
+              <t-button v-if="isLoggedIn" variant="text" size="small" @click="handleManualRefreshSessions" :loading="isLoadingSessions" title="刷新">
+                <t-icon name="refresh" />
+              </t-button>
+              <t-button variant="text" size="small" @click="showHistoryPanel = false" title="关闭">
+                <t-icon name="close" />
+              </t-button>
+            </div>
+          </div>
+          
+          <!-- 未登录提示 -->
+          <div v-if="!isLoggedIn" class="history-login-tip">
+            <t-icon name="user-circle" size="48px" />
+            <p class="login-tip-title">登录后查看历史记录</p>
+            <p class="login-tip-desc">登录账号后，您的对话记录将被保存，方便随时查看</p>
+            <t-button theme="primary" @click="goToLogin">
+              <template #icon><t-icon name="login" style="color: white;" /></template>
+              立即登录
+            </t-button>
+          </div>
+          
+          <!-- 已登录 - 显示历史列表 -->
+          <template v-else>
+            <div class="history-list" v-if="sessions.length > 0">
+              <div 
+                v-for="session in displayedSessions" 
+                :key="session.conversation_id"
+                class="history-item"
+                :class="{ 'is-active': session.conversation_id === conversationId }"
+              >
+                <div class="history-item-content" @click="loadSession(session.conversation_id)">
+                  <div class="history-item-title">{{ session.title }}</div>
+                  <div class="history-item-meta">
+                    <span>{{ session.message_count }} 条消息</span>
+                    <span>{{ formatDate(session.updated_at) }}</span>
+                  </div>
+                </div>
+                <t-button 
+                  variant="text" 
+                  size="small" 
+                  class="history-item-delete"
+                  @click.stop="confirmDeleteSession(session.conversation_id)"
+                  title="删除此对话"
+                >
+                  <t-icon name="delete" />
+                </t-button>
+              </div>
+              <!-- 展开更多按钮 -->
+              <div v-if="sessions.length > initialDisplayCount" class="history-expand">
+                <t-button 
+                  variant="text" 
+                  size="small" 
+                  block
+                  @click="showAllSessions = !showAllSessions"
+                >
+                  <t-icon :name="showAllSessions ? 'chevron-up' : 'chevron-down'" />
+                  {{ showAllSessions ? '收起' : `展开更多 (${sessions.length - initialDisplayCount})` }}
+                </t-button>
+              </div>
+            </div>
+            <div v-else class="history-empty">
+              <t-icon name="chat" size="32px" />
+              <p>暂无历史对话</p>
+            </div>
+          </template>
+        </div>
+      </transition>
+
+      <!-- 聊天区域 -->
+      <div class="chat-container">
+      <!-- 消息列表 -->
+      <div class="chat-list-wrapper" ref="chatRef">
+        <t-chat :clear-history="false" :data="chatData" :reverse="false" :text-loading="isLoading" />
+      </div>
 
       <!-- 快捷问题区域 -->
       <div v-if="messages.length <= 1" class="quick-questions">
@@ -53,6 +136,14 @@
             工具增强
           </t-tag>
         </div>
+        
+        <!-- 工具模式提示 -->
+        <div v-if="!enableTools" class="tool-mode-tip" @click="enableTools = true">
+          <t-icon name="tips" />
+          <span>开启<strong>工具模式</strong>可查询火车票、搜索网络等实时信息</span>
+          <t-icon name="chevron-right" size="16px" />
+        </div>
+        
         <div class="quick-buttons">
           <t-button
             v-for="question in currentQuickQuestions"
@@ -80,12 +171,31 @@
         />
       </div>
     </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { supabase } from '../supabase'
+
+// 登录状态
+const isLoggedIn = ref(false)
+const currentUser = ref(null)
+
+// 检查登录状态
+const checkLoginStatus = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    isLoggedIn.value = !!session
+    currentUser.value = session?.user || null
+  } catch (error) {
+    console.error('检查登录状态失败:', error)
+    isLoggedIn.value = false
+    currentUser.value = null
+  }
+}
 
 // 头像配置
 const userAvatar = 'https://tdesign.gtimg.com/site/avatar.jpg'
@@ -94,9 +204,27 @@ const assistantAvatar = 'https://tdesign.gtimg.com/site/chat-avatar.png'
 // Chat 组件引用
 const chatRef = ref(null)
 
+// 历史会话相关
+const showHistoryPanel = ref(false)
+const sessions = ref([])
+const isLoadingSessions = ref(false)
+const sessionsLoadedOnce = ref(false)
+const showAllSessions = ref(false)
+const initialDisplayCount = 5
+const isLoadingHistory = ref(false)
+const loadingHistoryId = ref(null)
+let authSubscription = null
+
+// 计算显示的会话列表
+const displayedSessions = computed(() => {
+  if (showAllSessions.value || sessions.value.length <= initialDisplayCount) {
+    return sessions.value
+  }
+  return sessions.value.slice(0, initialDisplayCount)
+})
+
 // 会话管理
-const createConversationId = () => `ai-face-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const conversationId = ref(createConversationId())
+const conversationId = ref(null)
 const shouldResetHistory = ref(true)
 
 // MCP 工具模式开关
@@ -105,7 +233,7 @@ const enableTools = ref(false)
 // 默认问候消息
 const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您服务！
 
-我可以为您提供湖南旅游的相关建议，包括：
+我可以为您提供杭州旅游的相关建议，包括：
 - **景点推荐**：热门景区、网红打卡地
 - **美食介绍**：特色小吃、地道餐厅
 - **行程规划**：路线设计、时间安排
@@ -113,6 +241,8 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 
 **提示**：开启右上角的"工具模式"，我还可以：
 - **查询火车票**：查询12306列车信息
+- **天气查询**：查询目的地实时天气
+- **地点搜索**：搜索景点、餐厅、酒店
 - **网络搜索**：获取最新旅游资讯
 
 请问有什么可以帮助您的吗？`
@@ -125,7 +255,23 @@ const messages = ref([
   },
 ])
 
-// 转换为 t-chat 需要的 data 格式
+// 将消息内容转换为 t-chat-message 需要的 content 格式（数组）
+// 直接使用 AI 返回的原始文本，不做任何预处理
+// TDesign Chat 使用 cherry-markdown 引擎，能正确解析标准 Markdown
+const formatMessageContent = (content, role) => {
+  // 如果已经是数组格式，直接返回
+  if (Array.isArray(content)) {
+    return content
+  }
+  // AI 消息使用 markdown 类型渲染
+  if (role === 'assistant') {
+    return [{ type: 'markdown', data: content || '' }]
+  }
+  // 用户消息使用 text 类型
+  return [{ type: 'text', data: content || '' }]
+}
+
+// 转换为 t-chat 需要的 data 格式（保留用于兼容）
 const chatData = computed(() => {
   return messages.value.map((msg) => ({
     avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
@@ -142,18 +288,18 @@ const abortController = ref(null)
 
 // 普通模式快捷问题
 const normalQuickQuestions = [
-  '推荐一些湖南的热门景点',
-  '湖南有什么特色美食？',
-  '如何规划一次完美的湖南之旅？',
-  '湖南旅游的最佳季节是什么时候？'
+  '推荐一些杭州的热门景点',
+  '杭州有什么特色美食？',
+  '如何规划一次完美的杭州之旅？',
+  '杭州旅游的最佳季节是什么时候？'
 ]
 
 // 工具模式快捷问题
 const toolQuickQuestions = [
-  '查一下明天从北京到长沙的高铁',
-  '搜索一下张家界最新的旅游攻略',
-  '查询下周五从上海到张家界的火车',
-  '帮我搜索凤凰古城的住宿推荐'
+  '查一下明天从北京到杭州的高铁',
+  '杭州今天天气怎么样？',
+  '搜索西湖附近的美食餐厅',
+  '帮我搜索乌镇的住宿推荐'
 ]
 
 // 根据模式切换快捷问题
@@ -180,6 +326,13 @@ const handleSend = async (value) => {
   const content = value?.trim() || inputValue.value?.trim()
   if (!content || isLoading.value) return
   
+  // 检查登录状态
+  if (!isLoggedIn.value) {
+    MessagePlugin.warning('请先登录后再进行对话')
+    goToLogin()
+    return
+  }
+  
   // 添加用户消息
   messages.value.push({
     role: 'user',
@@ -199,7 +352,6 @@ const handleSend = async (value) => {
 // 调用AI接口
 const callAI = async (prompt) => {
   isLoading.value = true
-  const resetFlag = shouldResetHistory.value
   abortController.value = new AbortController()
   
   try {
@@ -210,8 +362,7 @@ const callAI = async (prompt) => {
       },
       body: JSON.stringify({
         message: prompt,
-        conversation_id: conversationId.value,
-        reset_history: resetFlag,
+        sessionId: conversationId.value || undefined,
         enable_tools: enableTools.value,
       }),
       signal: abortController.value.signal,
@@ -223,11 +374,14 @@ const callAI = async (prompt) => {
     
     const data = await response.json()
     shouldResetHistory.value = false
+    if (!conversationId.value && data?.sessionId) {
+      conversationId.value = data.sessionId
+    }
     
     // 添加AI回复
     messages.value.push({
       role: 'assistant',
-      content: data.ai_response || '抱歉，我暂时无法回答您的问题。',
+      content: data.ai_response || data.message || '抱歉，我暂时无法回答您的问题。',
     })
     
     // 滚动到底部
@@ -257,19 +411,17 @@ const handleStop = () => {
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
-    const chatEl = chatRef.value?.$el
+    const chatEl = chatRef.value
     if (chatEl) {
-      const scrollContainer = chatEl.querySelector('.t-chat__list') || chatEl
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight
-      }
+      // 新结构：直接使用 chat-list-wrapper 作为滚动容器
+      chatEl.scrollTop = chatEl.scrollHeight
     }
   })
 }
 
 // 清空对话
 const handleClear = () => {
-  conversationId.value = createConversationId()
+  conversationId.value = null
   shouldResetHistory.value = true
   messages.value = [
     {
@@ -280,11 +432,196 @@ const handleClear = () => {
   MessagePlugin.success('已开启新的对话')
 }
 
+// 加载会话列表
+const loadSessions = async () => {
+  // 未登录时不加载历史记录
+  if (!isLoggedIn.value) {
+    sessions.value = []
+    return
+  }
+  if (isLoadingSessions.value) return
+  
+  isLoadingSessions.value = true
+  try {
+    const response = await fetch('/api/ai-chat/sessions')
+    if (response.ok) {
+      const data = await response.json()
+      sessions.value = data.sessions || (Array.isArray(data) ? data : [])
+      sessionsLoadedOnce.value = true
+    }
+  } catch (error) {
+    console.error('加载会话列表失败:', error)
+  } finally {
+    isLoadingSessions.value = false
+  }
+}
+
+const handleManualRefreshSessions = (e) => {
+  if (e && e.isTrusted === false) return
+  loadSessions()
+}
+
+const toggleHistoryPanel = async () => {
+  const next = !showHistoryPanel.value
+  showHistoryPanel.value = next
+  if (!next) return
+  if (!isLoggedIn.value) return
+  if (sessionsLoadedOnce.value) return
+  await loadSessions()
+}
+
+// 加载指定会话的历史记录
+const loadSession = async (sessionId) => {
+  if (isLoadingHistory.value) return
+  if (sessionId === conversationId.value) {
+    showHistoryPanel.value = false
+    return
+  }
+  
+  isLoadingHistory.value = true
+  loadingHistoryId.value = sessionId
+  try {
+    const response = await fetch(`/api/ai-chat/history/${sessionId}`)
+    if (!response.ok) throw new Error('请求失败')
+
+    const data = await response.json()
+    const historyMessages = Array.isArray(data?.messages) ? data.messages : []
+    conversationId.value = sessionId
+    shouldResetHistory.value = false
+    messages.value = historyMessages.length ? historyMessages : [{ role: 'assistant', content: '该对话暂无消息' }]
+    showHistoryPanel.value = false
+    
+    await nextTick()
+    scrollToBottom()
+  } catch (error) {
+    console.error('加载历史记录失败:', error)
+    MessagePlugin.error('加载历史记录失败')
+  } finally {
+    isLoadingHistory.value = false
+    loadingHistoryId.value = null
+  }
+}
+
+// 确认删除对话
+const confirmDeleteSession = (sessionId) => {
+  const confirmDialog = DialogPlugin.confirm({
+    header: '删除确认',
+    body: '确定要删除这个对话吗？删除后无法恢复。',
+    confirmBtn: '删除',
+    cancelBtn: '取消',
+    theme: 'warning',
+    onConfirm: async () => {
+      await deleteSession(sessionId)
+      confirmDialog.destroy()
+    },
+    onClose: () => {
+      confirmDialog.destroy()
+    },
+  })
+}
+
+// 删除指定会话
+const deleteSession = async (sessionId) => {
+  try {
+    const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
+      method: 'DELETE',
+    })
+    
+    if (response.ok) {
+      // 从列表中移除
+      sessions.value = sessions.value.filter(s => s.conversation_id !== sessionId)
+      
+      // 如果删除的是当前会话，开启新对话（不显示提示）
+      if (sessionId === conversationId.value) {
+        conversationId.value = null
+        shouldResetHistory.value = true
+        messages.value = [{ role: 'assistant', content: defaultGreeting }]
+      }
+      
+      MessagePlugin.success('对话已删除')
+    } else {
+      MessagePlugin.error('删除失败')
+    }
+  } catch (error) {
+    console.error('删除会话失败:', error)
+    MessagePlugin.error('删除失败')
+  }
+}
+
+// 格式化日期
+const formatDate = (dateStr) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  if (!Number.isFinite(date.getTime())) return ''
+  const now = new Date()
+
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const diffDays = Math.round((nowOnly - dateOnly) / (1000 * 60 * 60 * 24))
+
+  const hh = date.getHours().toString().padStart(2, '0')
+  const mm = date.getMinutes().toString().padStart(2, '0')
+
+  if (diffDays === 0) return `今天 ${hh}:${mm}`
+  if (diffDays === 1) return `昨天 ${hh}:${mm}`
+  if (diffDays > 1 && diffDays < 7) return `${diffDays}天前`
+  const y = date.getFullYear()
+  const m = (date.getMonth() + 1).toString().padStart(2, '0')
+  const d = date.getDate().toString().padStart(2, '0')
+  if (y === now.getFullYear()) return `${m}/${d}`
+  return `${y}/${m}/${d}`
+}
+
+// 页面加载时检查登录状态并获取会话列表
+onMounted(async () => {
+  await checkLoginStatus()
+  
+  // 监听登录状态变化
+  authSubscription = supabase.auth.onAuthStateChange(async (event, session) => {
+    isLoggedIn.value = !!session
+    currentUser.value = session?.user || null
+    if (!session) {
+      sessions.value = []
+      sessionsLoadedOnce.value = false
+      return
+    }
+  })
+})
+
+onUnmounted(() => {
+  const sub = authSubscription?.data?.subscription
+  if (sub && typeof sub.unsubscribe === 'function') sub.unsubscribe()
+  authSubscription = null
+})
+
+watch(isLoggedIn, async (loggedIn) => {
+  if (!loggedIn) return
+  if (!showHistoryPanel.value) return
+  if (sessionsLoadedOnce.value) return
+  await loadSessions()
+})
+
 // 快捷问题
 const handleQuickQuestion = (question) => {
   if (!isLoading.value) {
     handleSend(question)
   }
+}
+
+// 跳转到登录页面
+const goToLogin = () => {
+  // 触发顶部导航栏的登录弹窗
+  // 通过查找包含"登录"文字的按钮来触发
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button')
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click()
+      showHistoryPanel.value = false
+      return
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录')
+  showHistoryPanel.value = false
 }
 </script>
 
@@ -295,6 +632,195 @@ const handleQuickQuestion = (question) => {
   flex-direction: column;
   background: linear-gradient(135deg, #f5f7fa 0%, #e4ecfb 100%);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* 主体区域 */
+.main-content {
+  flex: 1;
+  display: flex;
+  position: relative;
+}
+
+/* 历史会话侧边栏 */
+.history-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 280px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 50;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.08);
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.history-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.history-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+  gap: 8px;
+}
+
+.history-item:hover {
+  background: rgba(0, 102, 204, 0.06);
+}
+
+.history-item.is-active {
+  background: rgba(0, 102, 204, 0.1);
+  border: 1px solid rgba(0, 102, 204, 0.2);
+}
+
+.history-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d1d1f;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #86868b;
+}
+
+.history-item-delete {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  color: #999;
+}
+
+.history-item-delete:hover {
+  color: #ff4d4f;
+}
+
+.history-item:hover .history-item-delete {
+  opacity: 1;
+}
+
+.history-expand {
+  padding: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.history-expand .t-button {
+  color: #0066cc;
+  font-size: 13px;
+}
+
+.history-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #86868b;
+  gap: 12px;
+}
+
+.history-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 未登录提示样式 */
+.history-login-tip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: #666;
+}
+
+.history-login-tip .t-icon {
+  color: #0066cc;
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+
+.login-tip-title {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.login-tip-desc {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  color: #86868b;
+  line-height: 1.5;
+}
+
+/* 历史按钮样式 */
+.history-btn {
+  height: 40px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.history-btn.is-active {
+  background: rgba(0, 102, 204, 0.1);
+  border-color: #0066cc;
+  color: #0066cc;
+}
+
+/* 侧边栏动画 */
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.slide-left-enter-from,
+.slide-left-leave-to {
+  transform: translateX(-100%);
+  opacity: 0;
 }
 
 /* 页面头部 */
@@ -309,7 +835,7 @@ const handleQuickQuestion = (question) => {
 }
 
 .header-content {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -438,6 +964,20 @@ const handleQuickQuestion = (question) => {
   padding: 24px 20px;
 }
 
+/* 消息列表容器 */
+.chat-list-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+
+/* t-chat-list 组件样式 */
+:deep(.t-chat-list) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 /* t-chat 组件样式 */
 :deep(.t-chat) {
   flex: 1;
@@ -529,6 +1069,35 @@ const handleQuickQuestion = (question) => {
   font-weight: 600;
 }
 
+/* 工具模式提示 */
+.tool-mode-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, #e6f4ff 0%, #f0f7ff 100%);
+  border: 1px solid rgba(0, 102, 204, 0.15);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+  color: #0066cc;
+}
+
+.tool-mode-tip:hover {
+  background: linear-gradient(135deg, #d6ebff 0%, #e6f4ff 100%);
+  border-color: rgba(0, 102, 204, 0.3);
+}
+
+.tool-mode-tip strong {
+  font-weight: 600;
+}
+
+.tool-mode-tip .t-icon:last-child {
+  margin-left: auto;
+}
+
 .quick-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -580,10 +1149,15 @@ const handleQuickQuestion = (question) => {
   
   .header-actions {
     justify-content: space-between;
+    flex-wrap: wrap;
   }
   
   .chat-container {
     padding: 12px;
+  }
+  
+  .history-panel {
+    width: 100%;
   }
 }
 </style>

@@ -1,0 +1,886 @@
+const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
+const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
+const sensitiveFilter = require('../../utils/sensitiveFilter');
+
+/**
+ * LangChain 管理器
+ * 统一管理所有 AI 调用，提供商选择和降级
+ */
+class LangChainManager {
+  constructor(textProviders, imageProviders) {
+    // 初始化文本生成适配器
+    this.textAdapters = textProviders
+      .map(provider => new OpenAICompatibleAdapter(provider))
+      .filter(adapter => adapter !== null && adapter.isAvailable());
+
+    // 初始化图片生成适配器
+    this.imageAdapters = imageProviders.map(provider => {
+      switch (provider.name) {
+        case 'modelscope':
+          return new ModelScopeImageAdapter(provider);
+        default:
+          console.warn(`Unknown image provider: ${provider.name}`);
+          return null;
+      }
+    }).filter(adapter => adapter !== null && adapter.isAvailable());
+
+    this._probeCache = new Set();
+
+    console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
+  }
+
+  _debugEnabled() {
+    const v = process.env.AI_CHAT_DEBUG;
+    if (!v) return false;
+    return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  _stringifyErrorMessage(error) {
+    return String(error?.message || error || '');
+  }
+
+  _pickHeaders(headersLike) {
+    const out = {};
+    const allow = new Set([
+      'date',
+      'server',
+      'via',
+      'retry-after',
+      'x-request-id',
+      'x-requestid',
+      'x-amzn-requestid',
+      'x-amz-cf-id',
+      'cf-ray',
+      'modelscope-ratelimit-requests-limit',
+      'modelscope-ratelimit-requests-remaining',
+      'modelscope-ratelimit-model-requests-limit',
+      'modelscope-ratelimit-model-requests-remaining',
+      'x-ratelimit-limit-requests',
+      'x-ratelimit-remaining-requests',
+      'x-ratelimit-reset-requests',
+      'x-ratelimit-limit-tokens',
+      'x-ratelimit-remaining-tokens',
+      'x-ratelimit-reset-tokens',
+    ]);
+
+    const setIfOk = (k, v) => {
+      const key = typeof k === 'string' ? k.toLowerCase() : '';
+      if (!key) return;
+      const val = typeof v === 'string' ? v : v == null ? '' : String(v);
+      if (!val) return;
+      if (allow.has(key) || key.startsWith('x-ratelimit-')) out[key] = val;
+    };
+
+    const h = headersLike;
+    if (!h) return out;
+
+    if (typeof h.get === 'function') {
+      for (const k of allow) setIfOk(k, h.get(k));
+      if (typeof h.entries === 'function') {
+        let i = 0;
+        for (const [k, v] of h.entries()) {
+          if (i++ > 40) break;
+          setIfOk(k, v);
+        }
+      }
+      return out;
+    }
+
+    if (h && typeof h === 'object') {
+      for (const [k, v] of Object.entries(h)) setIfOk(k, v);
+      return out;
+    }
+
+    return out;
+  }
+
+  _summarizeProviderError(adapter, error) {
+    const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : Number.isFinite(Number(error?.response?.status)) ? Number(error.response.status) : null;
+    const code = typeof error?.code === 'string' ? error.code : typeof error?.lc_error_code === 'string' ? error.lc_error_code : '';
+    const type = typeof error?.type === 'string' ? error.type : '';
+    const name = typeof error?.name === 'string' ? error.name : '';
+    const message = this._stringifyErrorMessage(error);
+    const headers = this._pickHeaders(error?.headers || error?.response?.headers);
+    const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
+    return { provider: adapter?.name, model, baseURL, baseURLHasV1, status, code, type, name, message, headers };
+  }
+
+  selectTextProviderByName(name) {
+    if (!name) return this.selectTextProvider();
+    const hit = this.textAdapters.find((a) => a && a.name === name);
+    return hit || this.selectTextProvider();
+  }
+
+  createTextChatModel(options = {}) {
+    const preferred = typeof options.provider === 'string' ? options.provider : '';
+    const adapter = this.selectTextProviderByName(preferred);
+    return adapter.createLLM();
+  }
+
+  /**
+   * 选择可用的文本提供商
+   * 按优先级顺序返回第一个可用的提供商
+   */
+  selectTextProvider() {
+    if (this.textAdapters.length === 0) {
+      throw new Error('No available text providers');
+    }
+    return this.textAdapters[0];
+  }
+
+  /**
+   * 选择可用的图片提供商
+   * 按优先级顺序返回第一个可用的提供商
+   */
+  selectImageProvider() {
+    if (this.imageAdapters.length === 0) {
+      throw new Error('No available image providers');
+    }
+    return this.imageAdapters[0];
+  }
+
+  /**
+   * 带降级的文本生成调用
+   * 如果第一个提供商失败，自动切换到下一个
+   */
+  async withTextFallback(operationName, operationFn, retries = 0) {
+    const maxRetries = this.textAdapters.length - 1;
+
+    if (retries > maxRetries) {
+      throw new Error(`All text providers failed for operation: ${operationName}`);
+    }
+
+    const adapter = this.textAdapters[retries];
+
+    try {
+      console.log(`Attempting ${operationName} with provider: ${adapter.name} (attempt ${retries + 1})`);
+      const result = await operationFn(adapter);
+      console.log(`Successfully completed ${operationName} with provider: ${adapter.name}`);
+      return result;
+    } catch (error) {
+      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, this._stringifyErrorMessage(error));
+      if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
+      
+      if (retries < maxRetries) {
+        console.log(`Falling back to next provider...`);
+        return await this.withTextFallback(operationName, operationFn, retries + 1);
+      }
+      
+      throw error;
+    }
+  }
+
+  async invokeText(messages, options = {}) {
+    const filteredMessages = sensitiveFilter.prepareMessages(messages, {
+      mode: options?.sensitiveFilterMode,
+    });
+
+    const preferred = typeof options.provider === 'string' ? options.provider.trim() : '';
+    const allowedRaw = Array.isArray(options.allowedProviders) ? options.allowedProviders : [];
+    const allowedFromEnv = !allowedRaw.length && !preferred
+      ? String(process.env.AI_TEXT_PROVIDER_DEFAULT_PRIMARY || process.env.AI_TEXT_PROVIDER_DEFAULT_PREFERRED || '').trim()
+      : '';
+    const allowedProviders = (allowedRaw.length ? allowedRaw : allowedFromEnv ? [allowedFromEnv] : [])
+      .map((p) => (typeof p === 'string' ? p.trim() : ''))
+      .filter(Boolean);
+
+    const baseAdapters = Array.isArray(options.adapters) && options.adapters.length ? options.adapters : this.textAdapters;
+    const scopedAdapters = allowedProviders.length
+      ? baseAdapters.filter((a) => a && allowedProviders.includes(a.name))
+      : baseAdapters;
+    if (allowedProviders.length && scopedAdapters.length === 0) {
+      throw new Error(`No available text providers for: ${allowedProviders.join(', ')}`);
+    }
+
+    const adapters = (() => {
+      if (!preferred) return scopedAdapters;
+      const preferredAdapter = scopedAdapters.find(a => a.name === preferred);
+      if (!preferredAdapter) return scopedAdapters;
+      const rest = scopedAdapters.filter(a => a !== preferredAdapter);
+      return [preferredAdapter, ...rest];
+    })();
+
+    let lastError = null;
+    for (const adapter of adapters) {
+      try {
+        console.log(`Attempting invokeText with provider: ${adapter.name}`);
+        return await adapter.invoke(filteredMessages);
+      } catch (error) {
+        lastError = error;
+        console.warn(`Provider ${adapter.name} failed for invokeText:`, this._stringifyErrorMessage(error));
+        if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
+        if (this._isProviderProtocolError(error)) {
+          await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL: adapter?.baseURL, apiKey: adapter?.apiKey });
+          await this._probeOpenAIChatCompletionsEndpoint({
+            provider: adapter?.name,
+            baseURL: adapter?.baseURL,
+            apiKey: adapter?.apiKey,
+            model: adapter?.model,
+          });
+        }
+      }
+    }
+
+    throw lastError || new Error('All text providers failed for operation: invokeText');
+  }
+
+  /**
+   * 带降级的图片生成调用
+   */
+  async withImageFallback(operationName, operationFn, retries = 0) {
+    const maxRetries = this.imageAdapters.length - 1;
+
+    if (retries > maxRetries) {
+      throw new Error(`All image providers failed for operation: ${operationName}`);
+    }
+
+    const adapter = this.imageAdapters[retries];
+
+    try {
+      console.log(`Attempting ${operationName} with provider: ${adapter.name} (attempt ${retries + 1})`);
+      const result = await operationFn(adapter);
+      console.log(`Successfully completed ${operationName} with provider: ${adapter.name}`);
+      return result;
+    } catch (error) {
+      console.warn(`Provider ${adapter.name} failed for ${operationName}:`, this._stringifyErrorMessage(error));
+      if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
+      
+      if (retries < maxRetries) {
+        console.log(`Falling back to next provider...`);
+        return await this.withImageFallback(operationName, operationFn, retries + 1);
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 生成图片
+   */
+  async generateImage(prompt, options = {}) {
+    const shouldLogPrompt = process.env.IMAGE_LOG_PROMPT === 'true';
+    const { normalized: normalizedPrompt, prepared: preparedPrompt, matched } =
+      sensitiveFilter.prepareImagePrompt(prompt);
+    const promptToSend = preparedPrompt || normalizedPrompt;
+
+    if (shouldLogPrompt && matched.length) {
+      console.log('[image] sensitive_matched', matched.join(','));
+      if (promptToSend !== normalizedPrompt) {
+        console.log('[image] prompt_softened_len', promptToSend.length);
+        console.log('[image] prompt_softened_sent', promptToSend);
+      }
+    }
+
+    const preferred = typeof options.provider === 'string' ? options.provider : '';
+    const adapters = (() => {
+      if (!preferred) return this.imageAdapters;
+      const preferredAdapter = this.imageAdapters.find(a => a.name === preferred);
+      if (!preferredAdapter) return this.imageAdapters;
+      const rest = this.imageAdapters.filter(a => a !== preferredAdapter);
+      return [preferredAdapter, ...rest];
+    })();
+
+    let lastError = null;
+    for (const adapter of adapters) {
+      try {
+        console.log(`Attempting generateImage with provider: ${adapter.name}`);
+        return await adapter.generateImage(promptToSend, options);
+      } catch (error) {
+        lastError = error;
+        console.warn(`Provider ${adapter.name} failed for generateImage:`, this._stringifyErrorMessage(error));
+        if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
+
+        const canRetry = sensitiveFilter.isInvalidPromptError(error);
+        if (canRetry) {
+          const fallbackPrompt = sensitiveFilter.soften(normalizedPrompt, 2);
+          const shouldRetry = fallbackPrompt && fallbackPrompt !== promptToSend;
+          if (shouldRetry) {
+            if (shouldLogPrompt) {
+              console.log('[image] prompt_retry_softened_len', fallbackPrompt.length);
+              console.log('[image] prompt_retry_softened_sent', fallbackPrompt);
+            }
+            try {
+              return await adapter.generateImage(fallbackPrompt, options);
+            } catch (retryError) {
+              lastError = retryError;
+              console.warn(`Provider ${adapter.name} failed for generateImage retry:`, this._stringifyErrorMessage(retryError));
+              if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, retryError)));
+            }
+          }
+        }
+      }
+    }
+
+    throw lastError || new Error('All image providers failed for operation: generateImage');
+  }
+
+  _isRateLimitError(error) {
+    if (!error) return false;
+    if (error?.status === 429) return true;
+    if (error?.lc_error_code === 'MODEL_RATE_LIMIT') return true;
+    const msg = String(error?.message || error).toLowerCase();
+    return msg.includes('429') || msg.includes('rate limit') || msg.includes('model_rate_limit');
+  }
+
+  _isTimeoutError(error) {
+    if (!error) return false;
+    if (error?.status === 504) return true;
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (code && code.toUpperCase().includes('TIMEOUT')) return true;
+    const msg = String(error?.message || error).toLowerCase();
+    return msg.includes('timeout');
+  }
+
+  _isToolSchemaNotSupportedError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    return (
+      msg.includes('tools') &&
+      (msg.includes('unsupported') ||
+        msg.includes('not supported') ||
+        msg.includes('unknown') ||
+        msg.includes('invalid') ||
+        msg.includes('unexpected'))
+    );
+  }
+
+  _isToolInteropError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    if (!msg) return false;
+    if (msg.includes('tool_call_id') || msg.includes('tool_calls') || msg.includes('function_call')) return true;
+    if (msg.includes("cannot read properties of undefined") && msg.includes("reading 'message'")) return true;
+    return false;
+  }
+
+  _isProviderProtocolError(error) {
+    const msg = String(error?.message || error || '').toLowerCase();
+    if (!msg) return false;
+    if (msg.includes("cannot read properties of undefined") && msg.includes("reading 'message'")) return true;
+    if (msg.includes('invalid json response body')) return true;
+    if (msg.includes('unexpected token') && msg.includes('json')) return true;
+    return false;
+  }
+
+  async _probeOpenAIModelsEndpoint({ provider, baseURL, apiKey }) {
+    if (!this._debugEnabled()) return;
+    const name = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    if (!name || !rawBase || !key) return;
+
+    const base = rawBase.replace(/\/+$/, '');
+    const cacheKey = `models|${name}|${base}`;
+    if (this._probeCache.has(cacheKey)) return;
+    this._probeCache.add(cacheKey);
+
+    const url = `${base}/models`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = text.slice(0, 400);
+      console.warn('[ai-chat] provider.probe', JSON.stringify({
+        provider: name,
+        url,
+        status: res.status,
+        ok: res.ok,
+        ms: Date.now() - start,
+        preview,
+      }));
+    } catch (error) {
+      console.warn('[ai-chat] provider.probe_err', JSON.stringify({
+        provider: name,
+        url,
+        ms: Date.now() - start,
+        error: this._stringifyErrorMessage(error),
+      }));
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async _probeOpenAIChatCompletionsEndpoint({ provider, baseURL, apiKey, model }) {
+    if (!this._debugEnabled()) return;
+    const name = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    const modelName = typeof model === 'string' ? model : '';
+    if (!name || !rawBase || !key || !modelName) return;
+
+    const base = rawBase.replace(/\/+$/, '');
+    const cacheKey = `chat|${name}|${base}|${modelName}`;
+    if (this._probeCache.has(cacheKey)) return;
+    this._probeCache.add(cacheKey);
+
+    const url = `${base}/chat/completions`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = text.slice(0, 400);
+      console.warn('[ai-chat] provider.probe', JSON.stringify({
+        provider: name,
+        url,
+        status: res.status,
+        ok: res.ok,
+        ms: Date.now() - start,
+        preview,
+      }));
+    } catch (error) {
+      console.warn('[ai-chat] provider.probe_err', JSON.stringify({
+        provider: name,
+        url,
+        ms: Date.now() - start,
+        error: this._stringifyErrorMessage(error),
+      }));
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  _normalizeMessageContent(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part === 'object') {
+            if (typeof part.text === 'string') return part.text;
+            if (typeof part.content === 'string') return part.content;
+          }
+          return '';
+        })
+        .join('');
+    }
+    if (content == null) return '';
+    return String(content);
+  }
+
+  async invokeToolCallingAgent(options = {}) {
+    const { createReactAgent } = require('@langchain/langgraph/prebuilt');
+    const [{ AIMessage, HumanMessage, SystemMessage, ToolMessage }] = await Promise.all([import('@langchain/core/messages')]);
+
+    const messages = Array.isArray(options?.messages) ? options.messages : [];
+    const tools = Array.isArray(options?.tools) ? options.tools : [];
+    const prompt = typeof options?.prompt === 'string' ? options.prompt : '';
+
+    const recursionLimitRaw = Number(options?.recursionLimit);
+    const recursionLimit = Number.isFinite(recursionLimitRaw) && recursionLimitRaw > 0 ? recursionLimitRaw : 20;
+
+    const modelInvokeTimeoutMsRaw = Number(options?.modelInvokeTimeoutMs);
+    const modelInvokeTimeoutMs =
+      Number.isFinite(modelInvokeTimeoutMsRaw) && modelInvokeTimeoutMsRaw > 0 ? modelInvokeTimeoutMsRaw : 60000;
+
+    const modelscopeMaxRequestsRaw = Number(options?.modelscopeMaxRequestsPerChat);
+    const modelscopeMaxRequests =
+      Number.isFinite(modelscopeMaxRequestsRaw) && modelscopeMaxRequestsRaw > 0 ? modelscopeMaxRequestsRaw : null;
+
+    const preferred = typeof options?.provider === 'string' ? options.provider : '';
+    const rawAdapters = Array.isArray(options?.adapters) && options.adapters.length ? options.adapters : this.textAdapters;
+    const adapters = (() => {
+      if (!preferred) return rawAdapters;
+      const hit = rawAdapters.find((a) => a && a.name === preferred);
+      if (!hit) return rawAdapters;
+      const rest = rawAdapters.filter((a) => a !== hit);
+      return [hit, ...rest];
+    })();
+
+    const withTimeout = (promise, timeoutMs, code) => {
+      const msRaw = Number(timeoutMs);
+      const ms = Number.isFinite(msRaw) && msRaw > 0 ? msRaw : 60000;
+      return Promise.race([
+        Promise.resolve(promise),
+        new Promise((_, reject) => {
+          const t = setTimeout(() => {
+            const err = new Error(code || 'TIMEOUT');
+            err.status = 504;
+            err.code = code || 'TIMEOUT';
+            reject(err);
+          }, ms);
+          if (t && typeof t.unref === 'function') t.unref();
+        }),
+      ]);
+    };
+
+    const wrapModelWithRequestLimit = (base, { limit, provider }) => {
+      if (!base || typeof base !== 'object') return base;
+      const max = Number(limit);
+      if (!Number.isFinite(max) || max <= 0) return base;
+
+      let used = 0;
+      const shouldCount = (prop) => prop === 'invoke' || prop === 'batch' || prop === 'stream' || prop === 'streamEvents';
+      const shouldWrapFactory = (prop) => prop === 'bindTools' || prop === 'bind' || prop === 'withConfig';
+
+      const makeLimitError = () => {
+        const err = new Error('MODELSCOPE_REQUEST_LIMIT');
+        err.code = 'MODELSCOPE_REQUEST_LIMIT';
+        err.status = 429;
+        err.meta = { provider, limit: max, used };
+        return err;
+      };
+
+      const wrap = (target) =>
+        new Proxy(target, {
+          get(t, prop, receiver) {
+            const value = Reflect.get(t, prop, receiver);
+            if (typeof prop === 'string' && typeof value === 'function') {
+              if (shouldCount(prop)) {
+                return async (...args) => {
+                  used += 1;
+                  if (used > max) throw makeLimitError();
+                  return await value.apply(t, args);
+                };
+              }
+              if (shouldWrapFactory(prop)) {
+                return (...args) => {
+                  const out = value.apply(t, args);
+                  if (out && typeof out === 'object') return wrap(out);
+                  return out;
+                };
+              }
+            }
+            return value;
+          },
+        });
+
+      return wrap(base);
+    };
+
+    const toolCallingCapabilityCache = this._toolCallingCapabilityCache || (this._toolCallingCapabilityCache = new Map());
+
+    const msgKind = (m) => {
+      if (!m) return '';
+      const role =
+        typeof m.role === 'string'
+          ? m.role
+          : typeof m?.kwargs?.role === 'string'
+            ? m.kwargs.role
+            : typeof m?.lc_kwargs?.role === 'string'
+              ? m.lc_kwargs.role
+              : '';
+      const roleNorm = typeof role === 'string' ? role.trim().toLowerCase() : '';
+      if (roleNorm === 'assistant' || roleNorm === 'ai') return 'ai';
+      if (roleNorm === 'user' || roleNorm === 'human') return 'human';
+      if (roleNorm === 'system') return 'system';
+      if (roleNorm === 'tool') return 'tool';
+      try {
+        const t =
+          typeof m.getType === 'function'
+            ? m.getType()
+            : typeof m._getType === 'function'
+              ? m._getType()
+              : typeof m.type === 'string'
+                ? m.type
+                : typeof m._type === 'string'
+                  ? m._type
+                  : '';
+        const raw = typeof t === 'string' ? t.toLowerCase() : '';
+        if (raw.includes('tool')) return 'tool';
+        if (raw.includes('ai') || raw.includes('assistant')) return 'ai';
+        if (raw.includes('human') || raw.includes('user')) return 'human';
+        if (raw.includes('system')) return 'system';
+      } catch {}
+      const cn = typeof m?.constructor?.name === 'string' ? m.constructor.name.toLowerCase() : '';
+      if (cn.includes('tool')) return 'tool';
+      if (cn.includes('ai')) return 'ai';
+      if (cn.includes('human')) return 'human';
+      if (cn.includes('system')) return 'system';
+      return '';
+    };
+
+    const tryParseJsonObject = (text) => {
+      const raw = typeof text === 'string' ? text.trim() : '';
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {}
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m && m[0]) {
+        try {
+          return JSON.parse(m[0]);
+        } catch {}
+      }
+      return null;
+    };
+
+    const runCompatToolAgent = async ({ llm, providerName }) => {
+      const maxTurnsRaw = Number(process.env.AI_CHAT_COMPAT_AGENT_MAX_TURNS || '6');
+      const maxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw > 0 ? Math.min(30, Math.floor(maxTurnsRaw)) : 6;
+      const toolList = tools.map((t) => (t && typeof t === 'object' ? t.name : '')).filter(Boolean).slice(0, 64);
+      const compatPrompt = `${prompt}\n\n你可以使用工具来获取信息。\n请严格遵守以下输出格式之一：\n1) 需要调用工具时：TOOL_CALL {\"name\":\"tool_name\",\"args\":{...}}\n2) 可以直接回答时：FINAL <你的回答>\n除以上格式不要输出其他内容。\n可用工具：${toolList.join(', ')}`;
+      const convo = [new SystemMessage(compatPrompt), ...messages];
+      const toolMap = new Map(tools.map((t) => [t?.name, t]).filter(([k]) => typeof k === 'string' && k));
+
+      for (let turn = 0; turn < maxTurns; turn++) {
+        const ai = await withTimeout(llm.invoke(convo), modelInvokeTimeoutMs, 'MODEL_INVOKE_TIMEOUT');
+        const aiText = this._normalizeMessageContent(ai?.content).trim();
+        if (!aiText) return '';
+
+        if (aiText.startsWith('FINAL')) {
+          const out = aiText.replace(/^FINAL\s*/i, '').trim();
+          return out || '';
+        }
+
+        const idx = aiText.toUpperCase().indexOf('TOOL_CALL');
+        if (idx >= 0) {
+          const jsonPart = aiText.slice(idx + 'TOOL_CALL'.length).trim();
+          const parsed = tryParseJsonObject(jsonPart);
+          const toolName = typeof parsed?.name === 'string' ? parsed.name : typeof parsed?.tool === 'string' ? parsed.tool : '';
+          const args = parsed?.args ?? parsed?.arguments ?? parsed?.input ?? {};
+          const tool = toolMap.get(toolName);
+          if (!tool || typeof tool.invoke !== 'function') {
+            convo.push(new AIMessage(aiText));
+            convo.push(new HumanMessage(`TOOL_RESULT ${toolName} ERROR: unknown tool`));
+            continue;
+          }
+          const toolOut = await withTimeout(tool.invoke(args), modelInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
+          const toolText = this._normalizeMessageContent(toolOut);
+          convo.push(new AIMessage(aiText));
+          convo.push(new HumanMessage(`TOOL_RESULT ${toolName}:\n${toolText}`));
+          continue;
+        }
+
+        return aiText;
+      }
+
+      return '';
+    };
+
+    const supportsNativeTools = async (providerName, llm) => {
+      const name = typeof providerName === 'string' ? providerName.trim().toLowerCase() : '';
+      if (!name) return true;
+      if (name !== 'gitcode') return true;
+
+      if (toolCallingCapabilityCache.has(name)) return toolCallingCapabilityCache.get(name);
+
+      const probeEnabledRaw = process.env.AI_CHAT_TOOLCALL_PROBE_ENABLED;
+      const probeEnabled = probeEnabledRaw == null || probeEnabledRaw === '' ? true : probeEnabledRaw === '1' || probeEnabledRaw.toLowerCase() === 'true';
+      if (!probeEnabled) {
+        toolCallingCapabilityCache.set(name, true);
+        return true;
+      }
+
+      const probeTimeoutMsRaw = Number(process.env.AI_CHAT_TOOLCALL_PROBE_TIMEOUT_MS || '8000');
+      const probeTimeoutMs = Number.isFinite(probeTimeoutMsRaw) && probeTimeoutMsRaw > 0 ? probeTimeoutMsRaw : 8000;
+
+      const probeRecursionLimitRaw = Number(process.env.AI_CHAT_TOOLCALL_PROBE_RECURSION_LIMIT || '8');
+      const probeRecursionLimit =
+        Number.isFinite(probeRecursionLimitRaw) && probeRecursionLimitRaw > 0 ? probeRecursionLimitRaw : 8;
+
+      try {
+        const { z } = require('zod');
+        const { DynamicStructuredTool } = require('@langchain/core/tools');
+
+        let called = 0;
+        const probeTool = new DynamicStructuredTool({
+          name: '__probe_tool_calling',
+          description: 'Internal capability probe tool.',
+          schema: z.object({}).passthrough(),
+          func: async () => {
+            called += 1;
+            return 'OK';
+          },
+        });
+
+        const probePrompt =
+          'You are testing tool calling. Call the tool __probe_tool_calling exactly once. After you receive the tool result, respond with exactly: OK';
+
+        const agent = createReactAgent({ llm, tools: [probeTool], prompt: probePrompt });
+        const outState = await withTimeout(
+          agent.invoke({ messages: [new HumanMessage('Run the tool calling probe now.')] }, { recursionLimit: probeRecursionLimit }),
+          probeTimeoutMs,
+          'TOOLCALL_PROBE_TIMEOUT',
+        );
+
+        const outMessages = Array.isArray(outState?.messages) ? outState.messages : [];
+        const toolMsgs = outMessages.filter((m) => msgKind(m) === 'tool' || m instanceof ToolMessage);
+        const lastAi = (() => {
+          for (let i = outMessages.length - 1; i >= 0; i--) {
+            const m = outMessages[i];
+            if (msgKind(m) === 'ai' || m instanceof AIMessage) return m;
+          }
+          return null;
+        })();
+
+        const lastText = this._normalizeMessageContent(lastAi?.content).trim();
+        const ok = lastText === 'OK' && called === 1 && toolMsgs.length >= 1;
+        toolCallingCapabilityCache.set(name, ok);
+        if (this._debugEnabled()) console.warn(`[ai-chat] toolcall_probe`, JSON.stringify({ provider: providerName, ok, called, toolMsgs: toolMsgs.length, lastText }));
+        return ok;
+      } catch {
+        toolCallingCapabilityCache.set(name, false);
+        if (this._debugEnabled()) console.warn(`[ai-chat] toolcall_probe`, JSON.stringify({ provider: providerName, ok: false }));
+        return false;
+      }
+    };
+
+    let lastErr = null;
+    for (const adapter of adapters) {
+      if (!adapter || typeof adapter.createLLM !== 'function') continue;
+      const providerName = typeof adapter?.name === 'string' ? adapter.name : '';
+      const llmBase = adapter.createLLM();
+      const llm =
+        modelscopeMaxRequests && providerName.toLowerCase().startsWith('modelscope')
+          ? wrapModelWithRequestLimit(llmBase, { limit: modelscopeMaxRequests, provider: providerName })
+          : llmBase;
+      if (!llm) continue;
+      const nativeOk = await supportsNativeTools(providerName, llm);
+      if (!nativeOk) {
+        try {
+          if (typeof options?.onAdapterStart === 'function') {
+            await options.onAdapterStart({ adapter });
+          }
+          const started = Date.now();
+          const compatText = await runCompatToolAgent({ llm, providerName });
+          if (compatText && compatText.trim()) return { text: compatText, provider: adapter?.name || '', ms: Date.now() - started };
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          lastErr = err;
+          if (typeof options?.onAdapterError === 'function') {
+            await options.onAdapterError({ adapter, error: err });
+          }
+        }
+        continue;
+      }
+
+      try {
+        const started = Date.now();
+        if (typeof options?.onAdapterStart === 'function') {
+          await options.onAdapterStart({ adapter });
+        }
+        const agent = createReactAgent({ llm, tools, prompt });
+        const outState = await withTimeout(agent.invoke({ messages }, { recursionLimit }), modelInvokeTimeoutMs, 'MODEL_INVOKE_TIMEOUT');
+        const outMessages = Array.isArray(outState?.messages) ? outState.messages : [];
+        let lastAi = null;
+        for (let i = outMessages.length - 1; i >= 0; i--) {
+          const m = outMessages[i];
+          if (msgKind(m) === 'ai' || m instanceof AIMessage) {
+            lastAi = m;
+            break;
+          }
+        }
+        const text = this._normalizeMessageContent(lastAi?.content);
+        if (text && text.trim()) return { text, provider: adapter?.name || '', ms: Date.now() - started };
+
+        if (this._debugEnabled()) {
+          const tail = outMessages.slice(-10).map((m) => {
+            const kind = msgKind(m);
+            const content = this._normalizeMessageContent(m?.content);
+            const preview = typeof content === 'string' ? content.slice(0, 80) : String(content ?? '').slice(0, 80);
+            const extra =
+              m && typeof m === 'object'
+                ? {
+                    role: typeof m.role === 'string' ? m.role : typeof m?.kwargs?.role === 'string' ? m.kwargs.role : '',
+                    hasToolCalls: !!(m?.tool_calls || m?.additional_kwargs?.tool_calls || m?.kwargs?.tool_calls),
+                    hasFunctionCall: !!(m?.additional_kwargs?.function_call || m?.kwargs?.function_call),
+                  }
+                : {};
+            return { kind, content_len: typeof content === 'string' ? content.length : String(content ?? '').length, preview, ...extra };
+          });
+          console.warn(`[ai-chat] agent.empty_messages`, JSON.stringify({ provider: adapter?.name || '', tail }));
+        }
+
+        const emptyErr = new Error('MODEL_EMPTY_RESPONSE');
+        emptyErr.code = 'MODEL_EMPTY_RESPONSE';
+        emptyErr.status = 502;
+        emptyErr.meta = { provider: adapter?.name || '', ms: Date.now() - started };
+        lastErr = emptyErr;
+        if (typeof options?.onAdapterError === 'function') {
+          await options.onAdapterError({ adapter, error: emptyErr });
+        }
+        continue;
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        lastErr = err;
+        if (typeof options?.onAdapterError === 'function') {
+          await options.onAdapterError({ adapter, error: err });
+        }
+        continue;
+      }
+    }
+
+    throw lastErr || new Error('MODEL_INVOKE_FAILED');
+  }
+
+  /**
+   * 获取可用的文本提供商列表
+   */
+  getAvailableTextProviders() {
+    return this.textAdapters.map(adapter => ({
+      name: adapter.name,
+      model: adapter.model,
+      enabled: adapter.enabled,
+    }));
+  }
+
+  /**
+   * 获取可用的图片提供商列表
+   */
+  getAvailableImageProviders() {
+    return this.imageAdapters.map(adapter => ({
+      name: adapter.name,
+      model: adapter.model,
+      enabled: adapter.enabled,
+    }));
+  }
+
+  /**
+   * 测试所有提供商连接
+   */
+  async testAllConnections() {
+    const results = {
+      text: {},
+      image: {},
+    };
+
+    for (const adapter of this.textAdapters) {
+      try {
+        results.text[adapter.name] = await adapter.testConnection();
+      } catch (error) {
+        results.text[adapter.name] = false;
+      }
+    }
+
+    for (const adapter of this.imageAdapters) {
+      try {
+        results.image[adapter.name] = await adapter.testConnection();
+      } catch (error) {
+        results.image[adapter.name] = false;
+      }
+    }
+
+    return results;
+  }
+}
+
+module.exports = LangChainManager;

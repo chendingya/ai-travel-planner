@@ -286,12 +286,134 @@ const budgetIconMap = {
 
 const budgetIconName = (key) => budgetIconMap[key] || 'money-circle';
 
+const parseMoneyToNumber = (raw) => {
+  if (raw == null) return 0;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+  if (typeof raw === 'boolean') return 0;
+
+  if (typeof raw === 'object') {
+    return parseMoneyToNumber(raw.value ?? raw.amount ?? raw.cost ?? raw.price ?? raw.money ?? raw.total);
+  }
+
+  const s = String(raw).trim();
+  if (!s) return 0;
+
+  const compact = s.replace(/[,，\s]/g, '').replace(/[¥￥元块人民币]/g, '');
+  const factor = /[万wW]/.test(compact) ? 10000 : /[千kK]/.test(compact) ? 1000 : 1;
+  const numericMatch = compact.match(/-?\d+(\.\d+)?/);
+  if (numericMatch) {
+    const n = Number(numericMatch[0]);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n * factor;
+  }
+
+  return 0;
+};
+
+const normalizeBudgetKey = (key) => {
+  const k = String(key ?? '').trim();
+  if (!k) return '';
+  const lower = k.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(budgetLabelMap, lower)) return lower;
+
+  const cnMap = {
+    交通: 'transportation',
+    住宿: 'accommodation',
+    餐饮: 'meals',
+    吃饭: 'meals',
+    美食: 'meals',
+    景点: 'attractions',
+    门票: 'tickets',
+    车票: 'transportation',
+    打车: 'transportation',
+    购物: 'shopping',
+    其他: 'other',
+    杂费: 'other',
+  };
+  if (Object.prototype.hasOwnProperty.call(cnMap, k)) return cnMap[k];
+  return k;
+};
+
+const normalizeBudgetBreakdown = (input) => {
+  if (input == null) return null;
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return normalizeBudgetBreakdown(parsed);
+    } catch {
+      return null;
+    }
+  }
+
+  const ignoredKeys = new Set([
+    'total',
+    'sum',
+    'total_budget',
+    'budget',
+    '合计',
+    '总计',
+    '总预算',
+    '预算',
+  ]);
+
+  const out = {};
+  const add = (k, v) => {
+    const nk = normalizeBudgetKey(k);
+    if (!nk) return;
+    if (ignoredKeys.has(nk) || ignoredKeys.has(String(k).trim())) return;
+    const n = parseMoneyToNumber(v);
+    if (!Number.isFinite(n) || n < 0) return;
+    out[nk] = (out[nk] || 0) + n;
+  };
+
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      if (Array.isArray(item) && item.length >= 2) {
+        add(item[0], item[1]);
+        continue;
+      }
+      if (!item || typeof item !== 'object') continue;
+      const key = item.key ?? item.category ?? item.type ?? item.name ?? item.label;
+      const val = item.value ?? item.amount ?? item.cost ?? item.price ?? item.money ?? item.total;
+      if (key != null && val != null) add(key, val);
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  if (typeof input === 'object') {
+    if (input.budget_breakdown != null) return normalizeBudgetBreakdown(input.budget_breakdown);
+    if (Array.isArray(input.items)) return normalizeBudgetBreakdown(input.items);
+    if (Array.isArray(input.categories)) return normalizeBudgetBreakdown(input.categories);
+
+    for (const [k, v] of Object.entries(input)) add(k, v);
+    return Object.keys(out).length ? out : null;
+  }
+
+  return null;
+};
+
+const ensureBudgetBreakdownNormalized = () => {
+  if (!plan.value) return;
+  const normalized = normalizeBudgetBreakdown(plan.value.budget_breakdown);
+  if (normalized) {
+    plan.value.budget_breakdown = normalized;
+    return;
+  }
+  if (plan.value.budget_breakdown && typeof plan.value.budget_breakdown === 'object') {
+    const keys = Object.keys(plan.value.budget_breakdown);
+    if (keys.length === 0) plan.value.budget_breakdown = {};
+  }
+};
+
 const budgetEntries = computed(() => {
   const breakdown = plan.value?.budget_breakdown || {};
   return Object.keys(breakdown)
     .map((key, index) => {
       const raw = breakdown[key];
-      const numeric = Number(raw);
+      const numeric = parseMoneyToNumber(raw);
       return {
         key,
         value: Number.isFinite(numeric) && numeric >= 0 ? numeric : 0,
@@ -325,12 +447,12 @@ const breakdownTotal = computed(() => {
 const formBudget = computed({
   get: () => {
     const raw = form.value?.budget;
-    const numeric = Number(raw);
+    const numeric = parseMoneyToNumber(raw);
     if (Number.isFinite(numeric) && numeric >= 0) return numeric;
     return breakdownTotal.value;
   },
   set: (val) => {
-    const numeric = Number(val);
+    const numeric = parseMoneyToNumber(val);
     if (!form.value) form.value = {};
     form.value.budget = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
   }
@@ -345,7 +467,7 @@ const budgetDifferenceAbs = computed(() => Math.abs(budgetDifference.value));
 const hasBudgetGap = computed(() => budgetDifferenceAbs.value > 0.5);
 
 const addBudgetItem = () => {
-  const key = newBudgetKey.value.trim();
+  const key = normalizeBudgetKey(newBudgetKey.value.trim());
   if (!key) {
     MessagePlugin.warning('请输入预算类别名称');
     return;
@@ -442,6 +564,7 @@ const newBudgetValue = ref(null);
 onMounted(() => {
   // 从store加载方案和表单数据
   plan.value = JSON.parse(JSON.stringify(store.plan));
+  ensureBudgetBreakdownNormalized();
   emit('plan-draft-change', plan.value);
   form.value = store.form;
   
@@ -471,6 +594,7 @@ onMounted(() => {
   watch(() => store.plan, (newPlan) => {
     if (newPlan && newPlan !== plan.value) {
       plan.value = JSON.parse(JSON.stringify(newPlan));
+      ensureBudgetBreakdownNormalized();
       console.log('📋 从 store 同步最新计划');
       emit('plan-draft-change', plan.value);
     }
@@ -610,13 +734,13 @@ const handleSavePlan = async () => {
 const calculateTotal = (budget) => {
   if (!budget) return 0;
   return Object.values(budget).reduce((sum, value) => {
-    const numeric = Number(value);
+    const numeric = parseMoneyToNumber(value);
     return sum + (Number.isFinite(numeric) && numeric >= 0 ? numeric : 0);
   }, 0);
 };
 
 const formatCurrency = (value) => {
-  const numeric = Number(value);
+  const numeric = parseMoneyToNumber(value);
   if (!Number.isFinite(numeric)) return '0';
   return numeric.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 };
@@ -624,6 +748,7 @@ const formatCurrency = (value) => {
 const toggleEdit = async () => {
   if (!editMode.value) {
     // 进入编辑模式
+    ensureBudgetBreakdownNormalized();
     editMode.value = true;
     MessagePlugin.info('已进入编辑模式：可修改时间/地点或添加/删除活动');
   } else {
@@ -677,11 +802,9 @@ const persistPlan = () => {
     p.daily_itinerary.forEach(d => {
       d.activities = (d.activities || []).filter(a => a && (a.description || a.time));
     });
-    if (p.budget_breakdown && typeof p.budget_breakdown === 'object') {
-      Object.keys(p.budget_breakdown).forEach((key) => {
-        const numeric = Number(p.budget_breakdown[key]);
-        p.budget_breakdown[key] = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
-      });
+    if (p.budget_breakdown != null) {
+      const normalized = normalizeBudgetBreakdown(p.budget_breakdown);
+      p.budget_breakdown = normalized || {};
     }
     const totalBudgetNumber = Number(formBudget.value);
     if (Number.isFinite(totalBudgetNumber) && totalBudgetNumber >= 0) {

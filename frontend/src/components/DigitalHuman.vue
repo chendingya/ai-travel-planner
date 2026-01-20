@@ -247,7 +247,7 @@ const generateSpotAudio = async (spot) => {
     }
     
     // 调用AI生成讲解内容
-    const response = await fetch('http://localhost:5000/api/ai-chat', {
+    const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -318,7 +318,7 @@ const pollAudioStatus = async (taskId) => {
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const response = await fetch(`http://localhost:5000/api/tts/audio/${taskId}`)
+      const response = await fetch(`/api/tts/audio/${taskId}`)
       
       if (!response.ok) {
         throw new Error('查询音频状态失败')

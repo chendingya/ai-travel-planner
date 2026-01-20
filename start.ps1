@@ -1,22 +1,51 @@
 # 拾光绘旅 - 启动脚本
 # 此脚本将自动启动前端和后端服务
 
+param(
+    [switch]$NoBrowser  # 不自动打开浏览器
+)
+
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "  拾光绘旅 - 项目启动工具" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 清理可能残留的 Node.js 进程
-Write-Host "🧹 检查并清理残留进程..." -ForegroundColor Yellow
-$nodeProcesses = Get-Process node -ErrorAction SilentlyContinue
-if ($nodeProcesses) {
-    Write-Host "⚠️  发现 $($nodeProcesses.Count) 个 Node.js 进程，正在清理..." -ForegroundColor Yellow
-    $nodeProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-    Write-Host "✅ 进程清理完成" -ForegroundColor Green
-} else {
-    Write-Host "✅ 没有残留进程" -ForegroundColor Green
+# 获取当前脚本的进程ID，避免误杀自己
+$currentPID = $PID
+
+# 停止占用指定端口的进程（排除当前进程）
+function Stop-PortProcess {
+    param([int]$Port, [string]$ServiceName)
+    
+    try {
+        $netstatOutput = netstat -ano 2>$null | Select-String ":$Port\s" | Select-String "LISTENING"
+        if ($netstatOutput) {
+            foreach ($line in $netstatOutput) {
+                $parts = $line.ToString().Trim() -split '\s+'
+                $pid = $parts[-1]
+                if ($pid -match '^\d+$' -and [int]$pid -ne 0 -and [int]$pid -ne $currentPID) {
+                    $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                    if ($process -and $process.Id -ne $currentPID) {
+                        Write-Host "🔴 停止 $ServiceName (PID: $pid, 进程: $($process.ProcessName))" -ForegroundColor Yellow
+                        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    } catch {
+        # 忽略错误
+    }
 }
+
+# 清理可能残留的进程
+Write-Host "🧹 检查并清理残留进程..." -ForegroundColor Yellow
+
+# 停止占用端口的进程
+Stop-PortProcess -Port 3001 -ServiceName "后端"
+Stop-PortProcess -Port 8080 -ServiceName "前端"
+
+Start-Sleep -Seconds 1
+Write-Host "✅ 进程清理完成" -ForegroundColor Green
 Write-Host ""
 
 # 检查环境变量是否配置
@@ -66,7 +95,12 @@ Write-Host ""
 
 # 启动后端服务
 Write-Host "🚀 正在启动后端服务..." -ForegroundColor Cyan
-Start-Process pwsh -ArgumentList '-NoExit', '-Command', "cd '$PWD\backend'; Write-Host '🔧 后端服务器启动中...' -ForegroundColor Cyan; node src/index.js"
+$projectRoot = $PWD.Path
+Start-Process pwsh -ArgumentList @(
+    '-NoExit',
+    '-Command',
+    "Set-Location '$projectRoot\backend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 后端'; Write-Host '🔧 后端服务器启动中...' -ForegroundColor Cyan; node src/index.js"
+)
 
 # 等待后端启动
 Write-Host "⏳ 等待后端服务启动..." -ForegroundColor Yellow
@@ -74,7 +108,11 @@ Start-Sleep -Seconds 3
 
 # 启动前端服务
 Write-Host "🚀 正在启动前端服务..." -ForegroundColor Cyan
-Start-Process pwsh -ArgumentList '-NoExit', '-Command', "cd '$PWD\frontend'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; npm run dev"
+Start-Process pwsh -ArgumentList @(
+    '-NoExit',
+    '-Command',
+    "Set-Location '$projectRoot\frontend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 前端'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; npm run dev"
+)
 
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Green
@@ -94,6 +132,8 @@ Write-Host "🎉 祝你使用愉快！" -ForegroundColor Magenta
 Write-Host ""
 
 # 等待 2 秒后自动打开浏览器
-Start-Sleep -Seconds 2
-Write-Host "🌐 正在打开浏览器..." -ForegroundColor Cyan
-Start-Process "http://localhost:8080"
+if (-not $NoBrowser) {
+    Start-Sleep -Seconds 2
+    Write-Host "🌐 正在打开浏览器..." -ForegroundColor Cyan
+    Start-Process "http://localhost:8080"
+}
