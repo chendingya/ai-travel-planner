@@ -149,12 +149,12 @@ MCP servers ready: 12306(tools:2), amap(tools:3)
 
 ```
 VITE v4.5.14  ready in 2584 ms
-➜  Local:   http://localhost:5173/
+➜  Local:   http://localhost:8080/
 ```
 
 ### 浏览器访问
 
-✅ 浏览器自动打开 http://localhost:5173
+✅ 浏览器自动打开 http://localhost:8080
 
 ### 验证配置
 
@@ -205,7 +205,7 @@ window.__APP_CONFIG__ = {
 .\stop.ps1
 
 # 或手动查找并终止进程
-netstat -ano | findstr :5173  # 前端
+netstat -ano | findstr :8080  # 前端
 netstat -ano | findstr :3001  # 后端
 taskkill /PID <进程ID> /F
 ```

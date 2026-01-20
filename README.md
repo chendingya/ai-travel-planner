@@ -7,14 +7,14 @@
 ## ✨ 核心功能
 
 ### 🧠 智能行程规划
-- **AI 驱动**：基于阿里云百炼大模型（通义千问）/ GitCode DeepSeek V3.2，智能生成个性化旅行方案
+- **AI 驱动**：基于 LangChain 统一管理多个 AI 提供商（GitCode Kimi-K2、阿里百炼 Qwen 等），支持自动降级
 - **多维度输入**：支持目的地、天数、预算、人数、偏好等多维度需求
 - **语音输入**：支持语音识别输入目的地信息，提升填写效率
 - **结构化输出**：生成包含日程安排、预算分解、旅行提示的完整方案
 
 ### 🎨 AI 速记卡片 (拾光·绘影)
 - **智能绘图**：基于旅行计划自动生成精美的手绘风格速记卡片
-- **多提供商支持**：可切换腾讯云混元生图或魔搭社区 ModelScope
+- **多提供商支持**：支持魔搭社区 ModelScope 等图片生成提供商
 - **提示词优化**：AI 自动生成适合绘图的艺术风格提示词
 
 ### 🎵 AI BGM歌单 (听见·山河)
@@ -58,6 +58,7 @@
 - **智能问答**：基于大语言模型，回答关于旅游的各种问题
 - **工具增强**：支持火车票查询、网络搜索等MCP工具，提供更全面的旅行服务
 
+---
 
 ## 🛠️ 技术栈
 
@@ -71,13 +72,17 @@
 - **语音识别**：Web Speech API
 
 ### 后端
-- **运行时**：Node.js
-- **框架**：Express.js
-- **AI 服务**：阿里云百炼（通义千问）/ GitCode Deepseek V3.2
-- **图片生成**：腾讯云混元生图 / 魔搭社区 ModelScope
-- **API 调用**：OpenAI SDK 兼容模式
-- **TTS**：后端内置本地合成（Windows 使用 System.Speech 生成音频文件）
-- **MCP 工具**：支持火车票查询、网络搜索等工具调用
+- **运行时**：Node.js >= 18.0.0
+- **框架**：Express.js 5.x
+- **AI 集成**：LangChain 1.2.x 统一管理多个 AI 提供商
+  - GitCode (Kimi-K2) - 高速响应
+  - 阿里百炼 (Qwen 系列) - 强大性能
+  - 支持自定义其他 OpenAI 兼容提供商
+  - 多提供商自动降级，提高可靠性
+- **图片生成**：魔搭社区 ModelScope（免费额度充足）
+- **MCP 工具**：支持火车票查询、高德地图、Bing 搜索等工具调用
+- **语音合成**：TTS 服务（支持本地 Windows TTS）
+- **架构模式**：分层架构（Controller → Service → LangChain → AI Providers）
 
 ### 数据库与认证
 - **数据库**：Supabase (PostgreSQL)
@@ -88,64 +93,7 @@
 - **Docker**：容器化部署
 - **Docker Compose**：多容器编排
 
-## 📁 项目结构
-
-```
-ai-travel-planner/
-├── backend/                    # 后端服务
-│   ├── src/
-│   │   └── index.js           # Express 服务器主文件
-│   ├── package.json
-│   └── 阿里百炼配置说明.md
-│
-├── frontend/                   # 前端应用
-│   ├── src/
-│   │   ├── components/        # Vue 组件
-│   │   │   ├── Auth.vue      # 用户认证组件
-│   │   │   ├── DigitalHuman.vue # 数字人导游组件
-│   │   │   ├── ExpenseTracker.vue # 费用追踪
-│   │   │   ├── GlassButton.vue # 玻璃态按钮组件（支持 light/dark/primary 主题）
-│   │   │   ├── Home.vue      # 首页营销组件
-│   │   │   ├── MapView.vue   # 地图组件
-│   │   │   ├── MapView_old.vue # 地图旧版本组件
-│   │   │   ├── PlanDetail.vue # 方案详情组件
-│   │   │   ├── Planner.vue   # 规划表单组件
-│   │   │   ├── SavedPlans.vue # 已保存方案列表
-│   │   │   ├── SimpleBarChart.vue # 柱状图
-│   │   │   └── SimplePieChart.vue # 饼图
-│   │   ├── views/            # 页面视图
-│   │   │   ├── AIChatView.vue # AI面对面对话页面
-│   │   │   ├── ExpenseTrackerView.vue
-│   │   │   ├── HomeView.vue
-│   │   │   ├── PlanDetailView.vue
-│   │   │   ├── PlannerView.vue
-│   │   │   ├── SavedPlansView.vue
-│   │   │   ├── QuickNoteView.vue # AI 速记卡片生成页面
-│   │   │   ├── PlaylistView.vue # AI BGM歌单生成页面
-│   │   │   ├── HandbookView.vue # AI 旅游明信片生成页面
-│   │   │   └── ShareContentView.vue # AI 分享文案生成页面
-│   │   ├── router/           # 路由配置
-│   │   ├── stores/           # Pinia 状态管理
-│   │   ├── config/           # 配置文件
-│   │   ├── utils/            # 工具函数
-│   │   ├── styles/           # 全局样式
-│   │   ├── App.vue           # 根组件
-│   │   ├── main.js           # 入口文件
-│   │   ├── runtimeConfig.js  # 运行时配置
-│   │   └── supabase.js       # Supabase 客户端
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   └── 高德地图配置说明.md
-│
-├── Dockerfile                 # Docker 配置文件
-├── docker-compose.yml         # Docker Compose 配置
-├── supabase-setup.sql        # 数据库初始化脚本
-├── start.ps1                 # Windows 启动脚本
-├── stop.ps1                  # Windows 停止脚本
-├── QUICKSTART.md             # 快速开始指南
-└── README.md                 # 项目说明文件
-```
+---
 
 ## 🎨 页面说明
 
@@ -174,7 +122,7 @@ ai-travel-planner/
 
 ### 5. AI 速记卡片 (`/quick-note`)
 - 基于旅行计划生成精美手绘风格卡片
-- 支持切换图片生成提供商（腾讯混元/魔搭社区）
+- 支持切换图片生成提供商（魔搭社区）
 - 显示生成的提示词和图片
 - 支持下载和重新生成
 
@@ -208,6 +156,7 @@ ai-travel-planner/
 - 提供普通对话和工具增强两种模式
 - 支持火车票查询、网络搜索等MCP工具功能
 
+---
 
 ## 🚀 快速开始
 
@@ -215,12 +164,18 @@ ai-travel-planner/
 
 在启动项目之前，你需要先获取以下 API 密钥：
 
-#### 1. 阿里云百炼 API Key
+#### 1. AI 提供商配置
+
+**方式一：GitCode（推荐，免费额度充足）**
+1. 访问 [GitCode](https://gitcode.com/)
+2. 注册/登录 GitCode 账号
+3. 创建 API Key
+
+**方式二：阿里云百炼**
 1. 访问 [阿里云百炼控制台](https://bailian.console.aliyun.com/)
 2. 注册/登录阿里云账号并完成实名认证
 3. 开通百炼服务（有免费额度）
 4. 在 "API-KEY 管理" 中创建新的 API-KEY
-5. 复制生成的 API Key（格式：`sk-xxxxxxxxxxxxxxxxxxxxxxxx`）
 
 #### 2. Supabase 配置
 1. 访问 [Supabase](https://supabase.com/)
@@ -239,12 +194,12 @@ ai-travel-planner/
    - **Web端(JS API)** Key → 配置到 `PUBLIC_AMAP_KEY`（JS SDK 加载用）
    - **Web服务** Key → 配置到 `PUBLIC_AMAP_REST_KEY`（POI/地理编码等 REST 接口用）
 3. 如需开启安全防护，可同时复制 JS Key 对应的 `securityJsCode` 配置到 `PUBLIC_AMAP_SECURITY_CODE`
-4. 详细配置说明见：`frontend/高德地图配置说明.md`
+4. 详细配置说明见：`docs/高德地图配置说明.md`
 
 ### 🎯 方式一：一键启动（Windows 推荐）
 
 **先决条件**：
-- Node.js (v16 或更高版本)
+- Node.js (v18 或更高版本)
 - npm 或 yarn
 
 **步骤**：
@@ -259,23 +214,9 @@ ai-travel-planner/
    ```bash
    cd backend
    cp .env.example .env
-   # 编辑 .env 文件填入：
-   # PORT=3001
-   # AI_API_KEY=你的AI密钥
-   # AI_BASE_URL=https://api.gitcode.com/api/v5
-   # AI_MODEL=Kimi-K2
-   # DASHSCOPE_API_KEY=你的阿里百炼API密钥（可选）
-   # SUPABASE_URL=你的Supabase项目URL
-   # SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务端密钥
-   # TENCENT_SECRET_ID=腾讯云密钥ID（图片生成）
-   # TENCENT_SECRET_KEY=腾讯云密钥（图片生成）
-   # MODELSCOPE_API_KEY=魔搭社区API密钥（图片生成，免费）
-   # PUBLIC_SUPABASE_URL=供前端使用的 Supabase URL
-   # PUBLIC_SUPABASE_ANON_KEY=Supabase 匿名密钥（公开）
-   # PUBLIC_AMAP_KEY=高德地图 JS API Key (Web 端)
-   # PUBLIC_AMAP_SECURITY_CODE=高德安全密钥（可选，JS Key 专用）
-   # PUBLIC_AMAP_REST_KEY=高德地图 Web 服务 Key (REST API 专用)
    ```
+
+   编辑 `.env` 文件，详细配置示例见 [QUICKSTART.md](./QUICKSTART.md)
 
    > 前端运行时会通过 `/config.js` 自动读取 `PUBLIC_*` 变量，无需再在 `frontend/.env` 中重复配置。
 
@@ -323,8 +264,10 @@ ai-travel-planner/
    
    成功后显示：
    ```
-   ✅ 阿里百炼 API 已配置
-   🚀 Server is running on port 3001
+   ✓ All services initialized successfully
+   Available text providers: gitcode, dashscope
+   Available image providers: modelscope
+   🚀 Server is running on http://0.0.0.0:3001
    ```
 
 3. **启动前端**（终端 2）：
@@ -336,11 +279,11 @@ ai-travel-planner/
    成功后显示：
    ```
    VITE ready in xxx ms
-   ➜ Local: http://localhost:5173/
+   ➜ Local:   http://localhost:8080/
    ```
 
 4. **访问应用**：
-   打开浏览器访问 `http://localhost:5173`
+   打开浏览器访问 `http://localhost:8080`
 
 ### 🐳 方式三：使用 Docker
 
@@ -366,7 +309,7 @@ ai-travel-planner/
    - 前端：`http://localhost:3001`（由 Node 后端统一提供静态资源）
    - 健康检查：`http://localhost:3001/health`
 
-## ⚙️ 配置说明
+---
 
 ## ⚙️ 配置说明
 
@@ -374,108 +317,78 @@ ai-travel-planner/
 
 **重要**：为保护敏感信息，API 密钥和其他机密信息**绝不能**硬编码在代码中，必须通过环境变量进行管理。
 
-#### 后端环境变量 (`backend/.env`)
+### AI 提供商配置
+
+后端使用 JSON 格式配置多个 AI 提供商，支持自动降级：
 
 ```bash
-# 私密配置（仅后端使用）
-PORT=3001                             # 后端服务器端口
+# 文本生成提供商（JSON 格式）
+AI_TEXT_PROVIDERS_JSON='[
+  {
+    "name": "gitcode",
+    "enabled": true,
+    "baseURL": "https://api.gitcode.com/api/v5",
+    "apiKey": "xxx",
+    "model": "Kimi-K2",
+    "priority": 1
+  },
+  {
+    "name": "dashscope",
+    "enabled": true,
+    "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "apiKey": "xxx",
+    "model": "qwen-max",
+    "priority": 2
+  }
+]'
 
-# AI API 配置（用于对话和提示词生成）
-AI_API_KEY=sk-xxx...                  # AI API 密钥
-AI_BASE_URL=https://api.gitcode.com/api/v5  # API 地址
-AI_MODEL=Kimi-K2                      # 模型名称
-
-# 阿里云百炼（可选，备用）
-# DASHSCOPE_API_KEY=sk-xxx...          # 阿里云百炼 API 密钥
-
-# Supabase 配置
-SUPABASE_URL=https://xxx.supabase.co # Supabase 项目 URL
-SUPABASE_SERVICE_ROLE_KEY=eyJxxx...  # Supabase 服务端密钥（严禁暴露给前端）
-
-# 图片生成配置（至少配置一个）
-TENCENT_SECRET_ID=xxx...             # 腾讯云 SecretId（混元生图）
-TENCENT_SECRET_KEY=xxx...            # 腾讯云 SecretKey
-MODELSCOPE_API_KEY=xxx...            # 魔搭社区 API Key（免费额度充足）
-
-# TTS 后端配置（语音合成）
-DASHSCOPE_API_KEY=xxx...              # 阿里云 DashScope API Key（语音合成）
-
-# 公开配置（前端运行时读取，仍可设置访问白名单）
-PUBLIC_SUPABASE_URL=https://xxx.supabase.co
-PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
-PUBLIC_AMAP_KEY=xxx...                 # Web端(JS API) Key
-PUBLIC_AMAP_SECURITY_CODE=xxx...       # JS 安全密钥 (可选)
-PUBLIC_AMAP_REST_KEY=yyy...            # Web服务 Key（必填）
+# 图片生成提供商（JSON 格式）
+AI_IMAGE_PROVIDERS_JSON='[
+  {
+    "name": "modelscope",
+    "enabled": true,
+    "apiKey": "xxx",
+    "priority": 1
+  }
+]'
 ```
 
-> 前端容器运行时会向 `/config.js` 请求配置脚本，该脚本由后端用上述 `PUBLIC_*` 环境变量动态生成。
-
-### AI 模型配置
-
-在 `backend/src/index.js` 中可以修改使用的 AI 模型，或通过 `.env` 配置：
-
-```bash
-# .env 配置示例
-AI_API_KEY=sk-xxx
-AI_BASE_URL=https://api.gitcode.com/api/v5
-AI_MODEL=Kimi-K2
-```
-
-可用模型：
+**可用模型：**
 - `Kimi-K2`（推荐）- GitCode 提供，速度快
-- `qwen3-max-preview` - 阿里百炼，性能强
-- `qwen-max` - 稳定版本
-- `qwen-plus` - 性能与成本平衡
-- `qwen-turbo` - 快速响应
+- `qwen-max` - 阿里百炼，稳定版本
 
 ### 图片生成配置
 
-支持两种图片生成提供商，可同时配置：
+支持魔搭社区 ModelScope 图片生成：
 
 | 提供商 | 配置项 | 特点 |
 |--------|--------|------|
-| 腾讯云混元 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 高质量，按量计费 |
 | 魔搭社区 | `MODELSCOPE_API_KEY` | 免费额度充足，推荐 |
 
-用户可在 AI 速记卡片页面通过下拉框切换提供商。
+---
 
 ## ⚠️ 常见问题
-
-### 启动相关
-
-**Q: 端口已被占用怎么办？**
-```bash
-# Windows - 查找占用端口的进程
-netstat -ano | findstr :3001
-netstat -ano | findstr :5173
-
-# 终止进程（将 PID 替换为实际进程 ID）
-taskkill /PID <PID> /F
-```
-
-**Q: 依赖安装失败？**
-- 确保 Node.js 版本 >= 16
-- 尝试清除缓存：`npm cache clean --force`
-- 删除 `node_modules` 和 `package-lock.json` 后重新安装
 
 ### API 相关
 
 **Q: AI API 调用失败？**
-- 检查 API Key 是否正确配置在 `backend/.env` 中
+- 检查 `backend/.env` 中的 `AI_TEXT_PROVIDERS_JSON` 配置是否正确
+- 确认 API 密钥格式正确（JSON 字符串需要转义引号）
 - 确认账号余额充足（有免费额度）
 - 查看后端终端的错误日志获取详细信息
-- 确认模型名称拼写正确
+- 确认至少配置了一个启用的文本提供商
 
 **Q: AI 速记卡片生成失败？**
-- 检查是否配置了图片生成提供商（腾讯云或魔搭社区）
-- 确认 `TENCENT_SECRET_ID/KEY` 或 `MODELSCOPE_API_KEY` 配置正确
+- 检查 `backend/.env` 中的 `AI_IMAGE_PROVIDERS_JSON` 配置是否正确
+- 确认至少配置了一个启用的图片生成提供商（魔搭社区）
+- 确认魔搭社区 API 密钥有效且有免费额度
 - 建议使用魔搭社区（免费额度充足）
 - 查看后端日志了解详细错误
 
 **Q: 前端无法连接后端？**
 - 确认后端服务器已启动（端口 3001）
-- 检查 `frontend/src/components/Planner.vue` 中的 API 地址是否为 `http://localhost:3001`
-- 查看浏览器控制台的网络请求错误
+- 检查浏览器控制台的网络请求错误
+- 访问 http://localhost:3001/health 验证后端状态
 
 **Q: Supabase 连接失败？**
 - 确认 `.env` 文件中的 Supabase URL 和 Key 正确
@@ -484,10 +397,11 @@ taskkill /PID <PID> /F
 
 ### 地图相关
 
+**Q: 地图不显示？**
 - 确认 `backend/.env` 中的 PUBLIC_AMAP_KEY / PUBLIC_AMAP_SECURITY_CODE 已配置
 - 检查浏览器控制台是否有地图加载错误
 - 确认 API Key 类型为 "Web端(JS API)"
-- 查看 `frontend/高德地图配置说明.md` 获取详细配置说明
+- 查看 `docs/高德地图配置说明.md` 获取详细配置说明
 
 **Q: 地理编码或 POI 搜索报错 `USERKEY_PLAT_NOMATCH`？**
 - 确认已在 `.env` 中配置 `PUBLIC_AMAP_REST_KEY`
@@ -511,6 +425,8 @@ taskkill /PID <PID> /F
 - 检查 Supabase 数据库表是否正确创建
 - 查看浏览器控制台的错误信息
 
+---
+
 ## 🔒 安全说明
 
 本项目高度重视安全性，采取以下措施保护敏感信息：
@@ -528,14 +444,17 @@ taskkill /PID <PID> /F
 - ✅ 为 Supabase 数据库配置适当的行级安全策略（RLS）
 - ✅ 限制 API 密钥的使用范围和权限
 
+---
+
 ## 📊 功能检查清单
 
 启动项目后，请确认以下内容：
 
 ### ✅ 后端服务检查
-- [ ] 终端显示 "✅ AI API 已配置"
+- [ ] 终端显示 "✓ All services initialized successfully"
+- [ ] 终端显示可用提供商列表（text providers、image providers）
 - [ ] 终端显示 "🚀 Server is running on port 3001"
-- [ ] 访问 http://localhost:3001 能看到欢迎消息
+- [ ] 访问 http://localhost:3001/health 能看到健康状态
 
 ### ✅ 前端服务检查
 - [ ] 终端显示 "VITE ready"
@@ -559,6 +478,8 @@ taskkill /PID <PID> /F
 - [ ] "妙笔·云章"页面能生成分享文案
 - [ ] AI生成的内容能正常下载和分享
 
+---
+
 ## 🎯 使用流程
 
 1. **访问首页**：了解产品功能和特色
@@ -577,9 +498,12 @@ taskkill /PID <PID> /F
 6. **保存方案**：登录后保存到云端
 7. **管理计划**：在"我的计划"中查看和管理所有方案
 
+---
+
 ## 🔗 相关链接
 
 ### 官方文档
+- [GitCode](https://gitcode.com/)
 - [阿里云百炼控制台](https://bailian.console.aliyun.com/)
 - [阿里云百炼 API 文档](https://help.aliyun.com/zh/model-studio/developer-reference/api-details)
 - [Supabase 官网](https://supabase.com/)
@@ -591,43 +515,54 @@ taskkill /PID <PID> /F
 - [Vite 文档](https://vitejs.dev/)
 - [Express.js 文档](https://expressjs.com/)
 - [Pinia 文档](https://pinia.vuejs.org/)
+- [LangChain 文档](https://js.langchain.com/)
 
 ### 项目文档
 - [后端架构文档](./docs/后端架构文档.md) - 详细的系统架构设计和技术说明
 - [部署指南](./docs/部署指南.md) - 多种部署方式的详细指南
+- [快速开始指南](./QUICKSTART.md) - 5分钟快速上手
+- [高德地图配置说明](./docs/高德地图配置说明.md)
+
+### 功能文档
 - [阿里百炼配置说明](./backend/阿里百炼配置说明.md)
 - [数字人及AI面对面对话功能说明](./docs/数字人及AI面对面对话功能说明.md)
 - [AI 速记卡片功能说明](./docs/AI速记卡片功能说明.md)
 - [听见山河BGM歌单功能说明](./docs/听见山河BGM歌单功能说明.md)
 - [尺素锦书旅游明信片功能说明](./docs/尺素锦书旅游明信片功能说明.md)
 - [妙笔云章分享文案功能说明](./docs/妙笔云章分享文案功能说明.md)
-- [高德地图配置说明](./frontend/高德地图配置说明.md)
-- [快速开始指南](./QUICKSTART.md)
+- [生图提示词完整说明](./docs/生图提示词完整说明.md)
+
+---
 
 ## 📝 开发说明
 
 ### 目录结构说明
 
-- `components/`：可复用的 Vue 组件
-- `views/`：页面级组件，对应路由
-- `router/`：Vue Router 配置
-- `stores/`：Pinia 状态管理
-- `config/`：配置文件（如高德地图配置）
-- `styles/`：全局样式文件
+- `backend/`：后端服务
+  - `src/config/`：配置管理
+  - `src/controllers/`：控制器层
+  - `src/services/`：业务逻辑层
+  - `src/services/langchain/`：LangChain 集成层
+  - `src/routes/`：路由层
+  - `src/middleware/`：中间件
+  - `src/utils/`：工具函数
+- `frontend/`：前端应用
+  - `src/components/`：Vue 组件
+  - `src/views/`：页面级组件，对应路由
+  - `src/router/`：Vue Router 配置
+  - `src/stores/`：Pinia 状态管理
+  - `src/config/`：配置文件（如高德地图配置）
+  - `src/styles/`：全局样式文件
 
 ### 添加新页面
 
-1. 在 `views/` 中创建新的页面组件
-2. 在 `router/index.js` 中添加路由配置
+1. 在 `frontend/src/views/` 中创建新的页面组件
+2. 在 `frontend/src/router/index.js` 中添加路由配置
 3. 在 `App.vue` 的导航菜单中添加链接
 
-### 修改 AI 模型
+### 配置 AI 提供商
 
-编辑 `backend/src/index.js`：
-
-```javascript
-const model = 'qwen3-max-preview';  // 修改为其他模型
-```
+在 `backend/.env` 中通过 `AI_TEXT_PROVIDERS_JSON` 和 `AI_IMAGE_PROVIDERS_JSON` 配置多个提供商，详细配置示例见 [QUICKSTART.md](./QUICKSTART.md)
 
 ### 自定义样式
 
@@ -635,6 +570,8 @@ const model = 'qwen3-max-preview';  // 修改为其他模型
 - CSS 变量（颜色、字体等）
 - 全局组件样式覆盖
 - 通用工具类
+
+---
 
 ## 🤝 贡献指南
 
@@ -646,11 +583,15 @@ const model = 'qwen3-max-preview';  // 修改为其他模型
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 开启 Pull Request
 
+---
+
 ## 📄 许可证
 
 本项目采用 [GNU General Public License v3.0](LICENSE) 开源许可协议。
 
 您可以在遵循 GPL v3.0 协议的前提下自由使用、修改和分发本项目的源代码。
+
+---
 
 ## 👥 作者
 
@@ -658,4 +599,4 @@ const model = 'qwen3-max-preview';  // 修改为其他模型
 
 ---
 
-**Made with ❤️ using Vue.js, Node.js, and AI**
+**Made with ❤️ using Vue.js, Node.js, LangChain, and AI**
