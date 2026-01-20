@@ -409,6 +409,21 @@ class AIChatService {
     return { modelInvokeTimeoutMs, toolInvokeTimeoutMs, mcpCallTimeoutMs };
   }
 
+  _normalizeProviderName(value) {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  _pickPreferredProviderName({ enableTools }) {
+    const mcpPreferred = this._normalizeProviderName(
+      process.env.AI_TEXT_PROVIDER_MCP_PRIMARY || process.env.AI_TEXT_PROVIDER_MCP_PREFERRED
+    );
+    const defaultPreferred = this._normalizeProviderName(
+      process.env.AI_TEXT_PROVIDER_DEFAULT_PRIMARY || process.env.AI_TEXT_PROVIDER_DEFAULT_PREFERRED
+    );
+    const useMcpPreferred = !!this.mcpService && !!enableTools;
+    return useMcpPreferred ? mcpPreferred : defaultPreferred;
+  }
+
   _toolResultConfig() {
     const maxCharsRaw = Number(process.env.AI_CHAT_TOOL_RESULT_MAX_CHARS || '6000');
     const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw > 0 ? maxCharsRaw : 6000;
@@ -748,11 +763,14 @@ class AIChatService {
       let response = '';
       if (enableTools) {
         if (!this.mcpService) {
+          const optionProvider = this._normalizeProviderName(options?.provider);
+          const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: false });
+          const allowedProviders = preferredProvider ? [preferredProvider] : [];
           response = await this.langChainManager.invokeText([
             { role: 'system', content: systemPrompt },
             ...history,
             { role: 'user', content: message },
-          ]);
+          ], { provider: preferredProvider, allowedProviders });
         } else {
           const [{ SystemMessage, HumanMessage, AIMessage }] = await Promise.all([
             import('@langchain/core/messages'),
@@ -834,9 +852,16 @@ class AIChatService {
           const adaptersRaw = Array.isArray(this.langChainManager?.textAdapters)
             ? this.langChainManager.textAdapters.filter((a) => a && typeof a.createLLM === 'function')
             : [];
-          const adapters = this._filterAdaptersByCooldown(adaptersRaw);
+          const optionProvider = this._normalizeProviderName(options?.provider);
+          const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: true });
+          const adapters = (() => {
+            const filtered = this._filterAdaptersByCooldown(adaptersRaw);
+            if (!preferredProvider) return filtered;
+            const scoped = filtered.filter((a) => a?.name === preferredProvider);
+            return scoped.length ? scoped : filtered;
+          })();
           if (!adapters.length) {
-            response = '当前未配置可用的文本大模型提供商，暂时无法处理该请求。请先配置 MODELSCOPE/GITCODE/DASHSCOPE 的文本模型相关环境变量后重试。';
+            response = '当前未配置可用的文本大模型提供商，暂时无法处理该请求。请先配置 AI_TEXT_PROVIDERS_JSON 后重试。';
             if (sessionId) {
               await this.saveMessage(sessionId, message, response);
             }
@@ -887,10 +912,12 @@ class AIChatService {
 
           let lastErr = null;
           try {
+            const provider = preferredProvider && adapters.some((a) => a?.name === preferredProvider) ? preferredProvider : '';
             this._debug('agent.invoke', { provider: 'auto', recursionLimit, tool_count: tools.length });
             const started = Date.now();
             const out = await this.langChainManager.invokeToolCallingAgent({
               adapters,
+              provider,
               messages: baseMessages,
               tools,
               prompt: toolSystemPromptNative,
@@ -957,7 +984,13 @@ class AIChatService {
           ...history,
           { role: 'user', content: message },
         ];
-        response = await this.langChainManager.invokeText(messages, options);
+        const optionProvider = this._normalizeProviderName(options?.provider);
+        const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: false });
+        const allowedProviders = preferredProvider ? [preferredProvider] : [];
+        const mergedOptions = preferredProvider
+          ? { ...options, provider: preferredProvider, allowedProviders }
+          : { ...options, allowedProviders };
+        response = await this.langChainManager.invokeText(messages, mergedOptions);
       }
 
       // 保存对话记录

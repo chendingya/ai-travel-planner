@@ -1,6 +1,4 @@
-const ModelScopeAdapter = require('./text/ModelScopeAdapter');
-const GitCodeAdapter = require('./text/GitCodeAdapter');
-const DashScopeAdapter = require('./text/DashScopeAdapter');
+const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
 const sensitiveFilter = require('../../utils/sensitiveFilter');
 
@@ -11,14 +9,9 @@ const sensitiveFilter = require('../../utils/sensitiveFilter');
 class LangChainManager {
   constructor(textProviders, imageProviders) {
     // 初始化文本生成适配器
-    this.textAdapters = textProviders.map(provider => {
-      const name = typeof provider?.name === 'string' ? provider.name : '';
-      if (name === 'modelscope' || name.startsWith('modelscope_')) return new ModelScopeAdapter(provider);
-      if (name === 'gitcode') return new GitCodeAdapter(provider);
-      if (name === 'dashscope') return new DashScopeAdapter(provider);
-      console.warn(`Unknown text provider: ${provider.name}`);
-      return null;
-    }).filter(adapter => adapter !== null && adapter.isAvailable());
+    this.textAdapters = textProviders
+      .map(provider => new OpenAICompatibleAdapter(provider))
+      .filter(adapter => adapter !== null && adapter.isAvailable());
 
     // 初始化图片生成适配器
     this.imageAdapters = imageProviders.map(provider => {
@@ -30,6 +23,8 @@ class LangChainManager {
           return null;
       }
     }).filter(adapter => adapter !== null && adapter.isAvailable());
+
+    this._probeCache = new Set();
 
     console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
   }
@@ -182,12 +177,28 @@ class LangChainManager {
       mode: options?.sensitiveFilterMode,
     });
 
-    const preferred = typeof options.provider === 'string' ? options.provider : '';
+    const preferred = typeof options.provider === 'string' ? options.provider.trim() : '';
+    const allowedRaw = Array.isArray(options.allowedProviders) ? options.allowedProviders : [];
+    const allowedFromEnv = !allowedRaw.length && !preferred
+      ? String(process.env.AI_TEXT_PROVIDER_DEFAULT_PRIMARY || process.env.AI_TEXT_PROVIDER_DEFAULT_PREFERRED || '').trim()
+      : '';
+    const allowedProviders = (allowedRaw.length ? allowedRaw : allowedFromEnv ? [allowedFromEnv] : [])
+      .map((p) => (typeof p === 'string' ? p.trim() : ''))
+      .filter(Boolean);
+
+    const baseAdapters = Array.isArray(options.adapters) && options.adapters.length ? options.adapters : this.textAdapters;
+    const scopedAdapters = allowedProviders.length
+      ? baseAdapters.filter((a) => a && allowedProviders.includes(a.name))
+      : baseAdapters;
+    if (allowedProviders.length && scopedAdapters.length === 0) {
+      throw new Error(`No available text providers for: ${allowedProviders.join(', ')}`);
+    }
+
     const adapters = (() => {
-      if (!preferred) return this.textAdapters;
-      const preferredAdapter = this.textAdapters.find(a => a.name === preferred);
-      if (!preferredAdapter) return this.textAdapters;
-      const rest = this.textAdapters.filter(a => a !== preferredAdapter);
+      if (!preferred) return scopedAdapters;
+      const preferredAdapter = scopedAdapters.find(a => a.name === preferred);
+      if (!preferredAdapter) return scopedAdapters;
+      const rest = scopedAdapters.filter(a => a !== preferredAdapter);
       return [preferredAdapter, ...rest];
     })();
 
@@ -200,6 +211,15 @@ class LangChainManager {
         lastError = error;
         console.warn(`Provider ${adapter.name} failed for invokeText:`, this._stringifyErrorMessage(error));
         if (this._debugEnabled()) console.warn(`[ai-chat] provider_error`, JSON.stringify(this._summarizeProviderError(adapter, error)));
+        if (this._isProviderProtocolError(error)) {
+          await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL: adapter?.baseURL, apiKey: adapter?.apiKey });
+          await this._probeOpenAIChatCompletionsEndpoint({
+            provider: adapter?.name,
+            baseURL: adapter?.baseURL,
+            apiKey: adapter?.apiKey,
+            model: adapter?.model,
+          });
+        }
       }
     }
 
@@ -340,6 +360,112 @@ class LangChainManager {
     if (msg.includes('invalid json response body')) return true;
     if (msg.includes('unexpected token') && msg.includes('json')) return true;
     return false;
+  }
+
+  async _probeOpenAIModelsEndpoint({ provider, baseURL, apiKey }) {
+    if (!this._debugEnabled()) return;
+    const name = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    if (!name || !rawBase || !key) return;
+
+    const base = rawBase.replace(/\/+$/, '');
+    const cacheKey = `models|${name}|${base}`;
+    if (this._probeCache.has(cacheKey)) return;
+    this._probeCache.add(cacheKey);
+
+    const url = `${base}/models`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = text.slice(0, 400);
+      console.warn('[ai-chat] provider.probe', JSON.stringify({
+        provider: name,
+        url,
+        status: res.status,
+        ok: res.ok,
+        ms: Date.now() - start,
+        preview,
+      }));
+    } catch (error) {
+      console.warn('[ai-chat] provider.probe_err', JSON.stringify({
+        provider: name,
+        url,
+        ms: Date.now() - start,
+        error: this._stringifyErrorMessage(error),
+      }));
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async _probeOpenAIChatCompletionsEndpoint({ provider, baseURL, apiKey, model }) {
+    if (!this._debugEnabled()) return;
+    const name = typeof provider === 'string' ? provider.trim() : '';
+    const rawBase = typeof baseURL === 'string' ? baseURL.trim() : '';
+    const key = typeof apiKey === 'string' ? apiKey : '';
+    const modelName = typeof model === 'string' ? model : '';
+    if (!name || !rawBase || !key || !modelName) return;
+
+    const base = rawBase.replace(/\/+$/, '');
+    const cacheKey = `chat|${name}|${base}|${modelName}`;
+    if (this._probeCache.has(cacheKey)) return;
+    this._probeCache.add(cacheKey);
+
+    const url = `${base}/chat/completions`;
+    const abortController = new AbortController();
+    const timeoutMsRaw = Number(process.env.AI_CHAT_PROVIDER_PROBE_TIMEOUT_MS || '5000');
+    const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 5000;
+    const t = setTimeout(() => abortController.abort(), timeoutMs);
+    const start = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+        signal: abortController.signal,
+      });
+      const text = await res.text();
+      const preview = text.slice(0, 400);
+      console.warn('[ai-chat] provider.probe', JSON.stringify({
+        provider: name,
+        url,
+        status: res.status,
+        ok: res.ok,
+        ms: Date.now() - start,
+        preview,
+      }));
+    } catch (error) {
+      console.warn('[ai-chat] provider.probe_err', JSON.stringify({
+        provider: name,
+        url,
+        ms: Date.now() - start,
+        error: this._stringifyErrorMessage(error),
+      }));
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   _normalizeMessageContent(content) {

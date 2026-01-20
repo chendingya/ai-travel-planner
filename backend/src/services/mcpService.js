@@ -13,6 +13,25 @@ class MCPService {
       : tokenRaw
         ? `Bearer ${tokenRaw.trim()}`
         : '';
+    const amapUrlRaw =
+      process.env.MCP_AMAP_URL;
+    const amapAuthorizationRaw = process.env.MCP_AMAP_AUTHORIZATION || '';
+    const amapTokenRaw = process.env.MCP_AMAP_TOKEN || '';
+    const amapAuthorization = amapAuthorizationRaw
+      ? amapAuthorizationRaw.trim()
+      : amapTokenRaw
+        ? `Bearer ${amapTokenRaw.trim()}`
+        : '';
+
+    const bingUrlRaw =
+      process.env.MCP_BING_URL;
+    const bingAuthorizationRaw = process.env.MCP_BING_AUTHORIZATION || '';
+    const bingTokenRaw = process.env.MCP_BING_TOKEN || '';
+    const bingAuthorization = bingAuthorizationRaw
+      ? bingAuthorizationRaw.trim()
+      : bingTokenRaw
+        ? `Bearer ${bingTokenRaw.trim()}`
+        : '';
 
     const envServersRaw = process.env.MCP_SERVERS_JSON || process.env.MCP_CONFIG_JSON || '';
     const parseJsonEnv = (raw) => {
@@ -47,6 +66,14 @@ class MCPService {
       return looksLikeServerMap(value) ? value : null;
     };
 
+    const normalizeUrl = (value) => {
+      if (typeof value !== 'string') return '';
+      let s = value.trim();
+      if (!s) return '';
+      s = s.replace(/^["'“”‘’`]+/, '').replace(/["'“”‘’`]+$/, '').trim();
+      return s;
+    };
+
     const serversFromEnv = extractServers(parseJsonEnv(envServersRaw));
     const serversFromConfig = extractServers(config);
 
@@ -58,7 +85,12 @@ class MCPService {
         const transportRaw =
           typeof cfg.transport === 'string' ? cfg.transport : typeof cfg.type === 'string' ? cfg.type : '';
         const transport = String(transportRaw || '').toLowerCase();
-        const normalizedTransport = transport === 'stdio' || transport === 'sse' ? transport : '';
+        const normalizedTransport =
+          transport === 'stdio' || transport === 'sse' || transport === 'streamable_http'
+            ? transport === 'streamable_http'
+              ? 'sse'
+              : transport
+            : '';
         if (!normalizedTransport) continue;
         const entry = { transport: normalizedTransport };
         if (normalizedTransport === 'stdio') {
@@ -66,8 +98,9 @@ class MCPService {
           if (typeof cfg.command === 'string') entry.command = cfg.command;
           if (Array.isArray(cfg.args)) entry.args = cfg.args;
         } else {
-          if (typeof cfg.url !== 'string' || !cfg.url.trim()) continue;
-          if (typeof cfg.url === 'string') entry.url = cfg.url;
+          const url = normalizeUrl(cfg.url);
+          if (!url) continue;
+          entry.url = url;
           if (cfg.headers && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)) {
             entry.headers = { ...cfg.headers };
           }
@@ -83,12 +116,18 @@ class MCPService {
     const defaults = {
       '12306-mcp': {
         transport: 'sse',
-        url: sseUrlRaw,
+        url: normalizeUrl(sseUrlRaw),
         headers: authorization ? { Authorization: authorization } : undefined,
       },
       'bing-cn-mcp-server': {
         transport: 'sse',
-        url: 'https://mcp.api-inference.modelscope.net/23494d15514349/sse',
+        url: normalizeUrl(bingUrlRaw),
+        headers: bingAuthorization ? { Authorization: bingAuthorization } : undefined,
+      },
+      'amap-maps': {
+        transport: 'sse',
+        url: normalizeUrl(amapUrlRaw),
+        headers: amapAuthorization ? { Authorization: amapAuthorization } : undefined,
       },
     };
 

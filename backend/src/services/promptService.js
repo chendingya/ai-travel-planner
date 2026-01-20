@@ -17,6 +17,60 @@ class PromptService {
     return s;
   }
 
+  _isRefusal(content) {
+    const text = typeof content === 'string' ? content.trim() : String(content ?? '').trim();
+    if (!text) return false;
+    const hits = [
+      '这个问题我暂时无法回答',
+      '无法回答你的问题',
+      '无法为你解答',
+      '无法为你提供',
+      '我不能回答',
+      '我无法回答',
+      '我不能满足你的请求',
+      '抱歉',
+      '换个话题',
+    ];
+    return hits.some((phrase) => text.includes(phrase));
+  }
+
+  _getTextProviderNames() {
+    if (!this.langChainManager || typeof this.langChainManager.getAvailableTextProviders !== 'function') return [];
+    const providers = this.langChainManager.getAvailableTextProviders();
+    return providers
+      .filter((p) => p && p.enabled && typeof p.name === 'string' && p.name.trim())
+      .map((p) => p.name.trim());
+  }
+
+  async _invokeWithRefusalFallback(messages, options = {}, maxLen = 1500) {
+    const providers = this._getTextProviderNames();
+    if (providers.length === 0) {
+      const prompt = await this.langChainManager.invokeText(messages, options);
+      return this.sanitizeGeneratedPrompt(prompt, maxLen);
+    }
+
+    let lastError = null;
+    let lastPrompt = '';
+    for (const name of providers) {
+      try {
+        const prompt = await this.langChainManager.invokeText(messages, {
+          ...options,
+          provider: name,
+          allowedProviders: [name],
+        });
+        const cleaned = this.sanitizeGeneratedPrompt(prompt, maxLen);
+        lastPrompt = cleaned;
+        if (cleaned && !this._isRefusal(cleaned)) return cleaned;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastPrompt) return lastPrompt;
+    if (lastError) throw lastError;
+    return '';
+  }
+
   buildDailySummary(dailyItinerary) {
     const days = Array.isArray(dailyItinerary) ? dailyItinerary : [];
     if (days.length === 0) return '';
@@ -64,8 +118,7 @@ class PromptService {
         { role: 'user', content: String(notes ?? '').trim() },
       ];
 
-      const prompt = await this.langChainManager.invokeText(messages, { sensitiveFilterMode: 'soften' });
-      return this.sanitizeGeneratedPrompt(prompt, 1500);
+      return await this._invokeWithRefusalFallback(messages, { sensitiveFilterMode: 'soften' }, 1500);
     } catch (error) {
       console.error('Generate prompt failed:', error);
       throw new Error('Failed to generate prompt');
@@ -117,8 +170,7 @@ class PromptService {
         { role: 'user', content: userParts.join('\n') },
       ];
 
-      const prompt = await this.langChainManager.invokeText(messages, { sensitiveFilterMode: 'soften' });
-      return this.sanitizeGeneratedPrompt(prompt, 1500);
+      return await this._invokeWithRefusalFallback(messages, { sensitiveFilterMode: 'soften' }, 1500);
     } catch (error) {
       console.error('Generate postcard prompt failed:', error);
       throw new Error('Failed to generate postcard prompt');

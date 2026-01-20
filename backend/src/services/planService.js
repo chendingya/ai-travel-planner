@@ -9,6 +9,21 @@ class PlanService {
     this.langChainManager = langChainManager;
   }
 
+  _getMcpPreferredProvider() {
+    const raw =
+      process.env.AI_TEXT_PROVIDER_MCP_PRIMARY || process.env.AI_TEXT_PROVIDER_MCP_PREFERRED || '';
+    return typeof raw === 'string' ? raw.trim() : '';
+  }
+
+  async _invokeTextWithMcpPreferred(messages) {
+    const preferredProvider = this._getMcpPreferredProvider();
+    if (!preferredProvider) return await this.langChainManager.invokeText(messages);
+    return await this.langChainManager.invokeText(messages, {
+      provider: preferredProvider,
+      allowedProviders: [preferredProvider],
+    });
+  }
+
   parseMoneyToNumber(raw) {
     if (raw == null) return 0;
     if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : 0;
@@ -196,7 +211,7 @@ class PlanService {
         { role: 'user', content: quickInput },
       ];
 
-      const result = await this.langChainManager.invokeText(messages);
+      const result = await this._invokeTextWithMcpPreferred(messages);
 
       const parsed = safeParseJSON(result, null);
       if (parsed !== null) return parsed;
@@ -265,7 +280,7 @@ class PlanService {
         { role: 'user', content: JSON.stringify(formData ?? {}, null, 2) },
       ];
 
-      const raw = await this.langChainManager.invokeText(messages);
+      const raw = await this._invokeTextWithMcpPreferred(messages);
       const parsed = safeParseJSON(raw, null);
       return this.normalizeGeneratedPlan(parsed ?? raw);
     } catch (error) {
