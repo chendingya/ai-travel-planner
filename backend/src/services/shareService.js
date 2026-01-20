@@ -7,10 +7,26 @@ class ShareService {
     this.langChainManager = langChainManager;
   }
 
+  _ensureAiMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (!Array.isArray(meta.providers)) meta.providers = [];
+    return meta;
+  }
+
+  _recordProvider(meta, adapter, kind = 'text') {
+    const target = this._ensureAiMeta(meta);
+    if (!target) return;
+    const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    if (!provider && !model) return;
+    const exists = target.providers.some((p) => p && p.provider === provider && p.model === model && p.kind === kind);
+    if (!exists) target.providers.push({ kind, provider, model });
+  }
+
   /**
    * 生成分享文案
    */
-  async generateShareContent(shareInfo) {
+  async generateShareContent(shareInfo, options = {}) {
     try {
       const destination = shareInfo?.destination ? String(shareInfo.destination).trim() : '';
       const platform = shareInfo?.platform ? String(shareInfo.platform).trim() : '';
@@ -42,7 +58,11 @@ class ShareService {
         { role: 'user', content: JSON.stringify(userPayload, null, 2) },
       ];
 
-      const content = await this.langChainManager.invokeText(messages);
+      const aiMeta = this._ensureAiMeta(options?.aiMeta);
+      if (aiMeta) aiMeta.mcp = false;
+      const content = await this.langChainManager.invokeText(messages, {
+        onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
+      });
       return String(content ?? '').trim();
     } catch (error) {
       console.error('Generate share content failed:', error);

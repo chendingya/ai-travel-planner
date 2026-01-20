@@ -8,6 +8,22 @@ class ImageService {
     this.supabase = supabase;
   }
 
+  _ensureAiMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (!Array.isArray(meta.providers)) meta.providers = [];
+    return meta;
+  }
+
+  _recordProvider(meta, adapter, kind = 'image') {
+    const target = this._ensureAiMeta(meta);
+    if (!target) return;
+    const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    if (!provider && !model) return;
+    const exists = target.providers.some((p) => p && p.provider === provider && p.model === model && p.kind === kind);
+    if (!exists) target.providers.push({ kind, provider, model });
+  }
+
   sanitizePrompt(input) {
     let s = '';
     if (input === null || input === undefined) s = '';
@@ -47,7 +63,7 @@ class ImageService {
     try {
       const shouldLogPrompt = process.env.IMAGE_LOG_PROMPT === 'true';
       const basePrompt = this.sanitizePrompt(prompt);
-      const { style: _style, ...forwardOptions } = options || {};
+      const { style: _style, aiMeta: aiMetaRaw, ...forwardOptions } = options || {};
 
       const buildSentPrompt = (p) =>
         this.limitPrompt(this.enhancePrompt(p, options.style), 2000);
@@ -64,7 +80,12 @@ class ImageService {
         console.log('[image] prompt_sent', enhancedPrompt);
       }
 
-      const result = await this.langChainManager.generateImage(enhancedPrompt, forwardOptions);
+      const aiMeta = this._ensureAiMeta(aiMetaRaw);
+      if (aiMeta) aiMeta.mcp = false;
+      const result = await this.langChainManager.generateImage(enhancedPrompt, {
+        ...forwardOptions,
+        onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'image'),
+      });
       const promptUsed = typeof result?.prompt === 'string' && result.prompt.trim()
         ? result.prompt.trim()
         : enhancedPrompt;

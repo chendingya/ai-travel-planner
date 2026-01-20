@@ -52,7 +52,9 @@ class ImageController {
       if (normalizedSize) options.size = normalizedSize;
       if (normalizedProvider) options.provider = normalizedProvider;
 
-      const result = await this.imageService.generateImage(prompt, options);
+      const aiMeta = { providers: [] };
+      res.locals.aiMeta = aiMeta;
+      const result = await this.imageService.generateImage(prompt, { ...options, aiMeta });
       const clientProvider = this.mapProviderToClient(result.provider);
       res.json({
         ...result,
@@ -70,6 +72,7 @@ class ImageController {
    */
   async getProviders(req, res) {
     try {
+      res.locals.aiMeta = { mcp: false, providers: [] };
       const providers = this.imageService.getAvailableProviders();
       const mapped = (Array.isArray(providers) ? providers : []).map((p) =>
         this.mapProviderToClient(p.name)
@@ -91,6 +94,7 @@ class ImageController {
   async getHistory(req, res) {
     try {
       const { limit } = req.query;
+      res.locals.aiMeta = { mcp: false, providers: [] };
       const history = await this.imageService.getGenerationHistory(
         limit ? parseInt(limit) : 20
       );

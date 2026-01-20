@@ -13,13 +13,14 @@ class PostcardService {
    */
   async generatePostcard(imageData, imageOptions = {}) {
     try {
+      const { aiMeta, ...forwardOptions } = imageOptions || {};
       // 生成文案
-      const prompt = await this.promptService.generatePostcardPrompt(imageData);
+      const prompt = await this.promptService.generatePostcardPrompt(imageData, { aiMeta });
 
       // 生成图片
       const imageResult = await this.imageService.generateImage(
         `旅游明信片，目的地：${imageData.destination}。${prompt}`,
-        imageOptions
+        { ...forwardOptions, aiMeta }
       );
 
       return {

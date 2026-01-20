@@ -8,30 +8,27 @@ class MCPService {
       'https://mcp.api-inference.modelscope.net/27e6b8cbcea047/sse';
     const authorizationRaw = process.env.MCP_12306_AUTHORIZATION || '';
     const tokenRaw = process.env.MCP_12306_TOKEN || '';
-    const authorization = authorizationRaw
-      ? authorizationRaw.trim()
-      : tokenRaw
-        ? `Bearer ${tokenRaw.trim()}`
-        : '';
+    const authorizationTmp = authorizationRaw ? authorizationRaw.trim() : (tokenRaw ? tokenRaw.trim() : '');
+    const authorization = authorizationTmp
+      ? (/^Bearer\s+/i.test(authorizationTmp) ? authorizationTmp : `Bearer ${authorizationTmp}`)
+      : '';
     const amapUrlRaw =
       process.env.MCP_AMAP_URL;
     const amapAuthorizationRaw = process.env.MCP_AMAP_AUTHORIZATION || '';
     const amapTokenRaw = process.env.MCP_AMAP_TOKEN || '';
-    const amapAuthorization = amapAuthorizationRaw
-      ? amapAuthorizationRaw.trim()
-      : amapTokenRaw
-        ? `Bearer ${amapTokenRaw.trim()}`
-        : '';
+    const amapAuthorizationTmp = amapAuthorizationRaw ? amapAuthorizationRaw.trim() : (amapTokenRaw ? amapTokenRaw.trim() : '');
+    const amapAuthorization = amapAuthorizationTmp
+      ? (/^Bearer\s+/i.test(amapAuthorizationTmp) ? amapAuthorizationTmp : `Bearer ${amapAuthorizationTmp}`)
+      : '';
 
     const bingUrlRaw =
       process.env.MCP_BING_URL;
     const bingAuthorizationRaw = process.env.MCP_BING_AUTHORIZATION || '';
     const bingTokenRaw = process.env.MCP_BING_TOKEN || '';
-    const bingAuthorization = bingAuthorizationRaw
-      ? bingAuthorizationRaw.trim()
-      : bingTokenRaw
-        ? `Bearer ${bingTokenRaw.trim()}`
-        : '';
+    const bingAuthorizationTmp = bingAuthorizationRaw ? bingAuthorizationRaw.trim() : (bingTokenRaw ? bingTokenRaw.trim() : '');
+    const bingAuthorization = bingAuthorizationTmp
+      ? (/^Bearer\s+/i.test(bingAuthorizationTmp) ? bingAuthorizationTmp : `Bearer ${bingAuthorizationTmp}`)
+      : '';
 
     const envServersRaw = process.env.MCP_SERVERS_JSON || process.env.MCP_CONFIG_JSON || '';
     const parseJsonEnv = (raw) => {
@@ -73,6 +70,14 @@ class MCPService {
       s = s.replace(/^["'“”‘’`]+/, '').replace(/["'“”‘’`]+$/, '').trim();
       return s;
     };
+    const inferTransport = (value, fallback = 'sse') => {
+      const normalized = normalizeUrl(value);
+      if (!normalized) return fallback;
+      const lower = normalized.toLowerCase();
+      if (lower.includes('/mcp')) return 'streamable_http';
+      if (lower.includes('/sse')) return 'sse';
+      return fallback;
+    };
 
     const serversFromEnv = extractServers(parseJsonEnv(envServersRaw));
     const serversFromConfig = extractServers(config);
@@ -87,9 +92,7 @@ class MCPService {
         const transport = String(transportRaw || '').toLowerCase();
         const normalizedTransport =
           transport === 'stdio' || transport === 'sse' || transport === 'streamable_http'
-            ? transport === 'streamable_http'
-              ? 'sse'
-              : transport
+            ? transport
             : '';
         if (!normalizedTransport) continue;
         const entry = { transport: normalizedTransport };
@@ -120,12 +123,12 @@ class MCPService {
         headers: authorization ? { Authorization: authorization } : undefined,
       },
       'bing-cn-mcp-server': {
-        transport: 'sse',
+        transport: inferTransport(bingUrlRaw, 'sse'),
         url: normalizeUrl(bingUrlRaw),
         headers: bingAuthorization ? { Authorization: bingAuthorization } : undefined,
       },
       'amap-maps': {
-        transport: 'sse',
+        transport: inferTransport(amapUrlRaw, 'sse'),
         url: normalizeUrl(amapUrlRaw),
         headers: amapAuthorization ? { Authorization: amapAuthorization } : undefined,
       },
@@ -163,10 +166,11 @@ class MCPService {
   async _loadSdk() {
     if (this._sdk) return this._sdk;
 
-    const [{ Client }, { StdioClientTransport }, { SSEClientTransport }, types] = await Promise.all([
+    const [{ Client }, { StdioClientTransport }, { SSEClientTransport }, { StreamableHTTPClientTransport }, types] = await Promise.all([
       import('@modelcontextprotocol/sdk/client/index.js'),
       import('@modelcontextprotocol/sdk/client/stdio.js'),
       import('@modelcontextprotocol/sdk/client/sse.js'),
+      import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
       import('@modelcontextprotocol/sdk/types.js'),
     ]);
 
@@ -174,6 +178,7 @@ class MCPService {
       Client,
       StdioClientTransport,
       SSEClientTransport,
+      StreamableHTTPClientTransport,
       ListToolsResultSchema: types.ListToolsResultSchema,
       CallToolResultSchema: types.CallToolResultSchema,
     };
@@ -190,6 +195,10 @@ class MCPService {
     if (Array.isArray(cfg.args)) out.args = cfg.args;
     if (cfg.url) out.url = cfg.url;
     return out;
+  }
+
+  listServers() {
+    return Object.fromEntries(Object.keys(this.servers).map((k) => [k, this._publicServerConfig(k)]));
   }
 
   async _getClient(serverName) {
@@ -214,6 +223,9 @@ class MCPService {
     } else if (cfg.transport === 'sse') {
       const headers = cfg.headers && typeof cfg.headers === 'object' ? cfg.headers : undefined;
       transport = new sdk.SSEClientTransport(new URL(cfg.url), headers ? { requestInit: { headers } } : undefined);
+    } else if (cfg.transport === 'streamable_http') {
+      const headers = cfg.headers && typeof cfg.headers === 'object' ? cfg.headers : undefined;
+      transport = new sdk.StreamableHTTPClientTransport(new URL(cfg.url), headers ? { requestInit: { headers } } : undefined);
     } else {
       throw new Error(`Unsupported MCP transport: ${cfg.transport}`);
     }

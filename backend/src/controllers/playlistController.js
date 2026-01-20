@@ -17,7 +17,9 @@ class PlaylistController {
         return res.status(400).json({ message: 'destination is required', error: 'destination is required' });
       }
 
-      const playlist = await this.playlistService.generatePlaylist(travelInfo);
+      const aiMeta = { providers: [] };
+      res.locals.aiMeta = aiMeta;
+      const playlist = await this.playlistService.generatePlaylist(travelInfo, { aiMeta });
       res.json(playlist);
     } catch (error) {
       console.error('Generate playlist error:', error);
@@ -31,6 +33,7 @@ class PlaylistController {
   async getHistory(req, res) {
     try {
       const { limit } = req.query;
+      res.locals.aiMeta = { mcp: false, providers: [] };
       const history = await this.playlistService.getGenerationHistory(
         limit ? parseInt(limit) : 20
       );

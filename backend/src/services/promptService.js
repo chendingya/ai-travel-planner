@@ -7,6 +7,22 @@ class PromptService {
     this.langChainManager = langChainManager;
   }
 
+  _ensureAiMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (!Array.isArray(meta.providers)) meta.providers = [];
+    return meta;
+  }
+
+  _recordProvider(meta, adapter, kind = 'text') {
+    const target = this._ensureAiMeta(meta);
+    if (!target) return;
+    const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    if (!provider && !model) return;
+    const exists = target.providers.some((p) => p && p.provider === provider && p.model === model && p.kind === kind);
+    if (!exists) target.providers.push({ kind, provider, model });
+  }
+
   sanitizeGeneratedPrompt(input, maxLen = 1500) {
     let s = typeof input === 'string' ? input : String(input ?? '');
     s = s.replace(/```[\s\S]*?```/g, ' ');
@@ -44,8 +60,12 @@ class PromptService {
 
   async _invokeWithRefusalFallback(messages, options = {}, maxLen = 1500) {
     const providers = this._getTextProviderNames();
+    const aiMeta = this._ensureAiMeta(options?.aiMeta);
     if (providers.length === 0) {
-      const prompt = await this.langChainManager.invokeText(messages, options);
+      const prompt = await this.langChainManager.invokeText(messages, {
+        ...options,
+        onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
+      });
       return this.sanitizeGeneratedPrompt(prompt, maxLen);
     }
 
@@ -57,6 +77,7 @@ class PromptService {
           ...options,
           provider: name,
           allowedProviders: [name],
+          onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
         });
         const cleaned = this.sanitizeGeneratedPrompt(prompt, maxLen);
         lastPrompt = cleaned;
@@ -100,7 +121,7 @@ class PromptService {
   /**
    * 生成提示词（速记卡片）
    */
-  async generatePrompt(notes) {
+  async generatePrompt(notes, options = {}) {
     try {
       const systemPrompt = `你是一个专业的旅行海报设计师。请根据用户的旅行计划生成一段适合 AI 绘图的提示词(Prompt)。
 
@@ -118,7 +139,13 @@ class PromptService {
         { role: 'user', content: String(notes ?? '').trim() },
       ];
 
-      return await this._invokeWithRefusalFallback(messages, { sensitiveFilterMode: 'soften' }, 1500);
+      const aiMeta = this._ensureAiMeta(options?.aiMeta);
+      if (aiMeta) aiMeta.mcp = false;
+      return await this._invokeWithRefusalFallback(
+        messages,
+        { sensitiveFilterMode: 'soften', aiMeta },
+        1500
+      );
     } catch (error) {
       console.error('Generate prompt failed:', error);
       throw new Error('Failed to generate prompt');
@@ -128,7 +155,7 @@ class PromptService {
   /**
    * 生成明信片文案
    */
-  async generatePostcardPrompt(imageData) {
+  async generatePostcardPrompt(imageData, options = {}) {
     try {
       const destination = imageData?.destination ? String(imageData.destination).trim() : '';
       const styleName = imageData?.styleName ? String(imageData.styleName).trim() : '';
@@ -170,7 +197,13 @@ class PromptService {
         { role: 'user', content: userParts.join('\n') },
       ];
 
-      return await this._invokeWithRefusalFallback(messages, { sensitiveFilterMode: 'soften' }, 1500);
+      const aiMeta = this._ensureAiMeta(options?.aiMeta);
+      if (aiMeta) aiMeta.mcp = false;
+      return await this._invokeWithRefusalFallback(
+        messages,
+        { sensitiveFilterMode: 'soften', aiMeta },
+        1500
+      );
     } catch (error) {
       console.error('Generate postcard prompt failed:', error);
       throw new Error('Failed to generate postcard prompt');

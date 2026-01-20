@@ -1,3 +1,4 @@
+const { AsyncLocalStorage } = require('node:async_hooks');
 const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
 const sensitiveFilter = require('../../utils/sensitiveFilter');
@@ -25,14 +26,68 @@ class LangChainManager {
     }).filter(adapter => adapter !== null && adapter.isAvailable());
 
     this._probeCache = new Set();
+    this._traceStore = new AsyncLocalStorage();
 
     console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
   }
 
+  runWithTrace(trace, runner) {
+    const t = trace && typeof trace === 'object' ? { ...trace } : {};
+    const fn = typeof runner === 'function' ? runner : () => runner;
+    return this._traceStore.run(t, fn);
+  }
+
+  _currentTrace() {
+    const t = this._traceStore.getStore();
+    return t && typeof t === 'object' ? t : null;
+  }
+
   _debugEnabled() {
+    const trace = this._currentTrace();
+    if (trace && trace.debug) return true;
     const v = process.env.AI_CHAT_DEBUG;
     if (!v) return false;
     return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  _debug(event, data) {
+    if (!this._debugEnabled()) return;
+    const payload = data && typeof data === 'object' ? data : { value: data };
+    const trace = this._currentTrace();
+    const requestId = typeof trace?.requestId === 'string' ? trace.requestId : '';
+    const merged = requestId ? { requestId, ...payload } : payload;
+    const ts = new Date().toISOString();
+    console.log(`[${ts}] ai-call:${event}`, JSON.stringify(merged));
+  }
+
+  _zhErrorMessage(code, fallback) {
+    const map = {
+      MODEL_INVOKE_TIMEOUT: '模型调用超时',
+      TOOL_INVOKE_TIMEOUT: '工具调用超时',
+      PLAN_TIMEOUT: '规划生成超时',
+      MODEL_EMPTY_RESPONSE: '模型返回空结果',
+      MODEL_INVOKE_FAILED: '模型调用失败',
+      MODELSCOPE_REQUEST_LIMIT: '模型请求次数已达上限',
+      TOOLCALL_PROBE_TIMEOUT: '工具调用能力探测超时',
+      MCP_STARTUP_TIMEOUT: 'MCP 启动超时',
+      MCP_TIMEOUT: 'MCP 调用超时',
+      MCP_CALL_TIMEOUT: 'MCP 工具调用超时',
+      TEXT_PROVIDER_UNAVAILABLE: '未配置可用的文本模型提供商',
+      IMAGE_PROVIDER_UNAVAILABLE: '未配置可用的图片生成提供商',
+      TEXT_PROVIDER_NOT_FOUND: '未找到可用的文本模型提供商',
+      TEXT_PROVIDER_ALL_FAILED: '文本模型调用失败',
+      IMAGE_PROVIDER_ALL_FAILED: '图片生成失败',
+      TOOL_RATE_LIMIT: '工具调用过于频繁',
+      TOOL_CALLS_EXCEEDED: '工具调用次数过多',
+      PROVIDER_PROTOCOL_ERROR: 'AI 提供商协议错误',
+      RATE_LIMIT_EXCEEDED: '请求频率已达上限',
+      TOOL_SCHEMA_ERROR: '工具参数格式错误',
+      SESSION_NOT_FOUND: '会话不存在',
+      TTS_SERVICE_UNAVAILABLE: '语音合成服务不可用',
+      IMAGE_GENERATION_FAILED: '图片生成失败',
+    };
+    if (code && map[code]) return map[code];
+    return fallback || '未知错误';
   }
 
   _stringifyErrorMessage(error) {
@@ -102,9 +157,10 @@ class LangChainManager {
     const type = typeof error?.type === 'string' ? error.type : '';
     const name = typeof error?.name === 'string' ? error.name : '';
     const message = this._stringifyErrorMessage(error);
+    const zh_message = this._zhErrorMessage(code, message);
     const headers = this._pickHeaders(error?.headers || error?.response?.headers);
     const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
-    return { provider: adapter?.name, model, baseURL, baseURLHasV1, status, code, type, name, message, headers };
+    return { provider: adapter?.name, model, baseURL, baseURLHasV1, status, code, type, name, message, zh_message, headers };
   }
 
   selectTextProviderByName(name) {
@@ -125,7 +181,9 @@ class LangChainManager {
    */
   selectTextProvider() {
     if (this.textAdapters.length === 0) {
-      throw new Error('No available text providers');
+      const err = new Error('未配置可用的文本模型提供商');
+      err.code = 'TEXT_PROVIDER_UNAVAILABLE';
+      throw err;
     }
     return this.textAdapters[0];
   }
@@ -136,7 +194,9 @@ class LangChainManager {
    */
   selectImageProvider() {
     if (this.imageAdapters.length === 0) {
-      throw new Error('No available image providers');
+      const err = new Error('未配置可用的图片生成提供商');
+      err.code = 'IMAGE_PROVIDER_UNAVAILABLE';
+      throw err;
     }
     return this.imageAdapters[0];
   }
@@ -149,7 +209,9 @@ class LangChainManager {
     const maxRetries = this.textAdapters.length - 1;
 
     if (retries > maxRetries) {
-      throw new Error(`All text providers failed for operation: ${operationName}`);
+      const err = new Error(`所有文本模型提供商均调用失败：${operationName}`);
+      err.code = 'TEXT_PROVIDER_ALL_FAILED';
+      throw err;
     }
 
     const adapter = this.textAdapters[retries];
@@ -191,7 +253,9 @@ class LangChainManager {
       ? baseAdapters.filter((a) => a && allowedProviders.includes(a.name))
       : baseAdapters;
     if (allowedProviders.length && scopedAdapters.length === 0) {
-      throw new Error(`No available text providers for: ${allowedProviders.join(', ')}`);
+      const err = new Error(`未找到可用的文本模型提供商：${allowedProviders.join(', ')}`);
+      err.code = 'TEXT_PROVIDER_NOT_FOUND';
+      throw err;
     }
 
     const adapters = (() => {
@@ -202,9 +266,11 @@ class LangChainManager {
       return [preferredAdapter, ...rest];
     })();
 
+    const onAdapterStart = typeof options?.onAdapterStart === 'function' ? options.onAdapterStart : null;
     let lastError = null;
     for (const adapter of adapters) {
       try {
+        if (onAdapterStart) await onAdapterStart({ adapter });
         console.log(`Attempting invokeText with provider: ${adapter.name}`);
         return await adapter.invoke(filteredMessages);
       } catch (error) {
@@ -223,7 +289,10 @@ class LangChainManager {
       }
     }
 
-    throw lastError || new Error('All text providers failed for operation: invokeText');
+    if (lastError) throw lastError;
+    const err = new Error('文本模型调用失败');
+    err.code = 'TEXT_PROVIDER_ALL_FAILED';
+    throw err;
   }
 
   /**
@@ -233,7 +302,9 @@ class LangChainManager {
     const maxRetries = this.imageAdapters.length - 1;
 
     if (retries > maxRetries) {
-      throw new Error(`All image providers failed for operation: ${operationName}`);
+      const err = new Error(`所有图片生成提供商均调用失败：${operationName}`);
+      err.code = 'IMAGE_PROVIDER_ALL_FAILED';
+      throw err;
     }
 
     const adapter = this.imageAdapters[retries];
@@ -282,9 +353,11 @@ class LangChainManager {
       return [preferredAdapter, ...rest];
     })();
 
+    const onAdapterStart = typeof options?.onAdapterStart === 'function' ? options.onAdapterStart : null;
     let lastError = null;
     for (const adapter of adapters) {
       try {
+        if (onAdapterStart) await onAdapterStart({ adapter });
         console.log(`Attempting generateImage with provider: ${adapter.name}`);
         return await adapter.generateImage(promptToSend, options);
       } catch (error) {
@@ -313,7 +386,10 @@ class LangChainManager {
       }
     }
 
-    throw lastError || new Error('All image providers failed for operation: generateImage');
+    if (lastError) throw lastError;
+    const err = new Error('图片生成失败');
+    err.code = 'IMAGE_PROVIDER_ALL_FAILED';
+    throw err;
   }
 
   _isRateLimitError(error) {
@@ -507,13 +583,20 @@ class LangChainManager {
 
     const preferred = typeof options?.provider === 'string' ? options.provider : '';
     const rawAdapters = Array.isArray(options?.adapters) && options.adapters.length ? options.adapters : this.textAdapters;
+    const allowed = Array.isArray(options?.allowedProviders) ? options.allowedProviders.filter((p) => typeof p === 'string' && p) : [];
+    const baseAdapters = allowed.length ? rawAdapters.filter((a) => a && allowed.includes(a.name)) : rawAdapters;
     const adapters = (() => {
-      if (!preferred) return rawAdapters;
-      const hit = rawAdapters.find((a) => a && a.name === preferred);
-      if (!hit) return rawAdapters;
-      const rest = rawAdapters.filter((a) => a !== hit);
+      if (!preferred) return baseAdapters;
+      const hit = baseAdapters.find((a) => a && a.name === preferred);
+      if (!hit) return baseAdapters;
+      const rest = baseAdapters.filter((a) => a !== hit);
       return [hit, ...rest];
     })();
+    if (allowed.length && adapters.length === 0) {
+      const err = new Error(`未找到可用的模型提供商：${allowed.join(', ')}`);
+      err.code = 'TEXT_PROVIDER_NOT_FOUND';
+      throw err;
+    }
 
     const withTimeout = (promise, timeoutMs, code) => {
       const msRaw = Number(timeoutMs);
@@ -523,6 +606,7 @@ class LangChainManager {
         new Promise((_, reject) => {
           const t = setTimeout(() => {
             const err = new Error(code || 'TIMEOUT');
+            err.message = this._zhErrorMessage(code || 'TIMEOUT', err.message);
             err.status = 504;
             err.code = code || 'TIMEOUT';
             reject(err);
@@ -542,7 +626,7 @@ class LangChainManager {
       const shouldWrapFactory = (prop) => prop === 'bindTools' || prop === 'bind' || prop === 'withConfig';
 
       const makeLimitError = () => {
-        const err = new Error('MODELSCOPE_REQUEST_LIMIT');
+        const err = new Error(this._zhErrorMessage('MODELSCOPE_REQUEST_LIMIT', 'MODELSCOPE_REQUEST_LIMIT'));
         err.code = 'MODELSCOPE_REQUEST_LIMIT';
         err.status = 429;
         err.meta = { provider, limit: max, used };
@@ -790,7 +874,7 @@ class LangChainManager {
           }
         }
         const text = this._normalizeMessageContent(lastAi?.content);
-        if (text && text.trim()) return { text, provider: adapter?.name || '', ms: Date.now() - started };
+        if (text && text.trim()) return { text, provider: adapter?.name || '', ms: Date.now() - started, steps: outMessages };
 
         if (this._debugEnabled()) {
           const tail = outMessages.slice(-10).map((m) => {
@@ -829,7 +913,10 @@ class LangChainManager {
       }
     }
 
-    throw lastErr || new Error('MODEL_INVOKE_FAILED');
+    if (lastErr) throw lastErr;
+    const err = new Error(this._zhErrorMessage('MODEL_INVOKE_FAILED', '模型调用失败'));
+    err.code = 'MODEL_INVOKE_FAILED';
+    throw err;
   }
 
   /**

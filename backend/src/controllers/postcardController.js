@@ -21,9 +21,11 @@ class PostcardController {
       if (req.body.style) imageOptions.style = req.body.style;
       if (req.body.size) imageOptions.size = req.body.size;
 
+      const aiMeta = { providers: [] };
+      res.locals.aiMeta = aiMeta;
       const result = await this.postcardService.generatePostcard(
         imageData,
-        imageOptions
+        { ...imageOptions, aiMeta }
       );
       res.json(result);
     } catch (error) {

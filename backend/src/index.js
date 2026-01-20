@@ -106,9 +106,34 @@ async function initializeApp() {
     const langChainManager = new LangChainManager(textProviders, imageProviders);
 
     // 初始化 Services
-    const planService = new PlanService(langChainManager);
     const mcpService = new MCPService();
-    await mcpService.initialize();
+    const mcpInit = await mcpService.initialize();
+    app.locals.mcpService = mcpService;
+    const perServer = mcpInit && typeof mcpInit === 'object' ? mcpInit.per_server : null;
+    const entries = perServer && typeof perServer === 'object' ? Object.entries(perServer) : [];
+    const okServers = entries.filter(([, info]) => info && info.ok).map(([name, info]) => ({
+      name,
+      tool_count: info.tool_count,
+      duration_ms: info.duration_ms,
+    }));
+    const failedServers = entries.filter(([, info]) => info && info.ok === false).map(([name, info]) => ({
+      name,
+      error: info.error || 'unknown error',
+      duration_ms: info.duration_ms,
+    }));
+    if (okServers.length) {
+      console.log('MCP servers ready:', okServers.map((s) => `${s.name}(tools:${s.tool_count ?? 0})`).join(', '));
+    } else {
+      console.log('MCP servers ready: none');
+    }
+    if (failedServers.length) {
+      console.log('MCP servers failed:', failedServers.map((s) => `${s.name}(${s.error})`).join(', '));
+    }
+
+    const configuredServers = mcpService.listServers();
+    const configuredEntries = configuredServers && typeof configuredServers === 'object' ? Object.entries(configuredServers) : [];
+    
+    const planService = new PlanService(langChainManager, mcpService);
     const ttsService = new TTSService({ audioDir });
     const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService });
     const promptService = new PromptService(langChainManager);

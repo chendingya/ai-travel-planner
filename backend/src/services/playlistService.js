@@ -10,10 +10,26 @@ class PlaylistService {
     this.supabase = supabase;
   }
 
+  _ensureAiMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (!Array.isArray(meta.providers)) meta.providers = [];
+    return meta;
+  }
+
+  _recordProvider(meta, adapter, kind = 'text') {
+    const target = this._ensureAiMeta(meta);
+    if (!target) return;
+    const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+    const model = typeof adapter?.model === 'string' ? adapter.model : '';
+    if (!provider && !model) return;
+    const exists = target.providers.some((p) => p && p.provider === provider && p.model === model && p.kind === kind);
+    if (!exists) target.providers.push({ kind, provider, model });
+  }
+
   /**
    * 生成歌单
    */
-  async generatePlaylist(travelInfo) {
+  async generatePlaylist(travelInfo, options = {}) {
     try {
       const systemPrompt = `你是一名音乐策划与旅行氛围顾问。请基于旅行信息生成一份专属 BGM 歌单。
 
@@ -29,7 +45,11 @@ class PlaylistService {
         { role: 'user', content: JSON.stringify(travelInfo ?? {}, null, 2) },
       ];
 
-      const raw = await this.langChainManager.invokeText(messages);
+      const aiMeta = this._ensureAiMeta(options?.aiMeta);
+      if (aiMeta) aiMeta.mcp = false;
+      const raw = await this.langChainManager.invokeText(messages, {
+        onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
+      });
       const parsed = safeParseJSON(raw, null);
       const playlist = (() => {
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {

@@ -25,7 +25,9 @@ class ShareController {
         return res.status(400).json({ message: 'destination is required', error: 'destination is required' });
       }
 
-      const content = await this.shareService.generateShareContent(shareInfo);
+      const aiMeta = { providers: [] };
+      res.locals.aiMeta = aiMeta;
+      const content = await this.shareService.generateShareContent(shareInfo, { aiMeta });
       res.json({
         content,
         destination: shareInfo.destination,

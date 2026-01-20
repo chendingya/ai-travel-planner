@@ -735,6 +735,20 @@ class AIChatService {
       const includeAudio = !!(options.include_audio ?? options.includeAudio);
       const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
 
+      const trace = this._currentTrace();
+      const aiMeta = trace && typeof trace.aiMeta === 'object' ? trace.aiMeta : null;
+      if (aiMeta) {
+        aiMeta.mcp = enableTools && !!this.mcpService;
+      }
+
+      const recordAdapterMeta = (adapter) => {
+        if (!aiMeta) return;
+        const provider = typeof adapter?.name === 'string' ? adapter.name : '';
+        const model = typeof adapter?.model === 'string' ? adapter.model : '';
+        if (provider) aiMeta.provider = provider;
+        if (model) aiMeta.model = model;
+      };
+
       this._debug('chat.start', {
         sessionId,
         enableTools,
@@ -770,7 +784,7 @@ class AIChatService {
             { role: 'system', content: systemPrompt },
             ...history,
             { role: 'user', content: message },
-          ], { provider: preferredProvider, allowedProviders });
+          ], { provider: preferredProvider, allowedProviders, onAdapterStart: async ({ adapter }) => recordAdapterMeta(adapter) });
         } else {
           const [{ SystemMessage, HumanMessage, AIMessage }] = await Promise.all([
             import('@langchain/core/messages'),
@@ -860,6 +874,9 @@ class AIChatService {
             const scoped = filtered.filter((a) => a?.name === preferredProvider);
             return scoped.length ? scoped : filtered;
           })();
+          const modelByProvider = new Map(
+            adapters.map((a) => [typeof a?.name === 'string' ? a.name : '', typeof a?.model === 'string' ? a.model : ''])
+          );
           if (!adapters.length) {
             response = '当前未配置可用的文本大模型提供商，暂时无法处理该请求。请先配置 AI_TEXT_PROVIDERS_JSON 后重试。';
             if (sessionId) {
@@ -927,6 +944,7 @@ class AIChatService {
               onAdapterStart: async ({ adapter }) => {
                 const provider = typeof adapter?.name === 'string' ? adapter.name : '';
                 if (provider) this._debug('agent.invoke.try', { provider });
+                recordAdapterMeta(adapter);
               },
               onAdapterError: async ({ adapter, error }) => {
                 const provider = adapter?.name;
@@ -949,6 +967,13 @@ class AIChatService {
               },
             });
             this._debug('agent.invoke.ok', { provider: out?.provider || '', ms: Date.now() - started });
+            if (aiMeta) {
+              const providerUsed = typeof out?.provider === 'string' ? out.provider : '';
+              if (providerUsed) aiMeta.provider = providerUsed;
+              const modelUsed = providerUsed ? modelByProvider.get(providerUsed) : '';
+              if (modelUsed) aiMeta.model = modelUsed;
+              aiMeta.mcp = true;
+            }
             response = typeof out?.text === 'string' ? out.text : '';
             if (!response) {
               lastErr = new Error('MODEL_EMPTY_RESPONSE');
