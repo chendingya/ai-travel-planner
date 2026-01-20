@@ -646,7 +646,9 @@ const model = 'qwen3-max-preview';  // 修改为其他模型
 
 ## 📄 许可证
 
-本项目仅供学习和研究使用。
+本项目采用 [GNU General Public License v3.0](LICENSE) 开源许可协议。
+
+您可以在遵循 GPL v3.0 协议的前提下自由使用、修改和分发本项目的源代码。
 
 ## 👥 作者
 
