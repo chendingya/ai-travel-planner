@@ -2,7 +2,7 @@
 
 一个基于 AI 的智能旅行规划 Web 应用，帮助用户轻松创建个性化的旅行方案。采用现代化技术栈，提供流畅的用户体验和强大的功能。
 
-> **🚀 首次使用？** 查看 [快速开始指南 (QUICKSTART.md)](./QUICKSTART.md) 快速上手！
+> **🚀 首次使用？** 查看 [快速开始指南 (QUICKSTART.md)](./docs/QUICKSTART.md) 快速上手！
 
 ## ✨ 核心功能
 
@@ -458,8 +458,8 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 ### ✅ 前端服务检查
 - [ ] 终端显示 "VITE ready"
-- [ ] 终端显示 "Local: http://localhost:5173/"
-- [ ] 浏览器能成功打开 http://localhost:5173
+- [ ] 终端显示 "Local: http://localhost:8080/"
+- [ ] 浏览器能成功打开 http://localhost:8080
 - [ ] 页面样式正常显示
 
 ### ✅ 核心功能测试
@@ -518,13 +518,13 @@ AI_IMAGE_PROVIDERS_JSON='[
 - [LangChain 文档](https://js.langchain.com/)
 
 ### 项目文档
+- [测试用例清单](./docs/测试用例清单.md) - 完整的功能测试用例，覆盖所有核心功能
 - [后端架构文档](./docs/后端架构文档.md) - 详细的系统架构设计和技术说明
 - [部署指南](./docs/部署指南.md) - 多种部署方式的详细指南
-- [快速开始指南](./QUICKSTART.md) - 5分钟快速上手
+- [快速开始指南](./docs/QUICKSTART.md) - 5分钟快速上手
 - [高德地图配置说明](./docs/高德地图配置说明.md)
 
 ### 功能文档
-- [阿里百炼配置说明](./backend/阿里百炼配置说明.md)
 - [数字人及AI面对面对话功能说明](./docs/数字人及AI面对面对话功能说明.md)
 - [AI 速记卡片功能说明](./docs/AI速记卡片功能说明.md)
 - [听见山河BGM歌单功能说明](./docs/听见山河BGM歌单功能说明.md)
