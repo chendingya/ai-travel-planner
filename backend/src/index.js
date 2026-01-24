@@ -38,6 +38,8 @@ const ShareController = require('./controllers/shareController');
 
 // Supabase
 const supabase = require('./supabase');
+const swaggerUi = require('swagger-ui-express');
+const { createOpenApiSpec } = require('./swagger');
 
 // 路由
 const apiRoutes = require('./routes');
@@ -57,7 +59,19 @@ app.use(requestLogger);
 const audioDir = path.join(process.cwd(), 'runtime', 'audio');
 app.use('/audio', express.static(audioDir));
 
-// 健康检查端点
+const openApiSpec = createOpenApiSpec();
+
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [System]
+ *     summary: 健康检查
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: 服务正常
+ */
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -69,7 +83,17 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 前端配置注入端点
+/**
+ * @openapi
+ * /config.js:
+ *   get:
+ *     tags: [System]
+ *     summary: 前端运行时配置注入
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: 配置脚本
+ */
 app.get('/config.js', (req, res) => {
   const supabaseUrl = process.env.SUPABASE_URL || '';
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
@@ -89,6 +113,12 @@ app.get('/config.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.send(`window.__APP_CONFIG__ = ${JSON.stringify(runtimeConfig)};`);
 });
+
+app.get('/api/openapi.json', (req, res) => {
+  res.json(openApiSpec);
+});
+
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
 /**
  * 初始化应用
@@ -199,7 +229,7 @@ async function startServer() {
 
   server = app.listen(PORT, HOST, () => {
     console.log(`\n🚀 Server is running on http://${HOST}:${PORT}`);
-    console.log(`📚 API documentation: http://${HOST}:${PORT}/api`);
+    console.log(`📚 API documentation: http://${HOST}:${PORT}/api/docs`);
     console.log(`❤️  Health check: http://${HOST}:${PORT}/health\n`);
   });
 

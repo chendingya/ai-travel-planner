@@ -279,7 +279,7 @@ class PlanService {
 **核心要求 - 必须严格遵守**：
 1. **必须使用工具获取真实信息**：
    - 不要依赖你的内部知识来估算价格或检查可用性。
-   -可以调用工具（如 bing-search, amap-maps, 12306-mcp 等）来获取：
+   - 可以调用工具（如 bing-search, amap-maps, 12306-mcp 等）来获取：
      - 真实的交通方式和票价（火车/飞机）。
      - 真实的酒店名称、位置和当前价格。
      - 景点的实际开放时间和门票价格。
@@ -287,14 +287,15 @@ class PlanService {
 
 2. **思考与执行流程**：
    - 第一步：分析用户需求，列出需要查询的信息（交通、住宿、景点）。
-   - 第二步：**调用工具**获取这些信息。请多次调用工具以确保信息准确。
+   - 第二步：**调用工具**获取这些信息。每个信息调用 1-2 次工具即可，不要重复查询。
    - 第三步：根据查询到的真实信息，规划行程。
-   - 第四步：最后生成符合下方 Schema 的 JSON 格式计划。
+   - 第四步：**立即生成符合下方 Schema 的 JSON 格式计划**，不要继续调用工具。
 
 3. **输出格式要求**：
    - 最终输出只包含 JSON，不要有 Markdown 标记，不要有解释性文字。
    - 金额字段必须是数字（整数，单位：元）。
    - 内容必须中文。
+   - **重要：在收集到足够信息后，立即输出最终的 JSON，不要继续调用工具！**
 
 输出 JSON Schema（示例字段名，按此输出）：
 {
@@ -355,6 +356,7 @@ class PlanService {
           ? process.env.AI_TEXT_PROVIDER_MCP_PREFERRED.trim()
           : '';
       const allowedProviders = mcpProviderName ? [mcpProviderName] : [];
+      const recursionLimit = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '60');
 
       const result = await withTimeout(
         this.langChainManager.invokeToolCallingAgent({
@@ -364,6 +366,7 @@ class PlanService {
           provider: preferredProvider,
           allowedProviders: preferredProvider ? [preferredProvider] : allowedProviders,
           modelInvokeTimeoutMs: modelTimeoutMs,
+          recursionLimit: recursionLimit,
           onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
         }),
         planTimeoutMs,
