@@ -138,6 +138,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
+import { supabase } from '../supabase';
 import GlassButton from './GlassButton.vue';
 
 const props = defineProps({
@@ -218,6 +219,14 @@ const generatePlaylist = async () => {
   playlist.value = null;
 
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      loading.value = false;
+      error.value = '请先登录后再生成歌单';
+      MessagePlugin.warning('请先登录后再生成歌单');
+      return;
+    }
+
     const highlightsArray = playlistHighlights.value
       .split('，')
       .concat(playlistHighlights.value.split(','))
@@ -231,6 +240,7 @@ const generatePlaylist = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         destination: props.destination,

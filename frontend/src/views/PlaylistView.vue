@@ -179,7 +179,7 @@
 
       <!-- 加载状态 -->
       <div v-else-if="loading && !playlist" class="loading-container">
-        <div class="loading-card">
+        <div class="loading-card fx-shimmer">
           <div class="loading-animation">
             <div class="loading-circle"></div>
             <div class="loading-circle delay-1"></div>
@@ -192,7 +192,7 @@
 
       <!-- 错误状态 -->
       <div v-else-if="error" class="error-container">
-        <div class="error-card">
+        <div class="error-card fx-shake">
           <div class="error-icon">
             <t-icon name="close-circle" />
           </div>
@@ -216,6 +216,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
+import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
 import GlassButton from '../components/GlassButton.vue';
 
@@ -229,6 +230,17 @@ const showConfig = ref(false);
 const loading = ref(false);
 const error = ref('');
 const playlist = ref(null);
+
+const triggerLogin = () => {
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button');
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click();
+      return;
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录');
+};
 
 // 页面加载时初始化地点信息
 const initHighlights = () => {
@@ -305,6 +317,14 @@ const generatePlaylist = async () => {
   const { signal } = currentAbortController;
 
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      loading.value = false;
+      error.value = '请先登录后再生成歌单';
+      triggerLogin();
+      return;
+    }
+
     const highlightsArray = playlistHighlights.value
       .split('，')
       .concat(playlistHighlights.value.split(','))
@@ -318,6 +338,7 @@ const generatePlaylist = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         destination: store.form.destination,

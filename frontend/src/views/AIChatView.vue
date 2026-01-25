@@ -355,10 +355,19 @@ const callAI = async (prompt) => {
   abortController.value = new AbortController()
   
   try {
+    const session = await getAuthSession('请先登录后再进行对话')
+    if (!session) {
+      isLoading.value = false
+      abortController.value = null
+      goToLogin()
+      return
+    }
+
     const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         message: prompt,
@@ -443,7 +452,16 @@ const loadSessions = async () => {
   
   isLoadingSessions.value = true
   try {
-    const response = await fetch('/api/ai-chat/sessions')
+    const session = await getAuthSession()
+    if (!session) {
+      sessions.value = []
+      return
+    }
+    const response = await fetch('/api/ai-chat/sessions', {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    })
     if (response.ok) {
       const data = await response.json()
       sessions.value = data.sessions || (Array.isArray(data) ? data : [])
@@ -481,7 +499,16 @@ const loadSession = async (sessionId) => {
   isLoadingHistory.value = true
   loadingHistoryId.value = sessionId
   try {
-    const response = await fetch(`/api/ai-chat/history/${sessionId}`)
+    const session = await getAuthSession('请先登录后再查看历史记录')
+    if (!session) {
+      goToLogin()
+      return
+    }
+    const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    })
     if (!response.ok) throw new Error('请求失败')
 
     const data = await response.json()
@@ -523,8 +550,16 @@ const confirmDeleteSession = (sessionId) => {
 // 删除指定会话
 const deleteSession = async (sessionId) => {
   try {
+    const session = await getAuthSession('请先登录后再删除会话')
+    if (!session) {
+      goToLogin()
+      return
+    }
     const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
       method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
     })
     
     if (response.ok) {
@@ -622,6 +657,21 @@ const goToLogin = () => {
   }
   MessagePlugin.info('请点击右上角的"登录"按钮进行登录')
   showHistoryPanel.value = false
+}
+
+const getAuthSession = async (tip = '') => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      if (tip) MessagePlugin.warning(tip)
+      return null
+    }
+    return session
+  } catch (error) {
+    console.error('获取登录态失败:', error)
+    if (tip) MessagePlugin.warning(tip)
+    return null
+  }
 }
 </script>
 

@@ -47,7 +47,7 @@
     <div class="main-content">
       <!-- 加载状态 -->
       <div v-if="loading" class="loading-container">
-        <div class="loading-card">
+        <div class="loading-card fx-shimmer">
           <div class="loading-animation">
             <div class="loading-circle"></div>
             <div class="loading-circle delay-1"></div>
@@ -83,7 +83,7 @@
 
       <!-- 错误状态 -->
       <div v-else-if="error" class="error-container">
-        <div class="error-card">
+        <div class="error-card fx-shake">
           <div class="error-icon">
             <t-icon name="close-circle" />
           </div>
@@ -161,6 +161,7 @@ import { useRouter } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
 import { MessagePlugin } from 'tdesign-vue-next';
 import GlassButton from '../components/GlassButton.vue';
+import { supabase } from '../supabase';
 
 const router = useRouter();
 const store = usePlannerStore();
@@ -195,6 +196,17 @@ const handleBack = () => {
   router.back();
 };
 
+const triggerLogin = () => {
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button');
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click();
+      return;
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录');
+};
+
 // 获取可用的图片生成提供商
 const fetchProviders = async () => {
   try {
@@ -223,6 +235,13 @@ const generateQuickNote = async () => {
     return;
   }
 
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    MessagePlugin.warning('请先登录后再生成速记卡片');
+    triggerLogin();
+    return;
+  }
+
   loading.value = true;
   error.value = '';
   currentStep.value = 1;
@@ -239,6 +258,7 @@ const generateQuickNote = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         destination: store.form.destination,
@@ -264,6 +284,7 @@ const generateQuickNote = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         prompt: generatedPrompt.value,

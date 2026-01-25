@@ -125,6 +125,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
+import { supabase } from '../supabase';
 
 const props = defineProps({
   visible: {
@@ -166,6 +167,17 @@ const generatedContent = ref('');
 const loading = ref(false);
 const error = ref('');
 
+const triggerLogin = () => {
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button');
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click();
+      return;
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录');
+};
+
 const platformName = computed(() => {
   const p = platforms.find(x => x.value === selectedPlatform.value);
   return p?.label || '';
@@ -189,6 +201,13 @@ const generateContent = async () => {
     return;
   }
 
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    MessagePlugin.warning('请先登录后再生成分享文案');
+    triggerLogin();
+    return;
+  }
+
   loading.value = true;
   error.value = '';
   generatedContent.value = '';
@@ -198,6 +217,7 @@ const generateContent = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         destination: props.destination,

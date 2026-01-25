@@ -1,5 +1,5 @@
 <template>
-  <div class="home-container">
+  <div class="home-container" ref="homeRef">
     <!-- Hero Section - 更大气的设计 -->
     <div class="hero-section">
       <div class="hero-background">
@@ -34,18 +34,18 @@
             观看演示
           </GlassButton>
         </div>
-        <div class="hero-stats">
-          <div class="stat-item">
+        <div class="hero-stats fx-reveal" style="--reveal-delay: 0.35s;">
+          <div class="stat-item fx-reveal" style="--reveal-delay: 0.45s;">
             <div class="stat-number">10K+</div>
             <div class="stat-label">生成方案</div>
           </div>
           <div class="stat-divider"></div>
-          <div class="stat-item">
+          <div class="stat-item fx-reveal" style="--reveal-delay: 0.55s;">
             <div class="stat-number">98%</div>
             <div class="stat-label">用户满意度</div>
           </div>
           <div class="stat-divider"></div>
-          <div class="stat-item">
+          <div class="stat-item fx-reveal" style="--reveal-delay: 0.65s;">
             <div class="stat-number">24/7</div>
             <div class="stat-label">随时可用</div>
           </div>
@@ -56,7 +56,7 @@
     <div class="content-section">
       <!-- 产品特色 - 苹果风格卡片设计 -->
       <section class="feature-section">
-        <div class="section-header">
+        <div class="section-header fx-reveal">
           <span class="section-badge">核心优势</span>
           <h2 class="section-title">为什么选择我们</h2>
           <p class="section-subtitle">强大的 AI 技术，为您提供最优质的旅行规划服务</p>
@@ -64,12 +64,12 @@
         
         <!-- AI 导航与规划 -->
         <div class="feature-subsection">
-          <div class="subsection-title">
+          <div class="subsection-title fx-reveal">
             <div class="title-number">01</div>
             <h3>智能旅行规划</h3>
           </div>
           <div class="feature-grid-two">
-            <div class="feature-card feature-card-primary">
+            <div class="feature-card feature-card-primary fx-reveal">
               <div class="card-glow"></div>
               <div class="feature-icon-wrapper">
                 <div class="feature-icon">🧠</div>
@@ -85,7 +85,7 @@
               </div>
             </div>
 
-            <div class="feature-card feature-card-secondary">
+            <div class="feature-card feature-card-secondary fx-reveal">
               <div class="card-glow"></div>
               <div class="feature-icon-wrapper">
                 <div class="feature-icon">🗺️</div>
@@ -105,12 +105,12 @@
 
         <!-- AI 生成功能 -->
         <div class="feature-subsection">
-          <div class="subsection-title">
+          <div class="subsection-title fx-reveal">
             <div class="title-number">02</div>
             <h3>AI 生成体验</h3>
           </div>
           <div class="feature-grid-ai">
-            <div class="ai-feature-card ai-feature-music">
+            <div class="ai-feature-card ai-feature-music fx-reveal">
               <div class="ai-feature-icon">🎵</div>
               <div class="ai-feature-content">
                 <h4 class="ai-feature-title">听见·山河</h4>
@@ -124,7 +124,7 @@
               </div>
             </div>
 
-            <div class="ai-feature-card ai-feature-postcard">
+            <div class="ai-feature-card ai-feature-postcard fx-reveal">
               <div class="ai-feature-icon">🎨</div>
               <div class="ai-feature-content">
                 <h4 class="ai-feature-title">尺素·锦书</h4>
@@ -138,7 +138,7 @@
               </div>
             </div>
 
-            <div class="ai-feature-card ai-feature-note">
+            <div class="ai-feature-card ai-feature-note fx-reveal">
               <div class="ai-feature-icon">📷</div>
               <div class="ai-feature-content">
                 <h4 class="ai-feature-title">拾光·绘影</h4>
@@ -152,7 +152,7 @@
               </div>
             </div>
 
-            <div class="ai-feature-card ai-feature-share">
+            <div class="ai-feature-card ai-feature-share fx-reveal">
               <div class="ai-feature-icon">✍️</div>
               <div class="ai-feature-content">
                 <h4 class="ai-feature-title">妙笔·云章</h4>
@@ -170,12 +170,12 @@
 
         <!-- 实用功能 -->
         <div class="feature-subsection">
-          <div class="subsection-title">
+          <div class="subsection-title fx-reveal">
             <div class="title-number">03</div>
             <h3>贴心实用功能</h3>
           </div>
           <div class="feature-grid-two">
-            <div class="feature-card feature-card-accent">
+            <div class="feature-card feature-card-accent fx-reveal">
               <div class="card-glow"></div>
               <div class="feature-icon-wrapper">
                 <div class="feature-icon">💰</div>
@@ -191,7 +191,7 @@
               </div>
             </div>
 
-            <div class="feature-card feature-card-info">
+            <div class="feature-card feature-card-info fx-reveal">
               <div class="card-glow"></div>
               <div class="feature-icon-wrapper">
                 <div class="feature-icon">💾</div>
@@ -212,14 +212,14 @@
 
       <!-- 使用教程 - 现代化设计 -->
       <section class="tutorial-section">
-        <div class="section-header">
+        <div class="section-header fx-reveal">
           <span class="section-badge">简单四步</span>
           <h2 class="section-title">如何开始使用</h2>
           <p class="section-subtitle">跟随指引，轻松创建您的专属旅行计划</p>
         </div>
         
         <div class="tutorial-grid">
-          <div class="tutorial-card">
+          <div class="tutorial-card fx-reveal">
             <div class="tutorial-number">01</div>
             <div class="tutorial-icon">📝</div>
             <h3 class="tutorial-title">填写基本信息</h3>
@@ -229,7 +229,7 @@
             </p>
           </div>
 
-          <div class="tutorial-card">
+          <div class="tutorial-card fx-reveal">
             <div class="tutorial-number">02</div>
             <div class="tutorial-icon">❤️</div>
             <h3 class="tutorial-title">描述您的偏好</h3>
@@ -239,7 +239,7 @@
             </p>
           </div>
 
-          <div class="tutorial-card">
+          <div class="tutorial-card fx-reveal">
             <div class="tutorial-number">03</div>
             <div class="tutorial-icon">⚡</div>
             <h3 class="tutorial-title">AI 智能生成</h3>
@@ -249,7 +249,7 @@
             </p>
           </div>
 
-          <div class="tutorial-card">
+          <div class="tutorial-card fx-reveal">
             <div class="tutorial-number">04</div>
             <div class="tutorial-icon">✨</div>
             <h3 class="tutorial-title">查看和保存</h3>
@@ -263,14 +263,14 @@
 
       <!-- 使用技巧 - 精致卡片 -->
       <section class="tips-section">
-        <div class="section-header">
+        <div class="section-header fx-reveal">
           <span class="section-badge">实用技巧</span>
           <h2 class="section-title">让体验更加出色</h2>
           <p class="section-subtitle">掌握这些技巧，让 AI 更懂你的需求</p>
         </div>
         
         <div class="tips-grid">
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
               <div class="tip-icon">🎯</div>
             </div>
@@ -281,7 +281,7 @@
             </p>
           </div>
 
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
               <div class="tip-icon">🗣️</div>
             </div>
@@ -292,7 +292,7 @@
             </p>
           </div>
 
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
               <div class="tip-icon">🗺️</div>
             </div>
@@ -303,7 +303,7 @@
             </p>
           </div>
 
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
               <div class="tip-icon">💾</div>
             </div>
@@ -314,9 +314,9 @@
             </p>
           </div>
 
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
-              <div class="tip-icon">�</div>
+              <div class="tip-icon">💰</div>
             </div>
             <h4 class="tip-title">预算智能分析</h4>
             <p class="tip-text">
@@ -325,7 +325,7 @@
             </p>
           </div>
 
-          <div class="tip-card">
+          <div class="tip-card fx-reveal">
             <div class="tip-icon-wrapper">
               <div class="tip-icon">🔄</div>
             </div>
@@ -342,13 +342,45 @@
 </template>
 
 <script setup>
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import GlassButton from './GlassButton.vue';
 
 defineEmits(['start-plan']);
 
+const homeRef = ref(null);
+let observer = null;
+
 const gotoDemo = () => {
   window.open('https://box.nju.edu.cn/d/5ccc891c28d24a378b8c/', '_blank');
 };
+
+const setupReveal = async () => {
+  await nextTick();
+  const container = homeRef.value;
+  if (!container) return;
+  const items = container.querySelectorAll('.fx-reveal');
+  if (!items.length) return;
+  observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.2, rootMargin: '0px 0px -10% 0px' });
+  items.forEach((el) => observer.observe(el));
+};
+
+onMounted(() => {
+  setupReveal();
+});
+
+onBeforeUnmount(() => {
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+});
 </script>
 
 <style scoped>

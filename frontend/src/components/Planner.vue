@@ -347,6 +347,13 @@ const parseQuickInput = async () => {
     return;
   }
 
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    MessagePlugin.warning('请先登录后再使用智能解析');
+    triggerLogin();
+    return;
+  }
+
   parsing.value = true;
   try {
     console.log('📤 发送解析请求:', quickInput.value);
@@ -356,6 +363,7 @@ const parseQuickInput = async () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({ quickInput: quickInput.value }),
     });
@@ -496,10 +504,19 @@ const handleSubmit = async () => {
 const getPlan = async () => {
   loading.value = true;
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      MessagePlugin.warning('请先登录后再生成旅行方案');
+      triggerLogin();
+      loading.value = false;
+      return;
+    }
+
     const response = await fetch('/api/plan', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify(form.value),
     });

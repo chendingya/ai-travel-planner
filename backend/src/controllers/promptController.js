@@ -55,7 +55,7 @@ class PromptController {
         return res.status(400).json({ message: 'notes is required', error: 'notes is required' });
       }
 
-      const aiMeta = { providers: [] };
+      const aiMeta = { providers: [], mcp: false };
       res.locals.aiMeta = aiMeta;
       const prompt = await this.promptService.generatePrompt(inputNotes, { aiMeta });
       res.json({ prompt });
@@ -76,7 +76,7 @@ class PromptController {
         return res.status(400).json({ message: 'destination is required', error: 'destination is required' });
       }
 
-      const aiMeta = { providers: [] };
+      const aiMeta = { providers: [], mcp: false };
       res.locals.aiMeta = aiMeta;
       const prompt = await this.promptService.generatePostcardPrompt(imageData, { aiMeta });
       res.json({ prompt });

@@ -152,6 +152,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { supabase } from '../supabase'
 
 // Props
 const props = defineProps({
@@ -186,6 +187,17 @@ const gifSwitchTimer = ref(null) // GIF切换定时器
 
 // 计算当前GIF路径
 const currentGif = computed(() => gifFiles[currentGifIndex.value])
+
+const triggerLogin = () => {
+  const buttons = document.querySelectorAll('.header-right button, .auth-container button')
+  for (const btn of buttons) {
+    if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
+      btn.click()
+      return
+    }
+  }
+  MessagePlugin.info('请点击右上角的"登录"按钮进行登录')
+}
 
 // 状态计算
 const status = computed(() => {
@@ -236,6 +248,15 @@ const generateSpotAudio = async (spot) => {
   errorMessage.value = ''
   
   try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      isGenerating.value = false
+      errorMessage.value = '请先登录后再生成讲解'
+      MessagePlugin.warning(errorMessage.value)
+      triggerLogin()
+      return
+    }
+
     // 构建景点信息
     const spotContext = {
       name: spot.description || spot.location || '未知景点',
@@ -250,7 +271,8 @@ const generateSpotAudio = async (spot) => {
     const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         message: `请为${spotContext.name}这个景点生成一段生动的导游讲解。${spotContext.district ? `位于${spotContext.district}` : ''}${spotContext.city ? `${spotContext.city}市` : ''}。讲解内容要包含景点特色、历史文化背景、游览建议等，语言要生动有趣，时长控制在1-2分钟，大约200-300字。`,
