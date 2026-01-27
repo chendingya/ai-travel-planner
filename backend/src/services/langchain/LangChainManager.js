@@ -558,6 +558,11 @@ class LangChainManager {
         })
         .join('');
     }
+    if (content && typeof content === 'object') {
+      try {
+        return JSON.stringify(content);
+      } catch {}
+    }
     if (content == null) return '';
     return String(content);
   }
@@ -569,6 +574,7 @@ class LangChainManager {
     const messages = Array.isArray(options?.messages) ? options.messages : [];
     const tools = Array.isArray(options?.tools) ? options.tools : [];
     const prompt = typeof options?.prompt === 'string' ? options.prompt : '';
+    const onStep = typeof options?.onStep === 'function' ? options.onStep : null;
 
     const recursionLimitRaw = Number(options?.recursionLimit);
     const recursionLimit = Number.isFinite(recursionLimitRaw) && recursionLimitRaw > 0 ? recursionLimitRaw : 20;
@@ -717,6 +723,51 @@ class LangChainManager {
       return null;
     };
 
+    const pickToolContent = (value) => {
+      if (typeof value === 'string') return value;
+      if (value && typeof value === 'object') {
+        if (typeof value.content === 'string') return value.content;
+        if (typeof value?.kwargs?.content === 'string') return value.kwargs.content;
+        if (typeof value?.lc_kwargs?.content === 'string') return value.lc_kwargs.content;
+      }
+      return this._normalizeMessageContent(value);
+    };
+
+    const buildToolCallId = (name, args) => {
+      if (!name) return '';
+      let raw = '';
+      if (typeof args === 'string') {
+        raw = args;
+      } else {
+        try {
+          raw = JSON.stringify(args ?? {});
+        } catch {
+          raw = String(args ?? '');
+        }
+      }
+      return `${name}:${raw}`;
+    };
+
+    const maxToolCallsRaw = Number(options?.maxToolCalls);
+    const maxToolCalls = Number.isFinite(maxToolCallsRaw) && maxToolCallsRaw > 0 ? Math.min(64, Math.floor(maxToolCallsRaw)) : null;
+    let toolCallCount = 0;
+    let toolUsed = false;
+    const makeToolCallsExceededError = () => {
+      const err = new Error(this._zhErrorMessage('TOOL_CALLS_EXCEEDED', '工具调用次数过多'));
+      err.code = 'TOOL_CALLS_EXCEEDED';
+      err.status = 429;
+      err.meta = { limit: maxToolCalls, used: toolCallCount };
+      return err;
+    };
+    const ensureToolCallAllowed = () => {
+      if (!maxToolCalls) return;
+      if (toolCallCount >= maxToolCalls) {
+        toolUsed = true;
+        throw makeToolCallsExceededError();
+      }
+      toolCallCount += 1;
+    };
+
     const runCompatToolAgent = async ({ llm, providerName }) => {
       const maxTurnsRaw = Number(process.env.AI_CHAT_COMPAT_AGENT_MAX_TURNS || '6');
       const maxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw > 0 ? Math.min(30, Math.floor(maxTurnsRaw)) : 6;
@@ -732,6 +783,11 @@ class LangChainManager {
 
         if (aiText.startsWith('FINAL')) {
           const out = aiText.replace(/^FINAL\s*/i, '').trim();
+          if (onStep && out) {
+            try {
+              onStep({ role: 'ai', content: out });
+            } catch {}
+          }
           return out || '';
         }
 
@@ -742,18 +798,36 @@ class LangChainManager {
           const toolName = typeof parsed?.name === 'string' ? parsed.name : typeof parsed?.tool === 'string' ? parsed.tool : '';
           const args = parsed?.args ?? parsed?.arguments ?? parsed?.input ?? {};
           const tool = toolMap.get(toolName);
+          ensureToolCallAllowed();
+          const toolCallId = buildToolCallId(toolName, args);
+          toolUsed = true;
+          if (onStep && toolName) {
+            try {
+              onStep({ role: 'assistant', toolCalls: JSON.stringify([{ name: toolName, args, id: toolCallId }]), toolCallId, toolName });
+            } catch {}
+          }
           if (!tool || typeof tool.invoke !== 'function') {
             convo.push(new AIMessage(aiText));
             convo.push(new HumanMessage(`TOOL_RESULT ${toolName} ERROR: unknown tool`));
             continue;
           }
           const toolOut = await withTimeout(tool.invoke(args), modelInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
-          const toolText = this._normalizeMessageContent(toolOut);
+          const toolText = pickToolContent(toolOut);
+          if (onStep) {
+            try {
+              onStep({ role: 'tool', toolResults: toolText, toolCallId, toolName });
+            } catch {}
+          }
           convo.push(new AIMessage(aiText));
           convo.push(new HumanMessage(`TOOL_RESULT ${toolName}:\n${toolText}`));
           continue;
         }
 
+        if (onStep && aiText) {
+          try {
+            onStep({ role: 'ai', content: aiText });
+          } catch {}
+        }
         return aiText;
       }
 
@@ -828,6 +902,33 @@ class LangChainManager {
       }
     };
 
+    const wrapTool = (tool) => {
+      if (!onStep || !tool || typeof tool.invoke !== 'function') return tool;
+      const invoke = tool.invoke.bind(tool);
+      return {
+        ...tool,
+        invoke: async (args) => {
+          const name = typeof tool?.name === 'string' ? tool.name : '';
+          const toolCallId = buildToolCallId(name, args);
+          ensureToolCallAllowed();
+          if (name) {
+            toolUsed = true;
+            try {
+              onStep({ role: 'assistant', toolCalls: JSON.stringify([{ name, args, id: toolCallId }]), toolCallId, toolName: name });
+            } catch {}
+          }
+          const out = await invoke(args);
+          const toolText = pickToolContent(out);
+          try {
+            onStep({ role: 'tool', toolResults: toolText, toolCallId, toolName: name });
+          } catch {}
+          return out;
+        },
+      };
+    };
+
+    const streamingTools = onStep ? tools.map((tool) => wrapTool(tool)) : tools;
+
     let lastErr = null;
     for (const adapter of adapters) {
       if (!adapter || typeof adapter.createLLM !== 'function') continue;
@@ -853,6 +954,7 @@ class LangChainManager {
           if (typeof options?.onAdapterError === 'function') {
             await options.onAdapterError({ adapter, error: err });
           }
+          if (toolUsed) break;
         }
         continue;
       }
@@ -862,7 +964,7 @@ class LangChainManager {
         if (typeof options?.onAdapterStart === 'function') {
           await options.onAdapterStart({ adapter });
         }
-        const agent = createReactAgent({ llm, tools, prompt });
+        const agent = createReactAgent({ llm, tools: streamingTools, prompt });
         const outState = await withTimeout(agent.invoke({ messages }, { recursionLimit }), modelInvokeTimeoutMs, 'MODEL_INVOKE_TIMEOUT');
         const outMessages = Array.isArray(outState?.messages) ? outState.messages : [];
         let lastAi = null;
@@ -874,6 +976,11 @@ class LangChainManager {
           }
         }
         const text = this._normalizeMessageContent(lastAi?.content);
+        if (onStep && text && text.trim()) {
+          try {
+            onStep({ role: 'ai', content: text });
+          } catch {}
+        }
         if (text && text.trim()) return { text, provider: adapter?.name || '', ms: Date.now() - started, steps: outMessages };
 
         if (this._debugEnabled()) {
@@ -902,6 +1009,7 @@ class LangChainManager {
         if (typeof options?.onAdapterError === 'function') {
           await options.onAdapterError({ adapter, error: emptyErr });
         }
+        if (toolUsed) break;
         continue;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
@@ -909,6 +1017,7 @@ class LangChainManager {
         if (typeof options?.onAdapterError === 'function') {
           await options.onAdapterError({ adapter, error: err });
         }
+        if (toolUsed) break;
         continue;
       }
     }

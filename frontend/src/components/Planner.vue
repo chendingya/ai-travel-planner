@@ -1,5 +1,47 @@
 <template>
   <div class="planner-container">
+    <transition name="fade">
+      <div v-if="processVisible" class="plan-process-overlay">
+        <div class="plan-process-panel">
+          <div class="process-header">
+            <div class="process-title">
+              <t-icon :name="processCompleted ? 'check-circle' : 'loading'" class="process-icon" />
+              {{ processCompleted ? '方案生成完成' : '方案生成中' }}
+            </div>
+            <t-button variant="text" theme="default" size="small" @click="closeProcess" :disabled="loading">
+              <t-icon name="close" />
+            </t-button>
+          </div>
+          <div class="process-body">
+            <div class="process-steps">
+              <div v-for="step in processSteps" :key="step.key" :class="['process-step', step.status]">
+                <div class="step-indicator">
+                  <t-icon :name="step.status === 'done' ? 'check-circle' : step.status === 'error' ? 'close-circle' : 'loading'" />
+                </div>
+                <div class="step-content">
+                  <div class="step-title">{{ step.title }}</div>
+                  <div class="step-desc">{{ step.desc }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="process-logs">
+              <div class="logs-title">过程记录</div>
+              <div class="logs-list">
+                <div v-if="!processLogs.length" class="log-empty">正在汇聚信息...</div>
+                <div v-for="(log, idx) in processLogs" :key="idx" :class="['log-item', log.type]">
+                  <div class="log-title">{{ log.title }}</div>
+                  <div class="log-content">{{ log.content }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="process-footer">
+            <div class="footer-tip">{{ processCompleted ? '你可以关闭窗口查看完整方案' : '正在调用工具与整合信息' }}</div>
+            <t-button v-if="processCompleted" theme="primary" variant="outline" @click="closeProcess">查看方案</t-button>
+          </div>
+        </div>
+      </div>
+    </transition>
     <div class="planner-header">
       <h2 class="planner-title">
         <t-icon name="compass" size="28px" />
@@ -200,6 +242,11 @@ const fieldPrevResult = ref('');
 const plan = ref(store.plan || null);
 const loading = ref(false);
 const targetField = ref(null);
+const processVisible = ref(false);
+const processCompleted = ref(false);
+const processSteps = ref([]);
+const processLogs = ref([]);
+let streamAbortController = null;
 
 // 语音识别 - 快捷输入
 const {
@@ -295,6 +342,370 @@ watch(form, (v) => {
 watch(plan, (v) => {
   store.setPlan(v);
 }, { deep: true });
+
+const buildProcessSteps = () => ([
+  { key: 'analyze', title: '需求解析', desc: '识别目的地、预算与偏好', status: 'pending' },
+  { key: 'tooling', title: '工具查询', desc: '拉取交通、景点、住宿信息', status: 'pending' },
+  { key: 'synthesis', title: '信息整合', desc: '融合真实信息并评估可行性', status: 'pending' },
+  { key: 'draft', title: '行程草案', desc: '生成每日安排与预算', status: 'pending' },
+  { key: 'final', title: '结构化输出', desc: '整理为可执行计划', status: 'pending' },
+]);
+
+const updateStepStatus = (index, status) => {
+  processSteps.value = processSteps.value.map((step, idx) => (
+    idx === index ? { ...step, status } : step
+  ));
+};
+
+const setProgressAt = (key) => {
+  const idx = processSteps.value.findIndex(step => step.key === key);
+  if (idx === -1) return;
+  processSteps.value = processSteps.value.map((step, i) => {
+    if (i < idx) return { ...step, status: 'done' };
+    if (i === idx) return { ...step, status: step.status === 'done' ? 'done' : 'active' };
+    if (step.status === 'done') return step;
+    return { ...step, status: 'pending' };
+  });
+};
+
+const processLogIds = new Set();
+
+const resetPlanState = () => {
+  plan.value = null;
+  store.setPlan(null);
+  store.setLocations([]);
+};
+
+const startProcess = () => {
+  processVisible.value = true;
+  processCompleted.value = false;
+  processSteps.value = buildProcessSteps();
+  processLogIds.clear();
+  resetPlanState();
+  processLogs.value = [
+    { type: 'info', title: '任务已提交', content: 'AI 正在读取需求并准备调用工具' }
+  ];
+  setProgressAt('analyze');
+};
+
+const completeProcess = () => {
+  processSteps.value = processSteps.value.map((step) => (
+    step.status === 'error' ? step : { ...step, status: 'done' }
+  ));
+  processCompleted.value = true;
+};
+
+const failProcess = (message) => {
+  const activeIndex = processSteps.value.findIndex(step => step.status === 'active');
+  if (activeIndex !== -1) updateStepStatus(activeIndex, 'error');
+  resetPlanState();
+  processLogs.value.push({ type: 'error', title: '生成失败', content: message || '生成失败' });
+  processCompleted.value = true;
+};
+
+const closeProcess = () => {
+  if (loading.value) return;
+  processVisible.value = false;
+  if (processCompleted.value && plan.value) {
+    emit('plan-generated');
+  }
+};
+
+const stringifyValue = (value) => {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  try {
+    return JSON.stringify(value);
+  } catch (_) {
+    return String(value);
+  }
+};
+
+const normalizeToolResult = (value) => {
+  let raw = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch (_) {
+      return value;
+    }
+  }
+  if (raw && typeof raw === 'object') {
+    const content = raw?.content || raw?.kwargs?.content || raw?.lc_kwargs?.content;
+    if (typeof content === 'string' && content.trim()) return content;
+  }
+  return value;
+};
+
+const buildPreview = (value, limit = 180) => {
+  const raw = stringifyValue(value);
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
+};
+
+const parseToolCalls = (toolCalls) => {
+  let raw = toolCalls;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch (_) {
+      raw = toolCalls;
+    }
+  }
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  const names = list.map(call => call?.name || call?.tool?.name || call?.function?.name || '').filter(Boolean);
+  const args = list.map(call => call?.args || call?.arguments || call?.tool?.args || call?.function?.arguments || '').filter(Boolean);
+  const ids = list.map(call => call?.id || call?.tool_call_id || call?.tool?.id || call?.function?.id || '').filter(Boolean);
+  return { names, args, ids };
+};
+
+const extractJsonPreview = (content) => {
+  const text = stringifyValue(content).trim();
+  if (!text) return '';
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const destination = parsed.destination || '';
+        const duration = parsed.duration || '';
+        const budget = parsed.total_budget || parsed.budget || '';
+        const parts = [];
+        if (destination) parts.push(`目的地 ${destination}`);
+        if (duration) parts.push(`天数 ${duration}`);
+        if (budget) parts.push(`预算 ${budget}`);
+        if (parts.length) return parts.join(' · ');
+      }
+    } catch (_) {}
+    return buildPreview(text, 220);
+  }
+  if (text.includes('daily_itinerary') || text.includes('"daily_itinerary"')) return buildPreview(text, 220);
+  return '';
+};
+
+const buildLogsFromSteps = (steps = []) => {
+  const logs = [];
+  for (const step of steps) {
+    const role = String(step?.role || '').toLowerCase();
+    const toolCalls = step?.toolCalls;
+    const toolResults = step?.toolResults;
+    if (toolCalls) {
+      const { names, args, ids } = parseToolCalls(toolCalls);
+      const toolCallId = step?.toolCallId || ids[0] || '';
+      const title = names.length ? `调用工具：${names.join('、')}` : '调用工具';
+      const argText = args.map(arg => stringifyValue(arg)).filter(Boolean).join(' ');
+      const content = argText ? buildPreview(argText, 200) : '已提交工具请求';
+      const id = toolCallId ? `tool-call:${toolCallId}` : `tool-call:${title}:${content}`;
+      logs.push({ type: 'tool', title, content, id });
+    }
+    if (toolResults) {
+      const normalized = normalizeToolResult(toolResults);
+      const toolCallId = step?.toolCallId || '';
+      const toolName = step?.toolName || '';
+      const title = toolName ? `工具返回：${toolName}` : '工具返回';
+      const content = buildPreview(normalized, 240);
+      const id = toolCallId ? `tool-result:${toolCallId}` : `tool-result:${title}:${content}`;
+      logs.push({ type: 'tool', title, content, id });
+    }
+    if ((role.includes('ai') || role.includes('assistant')) && !toolCalls) {
+      const preview = extractJsonPreview(step?.content);
+      logs.push({
+        type: 'ai',
+        title: '模型整合',
+        content: preview || '模型正在整合信息并生成行程'
+      });
+    }
+  }
+  return logs;
+};
+
+const appendStepLogs = (step) => {
+  const logs = buildLogsFromSteps([step]);
+  if (!logs.length) return;
+  for (const log of logs) {
+    const logId = log.id || `${log.type}:${log.title}:${log.content}`;
+    if (processLogIds.has(logId)) {
+      continue;
+    }
+    const last = processLogs.value[processLogs.value.length - 1];
+    if (last && last.type === log.type && last.title === log.title && last.content === log.content) {
+      continue;
+    }
+    processLogIds.add(logId);
+    processLogs.value.push(log);
+  }
+};
+
+const applyStreamStep = (step) => {
+  if (!step || typeof step !== 'object') return;
+  if (step.toolCalls) setProgressAt('tooling');
+  if (step.toolResults) setProgressAt('synthesis');
+  if (step.content && !step.toolCalls) setProgressAt('draft');
+  appendStepLogs(step);
+};
+
+const applyPlanResult = async (data) => {
+  let parsedPlan;
+  if (data.isStructured && data.plan.daily_itinerary) {
+    const normalizeHotel = (hotel, dayIndex) => {
+      if (!hotel) {
+        return null;
+      }
+      if (typeof hotel === 'string') {
+        hotel = { name: hotel };
+      }
+      return {
+        name: hotel.name || '',
+        city: hotel.city || '',
+        district: hotel.district || '',
+        address: hotel.address || '',
+        notes: hotel.notes || hotel.why || '',
+        days: hotel.days || hotel.day_range || hotel.day || `D${dayIndex}`,
+        check_in: hotel.check_in || '',
+        check_out: hotel.check_out || '',
+        price_range: hotel.price_range || '',
+        contact: hotel.contact || hotel.phone || '',
+        coords: Array.isArray(hotel.coords) ? hotel.coords : null
+      };
+    };
+
+    const normalizeActivity = (activity) => {
+      if (!activity) {
+        return { time: '', description: '', coords: null };
+      }
+      const displayParts = [];
+      if (activity.location) displayParts.push(activity.location);
+      if (activity.description) displayParts.push(activity.description);
+      const display = displayParts.join(' - ').trim() || activity.location || activity.description || '';
+      return {
+        time: activity.time || '',
+        location: activity.location || '',
+        city: activity.city || '',
+        district: activity.district || '',
+        address: activity.address || '',
+        notes: activity.notes || '',
+        originalDescription: activity.description || '',
+        description: display,
+        coords: Array.isArray(activity.coords) ? activity.coords : null
+      };
+    };
+
+    parsedPlan = {
+      daily_itinerary: data.plan.daily_itinerary.map((day, index) => ({
+        day: day.day || index + 1,
+        theme: day.theme || `第 ${day.day || index + 1} 天`,
+        hotel: normalizeHotel(day.hotel, index + 1),
+        activities: (day.activities || []).map(normalizeActivity)
+      })),
+      accommodation: Array.isArray(data.plan.accommodation)
+        ? data.plan.accommodation.map((hotel, idx) => normalizeHotel(hotel, idx + 1)).filter(Boolean)
+        : [],
+      restaurants: Array.isArray(data.plan.restaurants) ? data.plan.restaurants : [],
+      transport: data.plan.transport || {},
+      budget_breakdown: data.plan.budget_breakdown,
+      tips: data.plan.tips || []
+    };
+  } else {
+    const raw = data.plan || '';
+    let mainText = raw;
+    const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
+    if (cutoffMatch) {
+      mainText = raw.slice(0, cutoffMatch.index).trim();
+    }
+
+    const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
+
+    const daily_itinerary = dayBlocks.map((block, idx) => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      let theme = `第 ${idx + 1} 天`;
+      let contentLines = lines;
+
+      if (/^Day\s*\d+/i.test(lines[0]) || /^第\s*\d+\s*天/.test(lines[0])) {
+        theme = lines[0];
+        contentLines = lines.slice(1);
+      }
+
+      const metaKeywords = ['旅行天数', '目的地', '预算', '团队人数', '人数', '偏好', '喜欢', '元人民币', '天', '人', '签证', '机票', '交通卡', '语言'];
+      const filtered = contentLines.filter(line => {
+        if (/^-\s*/.test(line)) {
+          const stripped = line.replace(/^-\s*/, '');
+          if (metaKeywords.some(kw => stripped.includes(kw))) return false;
+        }
+        if (line.length < 20 && metaKeywords.some(kw => line.includes(kw))) return false;
+        if (/^\d+\s*[天人元]/.test(line)) return false;
+        if (/^[#*]+/.test(line)) return false;
+        return true;
+      });
+
+      const activities = [];
+      for (const line of filtered) {
+        if (/^【|^\[|^\{/.test(line)) continue;
+        if (!line || line.length < 3) continue;
+
+        const parts = line.split(/[-–—]/).map(p => p.trim()).filter(Boolean);
+        if (parts.length > 1 && !line.includes(':') && !line.includes('：')) {
+          for (const part of parts) {
+            if (part.length < 3 || metaKeywords.some(kw => part.includes(kw))) continue;
+            activities.push({ time: '', description: part, coords: null });
+          }
+        } else {
+          if (line.includes(':')) {
+            const [time, ...desc] = line.split(':');
+            activities.push({ time: time.trim(), description: desc.join(':').trim(), coords: null });
+          } else if (line.includes('：')) {
+            const [time, ...desc] = line.split('：');
+            activities.push({ time: time.trim(), description: desc.join('：').trim(), coords: null });
+          } else {
+            activities.push({ time: '', description: line, coords: null });
+          }
+        }
+      }
+
+      return { theme, activities };
+    });
+
+    parsedPlan = { daily_itinerary };
+  }
+
+  plan.value = parsedPlan;
+
+  const mapLocations = [];
+  let seq = 1;
+  const geocode = async (query) => {
+    if (!query) return null;
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const resp = await res.json();
+      if (resp && resp.length > 0) {
+        return [parseFloat(resp[0].lat), parseFloat(resp[0].lon)];
+      }
+      return null;
+    } catch (err) {
+      console.error('Geocode error:', err);
+      return null;
+    }
+  };
+
+  for (const day of parsedPlan.daily_itinerary) {
+    for (const activity of day.activities) {
+      const displayName = activity.location || activity.originalDescription || activity.description;
+      const geocodeQuery = [activity.location, activity.district, activity.city, activity.address]
+        .filter(Boolean)
+        .join(' ');
+      mapLocations.push({
+        name: displayName,
+        coords: activity.coords || null,
+        order: seq++,
+        geocodeQuery: geocodeQuery || displayName
+      });
+    }
+  }
+
+  store.setLocations(mapLocations);
+  emit('locations-updated', mapLocations);
+};
 
 // 开始快捷输入语音识别
 const startQuickRecognition = () => {
@@ -512,7 +923,8 @@ const getPlan = async () => {
       return;
     }
 
-    const response = await fetch('/api/plan', {
+    startProcess();
+    const response = await fetch('/api/plan/stream', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -520,181 +932,90 @@ const getPlan = async () => {
       },
       body: JSON.stringify(form.value),
     });
-    
+
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const message = errorData?.message || '生成方案失败';
+      throw new Error(message);
+    }
+
+    if (!response.body) {
       throw new Error('生成方案失败');
     }
-    
-    const data = await response.json();
-    
-    let parsedPlan;
-    
-    if (data.isStructured && data.plan.daily_itinerary) {
-      const normalizeHotel = (hotel, dayIndex) => {
-        if (!hotel) {
-          return null;
-        }
-        if (typeof hotel === 'string') {
-          hotel = { name: hotel };
-        }
-        return {
-          name: hotel.name || '',
-          city: hotel.city || '',
-          district: hotel.district || '',
-          address: hotel.address || '',
-          notes: hotel.notes || hotel.why || '',
-          days: hotel.days || hotel.day_range || hotel.day || `D${dayIndex}`,
-          check_in: hotel.check_in || '',
-          check_out: hotel.check_out || '',
-          price_range: hotel.price_range || '',
-          contact: hotel.contact || hotel.phone || '',
-          coords: Array.isArray(hotel.coords) ? hotel.coords : null
-        };
-      };
 
-      const normalizeActivity = (activity) => {
-        if (!activity) {
-          return { time: '', description: '', coords: null };
-        }
-        const displayParts = [];
-        if (activity.location) displayParts.push(activity.location);
-        if (activity.description) displayParts.push(activity.description);
-        const display = displayParts.join(' - ').trim() || activity.location || activity.description || '';
-        return {
-          time: activity.time || '',
-          location: activity.location || '',
-          city: activity.city || '',
-          district: activity.district || '',
-          address: activity.address || '',
-          notes: activity.notes || '',
-          originalDescription: activity.description || '',
-          description: display,
-          // 仅保留模型已校验的坐标，地图组件会再次核对
-          coords: Array.isArray(activity.coords) ? activity.coords : null
-        };
-      };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let finalData = null;
 
-      parsedPlan = {
-        daily_itinerary: data.plan.daily_itinerary.map((day, index) => ({
-          day: day.day || index + 1,
-          theme: day.theme || `第 ${day.day || index + 1} 天`,
-          hotel: normalizeHotel(day.hotel, index + 1),
-          activities: (day.activities || []).map(normalizeActivity)
-        })),
-        accommodation: Array.isArray(data.plan.accommodation)
-          ? data.plan.accommodation.map((hotel, idx) => normalizeHotel(hotel, idx + 1)).filter(Boolean)
-          : [],
-        restaurants: Array.isArray(data.plan.restaurants) ? data.plan.restaurants : [],
-        transport: data.plan.transport || {},
-        budget_breakdown: data.plan.budget_breakdown,
-        tips: data.plan.tips || []
-      };
-    } else {
-      const raw = data.plan || '';
-      let mainText = raw;
-      const cutoffMatch = raw.match(/\n\s*【[\s\S]*$/);
-      if (cutoffMatch) {
-        mainText = raw.slice(0, cutoffMatch.index).trim();
+    const handleEvent = async (event, data) => {
+      if (event === 'step') {
+        applyStreamStep(data);
+        return;
       }
-
-      const dayBlocks = mainText.split(/\n(?=Day\s*\d+|第\s*\d+\s*天)/i).map(s => s.trim()).filter(Boolean);
-
-      const daily_itinerary = dayBlocks.map((block, idx) => {
-        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-        let theme = `第 ${idx + 1} 天`;
-        let contentLines = lines;
-
-        if (/^Day\s*\d+/i.test(lines[0]) || /^第\s*\d+\s*天/.test(lines[0])) {
-          theme = lines[0];
-          contentLines = lines.slice(1);
+      if (event === 'meta') {
+        if (Array.isArray(data?.tools) && data.tools.length) {
+          processLogs.value.push({
+            type: 'info',
+            title: '可用工具',
+            content: data.tools.join('、')
+          });
         }
-
-        const metaKeywords = ['旅行天数', '目的地', '预算', '团队人数', '人数', '偏好', '喜欢', '元人民币', '天', '人', '签证', '机票', '交通卡', '语言'];
-        const filtered = contentLines.filter(line => {
-          if (/^-\s*/.test(line)) {
-            const stripped = line.replace(/^-\s*/, '');
-            if (metaKeywords.some(kw => stripped.includes(kw))) return false;
-          }
-          if (line.length < 20 && metaKeywords.some(kw => line.includes(kw))) return false;
-          if (/^\d+\s*[天人元]/.test(line)) return false;
-          if (/^[#*]+/.test(line)) return false;
-          return true;
-        });
-
-        const activities = [];
-        for (const line of filtered) {
-          if (/^【|^\[|^\{/.test(line)) continue;
-          if (!line || line.length < 3) continue;
-
-          const parts = line.split(/[-–—]/).map(p => p.trim()).filter(Boolean);
-          if (parts.length > 1 && !line.includes(':') && !line.includes('：')) {
-            for (const part of parts) {
-              if (part.length < 3 || metaKeywords.some(kw => part.includes(kw))) continue;
-              activities.push({ time: '', description: part, coords: null });
-            }
-          } else {
-            if (line.includes(':')) {
-              const [time, ...desc] = line.split(':');
-              activities.push({ time: time.trim(), description: desc.join(':').trim(), coords: null });
-            } else if (line.includes('：')) {
-              const [time, ...desc] = line.split('：');
-              activities.push({ time: time.trim(), description: desc.join('：').trim(), coords: null });
-            } else {
-              activities.push({ time: '', description: line, coords: null });
-            }
-          }
-        }
-
-        return { theme, activities };
-      });
-
-      parsedPlan = { daily_itinerary };
-    }
-    
-    plan.value = parsedPlan;
-    MessagePlugin.success('旅行方案生成成功！');
-
-  // 构建地图位置（只携带顺序与名称，坐标交由地图组件按需定位）
-  const mapLocations = [];
-  let seq = 1;
-    const geocode = async (query) => {
-      if (!query) return null;
-      try {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (data && data.length > 0) {
-          return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-        }
-        return null;
-      } catch (err) {
-        console.error('Geocode error:', err);
-        return null;
+        return;
+      }
+      if (event === 'done') {
+        finalData = data;
+        return;
+      }
+      if (event === 'error') {
+        const message = data?.message || '生成方案失败';
+        throw new Error(message);
       }
     };
 
-    for (const day of parsedPlan.daily_itinerary) {
-      for (const activity of day.activities) {
-        const displayName = activity.location || activity.originalDescription || activity.description;
-        const geocodeQuery = [activity.location, activity.district, activity.city, activity.address]
-          .filter(Boolean)
-          .join(' ');
-        mapLocations.push({
-          name: displayName,
-          coords: activity.coords || null,
-          order: seq++,
-          geocodeQuery: geocodeQuery || displayName
-        });
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+      for (const part of parts) {
+        const lines = part.split('\n').map(l => l.trim()).filter(Boolean);
+        if (!lines.length) continue;
+        let event = 'message';
+        let dataStr = '';
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+            continue;
+          }
+          if (line.startsWith('data:')) {
+            dataStr += line.slice(5).trim();
+          }
+        }
+        if (!dataStr) continue;
+        let data;
+        try {
+          data = JSON.parse(dataStr);
+        } catch (_) {
+          data = dataStr;
+        }
+        await handleEvent(event, data);
       }
     }
 
-    store.setLocations(mapLocations);
-    emit('locations-updated', mapLocations);
-    emit('plan-generated');
+    if (!finalData) {
+      throw new Error('生成方案失败');
+    }
+
+    await applyPlanResult(finalData);
+    setProgressAt('final');
+    processLogs.value.push({ type: 'success', title: '生成完成', content: '已输出结构化旅行计划' });
+    completeProcess();
   } catch (error) {
     console.error('Error generating plan:', error);
     MessagePlugin.error('生成旅行方案时出错，请稍后重试');
+    failProcess(error?.message || '生成旅行方案失败');
   } finally {
     loading.value = false;
   }
@@ -876,6 +1197,208 @@ const getPlan = async () => {
 .voice-btn.listening {
   color: #e34d59 !important;
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+.plan-process-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.plan-process-panel {
+  width: min(980px, 92vw);
+  background: var(--glass-bg);
+  border-radius: 24px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+}
+
+.process-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.process-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.process-icon {
+  font-size: 18px;
+  color: var(--primary-color);
+}
+
+.process-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 20px;
+  padding: 24px;
+}
+
+.process-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.process-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+}
+
+.process-step.active {
+  border-color: rgba(0, 132, 255, 0.25);
+  box-shadow: 0 8px 20px rgba(0, 132, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.process-step.done {
+  opacity: 0.85;
+}
+
+.process-step.error {
+  border-color: rgba(227, 77, 89, 0.3);
+  background: rgba(255, 230, 230, 0.6);
+}
+
+.step-indicator {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 132, 255, 0.12);
+  color: #0084ff;
+  flex-shrink: 0;
+}
+
+.process-step.done .step-indicator {
+  background: rgba(82, 196, 26, 0.15);
+  color: #2eb85c;
+}
+
+.process-step.error .step-indicator {
+  background: rgba(227, 77, 89, 0.18);
+  color: #e34d59;
+}
+
+.step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.step-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.process-logs {
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  min-height: 240px;
+}
+
+.logs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+
+.logs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.log-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.log-item.tool {
+  border-color: rgba(0, 132, 255, 0.2);
+}
+
+.log-item.ai {
+  border-color: rgba(82, 196, 26, 0.2);
+}
+
+.log-item.error {
+  border-color: rgba(227, 77, 89, 0.3);
+  background: rgba(255, 240, 240, 0.8);
+}
+
+.log-item.success {
+  border-color: rgba(82, 196, 26, 0.3);
+  background: rgba(233, 247, 236, 0.8);
+}
+
+.log-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.log-content {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-line;
+}
+
+.log-empty {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.process-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px 24px;
+  gap: 12px;
+}
+
+.footer-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+  .process-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes pulse {

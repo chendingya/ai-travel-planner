@@ -283,11 +283,11 @@ class PlanService {
      - 真实的交通方式和票价（火车/飞机）。
      - 真实的酒店名称、位置和当前价格。
      - 景点的实际开放时间和门票价格。
-     - 目的地的天气情况（如果适用）。
+     - 目的地的天气情况（可调用 maps_weather ）。
 
 2. **思考与执行流程**：
    - 第一步：分析用户需求，列出需要查询的信息（交通、住宿、景点）。
-   - 第二步：**调用工具**获取这些信息。每个信息调用 1-2 次工具即可，不要重复查询。
+   - 第二步：**调用工具**获取这些信息。每个信息调用 1-2 次工具即可，不要重复查询。总的工具调用次数不要超过十次，每个工具分配次数可自行规划
    - 第三步：根据查询到的真实信息，规划行程。
    - 第四步：**立即生成符合下方 Schema 的 JSON 格式计划**，不要继续调用工具。
 
@@ -340,6 +340,14 @@ class PlanService {
       ];
 
       const tools = this.mcpService ? await this.mcpService.getLangChainTools() : [];
+      const onStep = typeof options?.onStep === 'function' ? options.onStep : null;
+      const onTools = typeof options?.onTools === 'function' ? options.onTools : null;
+      const toolNames = tools.map((tool) => tool?.name).filter(Boolean);
+      if (onTools) {
+        try {
+          onTools(toolNames);
+        } catch {}
+      }
       if (typeof this.langChainManager?._debug === 'function') {
         this.langChainManager._debug('plan.tools', { tool_count: tools.length });
       }
@@ -350,6 +358,14 @@ class PlanService {
 
       const planTimeoutMs = Number(process.env.AI_PLAN_TIMEOUT_MS || process.env.MCP_PLAN_TIMEOUT_MS || '120000');
       const modelTimeoutMs = Number(process.env.AI_PLAN_MODEL_TIMEOUT_MS || process.env.MCP_PLAN_MODEL_TIMEOUT_MS || '60000');
+      const maxToolCallsRaw = Number(process.env.AI_PLAN_MAX_TOOL_CALLS || process.env.AI_CHAT_AGENT_MAX_TOOL_CALLS || '12');
+      const maxToolCalls = Number.isFinite(maxToolCallsRaw) && maxToolCallsRaw > 0 ? Math.min(64, Math.floor(maxToolCallsRaw)) : null;
+      const adjustedModelTimeoutMs = (() => {
+        if (!Number.isFinite(planTimeoutMs) || planTimeoutMs <= 0) return modelTimeoutMs;
+        if (!Number.isFinite(modelTimeoutMs) || modelTimeoutMs <= 0) return planTimeoutMs;
+        const headroom = Math.max(10000, planTimeoutMs - 5000);
+        return Math.max(modelTimeoutMs, headroom);
+      })();
       const mcpProviderName = typeof process.env.AI_TEXT_PROVIDER_MCP_PRIMARY === 'string' && process.env.AI_TEXT_PROVIDER_MCP_PRIMARY.trim()
         ? process.env.AI_TEXT_PROVIDER_MCP_PRIMARY.trim()
         : typeof process.env.AI_TEXT_PROVIDER_MCP_PREFERRED === 'string' && process.env.AI_TEXT_PROVIDER_MCP_PREFERRED.trim()
@@ -365,9 +381,11 @@ class PlanService {
           prompt: systemPrompt,
           provider: preferredProvider,
           allowedProviders: preferredProvider ? [preferredProvider] : allowedProviders,
-          modelInvokeTimeoutMs: modelTimeoutMs,
+          modelInvokeTimeoutMs: adjustedModelTimeoutMs,
           recursionLimit: recursionLimit,
+          maxToolCalls,
           onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
+          onStep,
         }),
         planTimeoutMs,
         'PLAN_TIMEOUT'
@@ -380,25 +398,45 @@ class PlanService {
         this._recordProvider(aiMeta, adapter, 'text');
       }
 
-      if (result.steps && Array.isArray(result.steps) && typeof this.langChainManager?._debug === 'function') {
-        const simplifiedSteps = result.steps.map(m => {
+      const includeSteps = options?.includeSteps === true;
+      const shouldLogSteps = typeof this.langChainManager?._debug === 'function';
+      let simplifiedSteps = [];
+      if (result.steps && Array.isArray(result.steps) && (includeSteps || shouldLogSteps)) {
+        simplifiedSteps = result.steps.map(m => {
           const role = m.role || (m.constructor ? m.constructor.name : 'Unknown');
-          const content = typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? JSON.stringify(m.content) : String(m.content || ''));
+          const content = typeof m.content === 'string'
+            ? m.content
+            : (Array.isArray(m.content) ? JSON.stringify(m.content) : (m.content && typeof m.content === 'object' ? JSON.stringify(m.content) : String(m.content || '')));
           const toolCalls = m.tool_calls || m.additional_kwargs?.tool_calls;
           const toolResults = role === 'ToolMessage' ? content : undefined;
+          const toolCallId = m.tool_call_id || m?.kwargs?.tool_call_id || m?.lc_kwargs?.tool_call_id || '';
+          const toolName = m?.name || m?.tool_name || '';
           return {
             role,
             content: content.substring(0, 500) + (content.length > 500 ? '...' : ''),
             toolCalls: toolCalls ? JSON.stringify(toolCalls) : undefined,
-            toolResults
+            toolResults,
+            toolCallId,
+            toolName
           };
         });
-        this.langChainManager._debug('plan.steps', { steps: simplifiedSteps });
+        if (shouldLogSteps) {
+          this.langChainManager._debug('plan.steps', { steps: simplifiedSteps });
+        }
       }
 
       const raw = result.text;
       const parsed = safeParseJSON(raw, null);
-      return this.normalizeGeneratedPlan(parsed ?? raw);
+      const normalized = this.normalizeGeneratedPlan(parsed ?? raw);
+      if (!includeSteps) return normalized;
+      return {
+        ...normalized,
+        meta: {
+          steps: simplifiedSteps,
+          tools: toolNames,
+          provider: result?.provider || ''
+        }
+      };
     } catch (error) {
       console.error('Generate plan failed:', error);
       throw new Error('生成旅行计划失败');

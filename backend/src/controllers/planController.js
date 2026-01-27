@@ -59,17 +59,83 @@ class PlanController {
 
       const aiMeta = { providers: [] };
       res.locals.aiMeta = aiMeta;
+      const traceFlag = req.query?.trace ?? req.headers?.['x-ai-trace'];
+      const includeSteps = ['1', 'true', 'yes', 'on'].includes(String(traceFlag ?? '').trim().toLowerCase());
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
       const plan = await this.planService.langChainManager.runWithTrace(
         { requestId, route: 'plan/generate', debug },
-        () => this.planService.generatePlan(formData, { aiMeta })
+        () => this.planService.generatePlan(formData, { aiMeta, includeSteps })
       );
       res.json(plan);
     } catch (error) {
       console.error('Generate plan error:', error);
       const msg = this.errorMessage(error);
       res.status(500).json({ message: msg, error: msg });
+    }
+  }
+
+  async generatePlanStream(req, res) {
+    const sendEvent = (event, payload) => {
+      if (res.writableEnded) return;
+      const data = payload == null ? {} : payload;
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      const formData = req.body;
+      if (!formData || Object.keys(formData).length === 0) {
+        return res.status(400).json({ message: '表单数据为必填项', error: '表单数据为必填项' });
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+      const aiMeta = { providers: [] };
+      res.locals.aiMeta = aiMeta;
+
+      let closed = false;
+      const heartbeat = setInterval(() => {
+        sendEvent('ping', { ts: Date.now() });
+      }, 15000);
+
+      req.on('close', () => {
+        closed = true;
+        clearInterval(heartbeat);
+      });
+
+      const onStep = (step) => {
+        if (closed) return;
+        sendEvent('step', step);
+      };
+      const onTools = (tools) => {
+        if (closed) return;
+        sendEvent('meta', { tools });
+      };
+
+      const requestId = req.requestId || '';
+      const debug = req.aiDebug === true;
+      const result = await this.planService.langChainManager.runWithTrace(
+        { requestId, route: 'plan/generate-stream', debug },
+        () => this.planService.generatePlan(formData, { aiMeta, onStep, onTools })
+      );
+
+      if (!closed) {
+        sendEvent('done', result);
+      }
+      clearInterval(heartbeat);
+      res.end();
+    } catch (error) {
+      const msg = this.errorMessage(error);
+      if (!res.headersSent) {
+        res.status(500).json({ message: msg, error: msg });
+        return;
+      }
+      sendEvent('error', { message: msg });
+      res.end();
     }
   }
 

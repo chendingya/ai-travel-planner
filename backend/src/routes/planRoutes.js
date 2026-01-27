@@ -66,6 +66,10 @@ module.exports = (planController) => {
     planController.generatePlan(req, res);
   });
 
+  router.post('/plan/stream', requireAuth, (req, res) => {
+    planController.generatePlanStream(req, res);
+  });
+
   // 生成完整旅行计划（快捷方式）
   /**
    * @openapi

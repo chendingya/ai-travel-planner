@@ -60,3 +60,6 @@ build/
 
 backend/runtime/
 .codebuddy/
+.shared/
+.claude/
+.github/
