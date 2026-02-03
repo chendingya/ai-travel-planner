@@ -1,4 +1,7 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
+const { HumanMessage, AIMessage } = require('@langchain/core/messages');
+const SupabaseMessageHistory = require('./langchain/SupabaseMessageHistory');
+
 
 class AIChatService {
   constructor(langChainManager, supabase, deps = {}) {
@@ -529,125 +532,6 @@ class AIChatService {
     return null;
   }
 
-  _normalizeToolCalls(calls) {
-    const rawCalls = Array.isArray(calls) ? calls : [];
-    const out = [];
-    for (const c of rawCalls) {
-      if (!c || typeof c !== 'object') continue;
-      const id = c.id || c.tool_call_id || c.toolCallId || '';
-      const fn = c.function && typeof c.function === 'object' ? c.function : null;
-      const name =
-        (typeof fn?.name === 'string' && fn.name) ||
-        (typeof c.name === 'string' && c.name) ||
-        (typeof c.tool_name === 'string' && c.tool_name) ||
-        '';
-      const args = fn && Object.prototype.hasOwnProperty.call(fn, 'arguments')
-        ? fn.arguments
-        : c.args ?? c.arguments ?? c.input ?? {};
-      const normalizedName = typeof name === 'string' ? name : '';
-      const fallbackIdBase = normalizedName || 'tool';
-      out.push({ id: id || `${fallbackIdBase}-${out.length}`, name: normalizedName, args });
-    }
-    return out;
-  }
-
-  _extractToolCalls(aiMsg) {
-    const normalizeFlexible = (value) => {
-      if (!value) return [];
-      if (Array.isArray(value)) return this._normalizeToolCalls(value);
-      if (typeof value === 'string') {
-        const parsed = this._tryParseJsonObject(value);
-        if (Array.isArray(parsed)) return this._normalizeToolCalls(parsed);
-        if (parsed && typeof parsed === 'object') return this._normalizeToolCalls([parsed]);
-        return [];
-      }
-      if (value && typeof value === 'object') {
-        if (Object.prototype.hasOwnProperty.call(value, 'id') || Object.prototype.hasOwnProperty.call(value, 'function') || Object.prototype.hasOwnProperty.call(value, 'name')) {
-          return this._normalizeToolCalls([value]);
-        }
-        const numericKeys = Object.keys(value).filter((k) => /^\d+$/.test(k)).sort((a, b) => Number(a) - Number(b));
-        if (numericKeys.length) return this._normalizeToolCalls(numericKeys.map((k) => value[k]).filter(Boolean));
-      }
-      return [];
-    };
-
-    const direct = normalizeFlexible(aiMsg?.tool_calls);
-    if (direct.length) return direct;
-
-    const ak = aiMsg?.additional_kwargs;
-    const akCalls = normalizeFlexible(ak?.tool_calls);
-    if (akCalls.length) return akCalls;
-
-    const kwargs = aiMsg?.kwargs;
-    const kwCalls = normalizeFlexible(kwargs?.tool_calls);
-    if (kwCalls.length) return kwCalls;
-
-    const lcKwargs = aiMsg?.lc_kwargs;
-    const lcCalls = normalizeFlexible(lcKwargs?.tool_calls);
-    if (lcCalls.length) return lcCalls;
-
-    const functionCall = ak?.function_call || kwargs?.function_call || null;
-    if (functionCall && typeof functionCall === 'object') {
-      const name = typeof functionCall.name === 'string' ? functionCall.name : '';
-      const argumentsRaw = functionCall.arguments;
-      if (name) return this._normalizeToolCalls([{ id: 'function_call', name, args: argumentsRaw }]);
-    }
-
-    return [];
-  }
-
-  _extractToolCallsFromText(text) {
-    const raw = typeof text === 'string' ? text.trim() : '';
-    if (!raw) return [];
-    const parsed = this._tryParseJsonObject(raw);
-    if (!parsed) return [];
-    if (Array.isArray(parsed)) return this._normalizeToolCalls(parsed);
-    if (Array.isArray(parsed.tool_calls)) return this._normalizeToolCalls(parsed.tool_calls);
-    if (Array.isArray(parsed.toolCalls)) return this._normalizeToolCalls(parsed.toolCalls);
-    if (parsed.tool_call && typeof parsed.tool_call === 'object') return this._normalizeToolCalls([parsed.tool_call]);
-    if (parsed.toolCall && typeof parsed.toolCall === 'object') return this._normalizeToolCalls([parsed.toolCall]);
-    if (parsed.name && Object.prototype.hasOwnProperty.call(parsed, 'arguments')) {
-      return this._normalizeToolCalls([{ id: 'tool_call', name: parsed.name, args: parsed.arguments }]);
-    }
-    return [];
-  }
-
-  _inferTrainTicketIntent(text) {
-    const raw = typeof text === 'string' ? text : '';
-    const hasTicket = /票|余票|车次/.test(raw);
-    const hasTrain = /高铁|动车|火车|列车/.test(raw);
-    if (!hasTicket && !hasTrain) return null;
-
-    const m1 = raw.match(/从(?<from>[\u4e00-\u9fa5]{2,10})(?:到|至)(?<to>[\u4e00-\u9fa5]{2,10})/);
-    const m2 = raw.match(/(?<from>[\u4e00-\u9fa5]{2,10})(?:到|至)(?<to>[\u4e00-\u9fa5]{2,10})/);
-    const cleanup = (s) => {
-      const t = typeof s === 'string' ? s.trim() : '';
-      if (!t) return '';
-      const noSpace = t.replace(/\s+/g, '');
-      const cut = noSpace.replace(/(出发.*)$/u, '').replace(/(的|高铁|动车|火车|列车|余票|车次|票|信息|时刻表|时刻|查询|情况|多少钱|价格|有哪些).*/u, '');
-      return cut.trim();
-    };
-
-    const from = cleanup(m1?.groups?.from || m2?.groups?.from || '');
-    const to = cleanup(m1?.groups?.to || m2?.groups?.to || '');
-    if (!from || !to) return null;
-
-    const trainFilterFlags = /高铁/.test(raw) ? 'G' : /动车/.test(raw) ? 'D' : '';
-
-    let date = '';
-    const iso = raw.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
-    if (iso) date = `${iso[1]}-${iso[2]}-${iso[3]}`;
-    const cn = raw.match(/\b(20\d{2})年(\d{1,2})月(\d{1,2})日\b/);
-    if (!date && cn) {
-      const mm = String(cn[2]).padStart(2, '0');
-      const dd = String(cn[3]).padStart(2, '0');
-      date = `${cn[1]}-${mm}-${dd}`;
-    }
-
-    const relative = /明天|后天|今天/.test(raw) ? raw.match(/明天|后天|今天/)?.[0] : '';
-    return { from, to, date, relative, trainFilterFlags };
-  }
-
   async _resolveRelativeDate(relativeWord) {
     const word = typeof relativeWord === 'string' ? relativeWord : '';
     if (!word) return '';
@@ -729,34 +613,11 @@ class AIChatService {
    */
   async chat(message, sessionId, options = {}) {
     try {
-      // 获取历史消息（如果存在）
-      const history = sessionId ? await this.getSessionHistory(sessionId) : [];
       const enableTools = !!(options.enable_tools ?? options.enableTools);
       const includeAudio = !!(options.include_audio ?? options.includeAudio);
       const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
-
-      const trace = this._currentTrace();
-      const aiMeta = trace && typeof trace.aiMeta === 'object' ? trace.aiMeta : null;
-      if (aiMeta) {
-        aiMeta.mcp = enableTools && !!this.mcpService;
-      }
-
-      const recordAdapterMeta = (adapter) => {
-        if (!aiMeta) return;
-        const provider = typeof adapter?.name === 'string' ? adapter.name : '';
-        const model = typeof adapter?.model === 'string' ? adapter.model : '';
-        if (provider) aiMeta.provider = provider;
-        if (model) aiMeta.model = model;
-      };
-
-      this._debug('chat.start', {
-        sessionId,
-        enableTools,
-        includeAudio,
-        hasMcp: !!this.mcpService,
-        message: typeof message === 'string' ? message.slice(0, 160) : String(message),
-      });
-
+      
+      // 1. 准备 System Prompt
       const systemPrompt = `你是一个专业的旅行助手，擅长解答各类旅行问题。
 
 你的职责：
@@ -768,261 +629,193 @@ class AIChatService {
 
 请用中文回答，保持简洁明了。`;
 
-      const toolRateLimitKey = this._toolRateLimitKey(sessionId, options);
-      const maxToolCallsPerChatRaw = Number(process.env.AI_CHAT_TOOL_MAX_CALLS_PER_CHAT || '12');
-      const maxToolCallsPerChat = Number.isFinite(maxToolCallsPerChatRaw) && maxToolCallsPerChatRaw > 0 ? maxToolCallsPerChatRaw : 12;
-      const { modelInvokeTimeoutMs, toolInvokeTimeoutMs } = this._timeoutConfig();
-      const { maxChars: toolResultMaxChars } = this._toolResultConfig();
-
-      let response = '';
+      // 2. 准备工具
+      let tools = [];
       if (enableTools) {
-        if (!this.mcpService) {
-          const optionProvider = this._normalizeProviderName(options?.provider);
-          const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: false });
-          const allowedProviders = preferredProvider ? [preferredProvider] : [];
-          response = await this.langChainManager.invokeText([
-            { role: 'system', content: systemPrompt },
-            ...history,
-            { role: 'user', content: message },
-          ], { provider: preferredProvider, allowedProviders, onAdapterStart: async ({ adapter }) => recordAdapterMeta(adapter) });
-        } else {
-          const [{ SystemMessage, HumanMessage, AIMessage }] = await Promise.all([
-            import('@langchain/core/messages'),
-          ]);
+        // 2.1 火车票查询工具
+        const { z } = require('zod');
+        const { DynamicStructuredTool } = require('@langchain/core/tools');
 
-          const { z } = require('zod');
-          const { DynamicStructuredTool } = require('@langchain/core/tools');
+        const trainTicketsTool = new DynamicStructuredTool({
+          name: 'query_train_tickets',
+          description:
+            '查询12306火车票/高铁/动车余票信息。输入出发城市from、到达城市to、日期date(YYYY-MM-DD)或相对日期relative(今天/明天/后天)，可选trainFilterFlags(G=高铁,D=动车)。返回可直接展示的文本结果。',
+          schema: z
+            .object({
+              from: z.string().optional(),
+              to: z.string().optional(),
+              date: z.string().optional(),
+              relative: z.enum(['今天', '明天', '后天']).optional(),
+              trainFilterFlags: z.string().optional(),
+            })
+            .passthrough(),
+          func: async (input) => {
+            const from = typeof input?.from === 'string' ? input.from.trim() : '';
+            const to = typeof input?.to === 'string' ? input.to.trim() : '';
+            const date = typeof input?.date === 'string' ? input.date.trim() : '';
+            const relative = typeof input?.relative === 'string' ? input.relative.trim() : '';
+            const trainFilterFlags =
+              typeof input?.trainFilterFlags === 'string' && input.trainFilterFlags.trim()
+                ? input.trainFilterFlags.trim()
+                : '';
 
-          const trainTicketsTool = new DynamicStructuredTool({
-            name: 'query_train_tickets',
-            description:
-              '查询12306火车票/高铁/动车余票信息。输入出发城市from、到达城市to、日期date(YYYY-MM-DD)或相对日期relative(今天/明天/后天)，可选trainFilterFlags(G=高铁,D=动车)。返回可直接展示的文本结果。',
-            schema: z
-              .object({
-                from: z.string().optional(),
-                to: z.string().optional(),
-                date: z.string().optional(),
-                relative: z.enum(['今天', '明天', '后天']).optional(),
-                trainFilterFlags: z.string().optional(),
-              })
-              .passthrough(),
-            func: async (input) => {
-              const from = typeof input?.from === 'string' ? input.from.trim() : '';
-              const to = typeof input?.to === 'string' ? input.to.trim() : '';
-              const date = typeof input?.date === 'string' ? input.date.trim() : '';
-              const relative = typeof input?.relative === 'string' ? input.relative.trim() : '';
-              const trainFilterFlags =
-                typeof input?.trainFilterFlags === 'string' && input.trainFilterFlags.trim()
-                  ? input.trainFilterFlags.trim()
-                  : '';
+            if (!from || !to) throw new Error('缺少出发城市from或到达城市to');
+            const start = Date.now();
+            const r = await this._queryTicketsViaMcp({ from, to, date, relative, trainFilterFlags });
+            this._debug('train.result', { ms: Date.now() - start, date: r.effectiveDate, from: r.from, to: r.to, text_len: r.ticketsText.length });
+            const kind = trainFilterFlags === 'G' ? '高铁' : trainFilterFlags === 'D' ? '动车' : '列车';
+            return `已为你查询 ${r.effectiveDate} ${r.from} → ${r.to} 的${kind}余票信息：\n\n${r.ticketsText}`;
+          },
+        });
 
-              if (!from || !to) throw new Error('缺少出发城市from或到达城市to');
-              const start = Date.now();
-              const r = await this._queryTicketsViaMcp({ from, to, date, relative, trainFilterFlags });
-              this._debug('train.result', { ms: Date.now() - start, date: r.effectiveDate, from: r.from, to: r.to, text_len: r.ticketsText.length });
-              const kind = trainFilterFlags === 'G' ? '高铁' : trainFilterFlags === 'D' ? '动车' : '列车';
-              return `已为你查询 ${r.effectiveDate} ${r.from} → ${r.to} 的${kind}余票信息：\n\n${r.ticketsText}`;
-            },
-          });
-
-          let mcpTools = [];
+        // 2.2 MCP 工具
+        let mcpTools = [];
+        if (this.mcpService) {
           try {
             mcpTools = await this.mcpService.getLangChainTools();
           } catch (e) {
-            this._debug('tools.list.err', { error: String(e?.message || e) });
-            mcpTools = [];
-          }
-          const baseTools = [...mcpTools, trainTicketsTool];
-          let toolCallsInChat = 0;
-          const wrapTool = (t) => {
-            const schema =
-              t && typeof t === 'object' && t.schema && typeof t.schema === 'object'
-                ? t.schema
-                : z.object({}).passthrough();
-            const description = t && typeof t === 'object' && typeof t.description === 'string' ? t.description : '';
-            const name = t && typeof t === 'object' && typeof t.name === 'string' ? t.name : '';
-            return new DynamicStructuredTool({
-              name,
-              description,
-              schema,
-              func: async (input) => {
-                toolCallsInChat += 1;
-                if (toolCallsInChat > maxToolCallsPerChat) {
-                  const err = new Error('TOOL_CALLS_EXCEEDED');
-                  err.code = 'TOOL_CALLS_EXCEEDED';
-                  err.status = 429;
-                  throw err;
-                }
-                this._requireToolQuota(toolRateLimitKey, { tool: name });
-                const raw = await this._withTimeout(t.invoke(input), toolInvokeTimeoutMs, 'TOOL_INVOKE_TIMEOUT');
-                const text = this._normalizeMessageContent(raw);
-                return this._truncateText(text, toolResultMaxChars);
-              },
-            });
-          };
-
-          const tools = baseTools.map(wrapTool);
-
-          const adaptersRaw = Array.isArray(this.langChainManager?.textAdapters)
-            ? this.langChainManager.textAdapters.filter((a) => a && typeof a.createLLM === 'function')
-            : [];
-          const optionProvider = this._normalizeProviderName(options?.provider);
-          const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: true });
-          const adapters = (() => {
-            const filtered = this._filterAdaptersByCooldown(adaptersRaw);
-            if (!preferredProvider) return filtered;
-            const scoped = filtered.filter((a) => a?.name === preferredProvider);
-            return scoped.length ? scoped : filtered;
-          })();
-          const modelByProvider = new Map(
-            adapters.map((a) => [typeof a?.name === 'string' ? a.name : '', typeof a?.model === 'string' ? a.model : ''])
-          );
-          if (!adapters.length) {
-            response = '当前未配置可用的文本大模型提供商，暂时无法处理该请求。请先配置 AI_TEXT_PROVIDERS_JSON 后重试。';
-            if (sessionId) {
-              await this.saveMessage(sessionId, message, response);
-            }
-            this._debug('chat.done', { sessionId, response_len: response.length, audio_task_id: null, audio_error: null });
-            return { message: response, sessionId, audio_task_id: null, audio_error: null };
-          }
-
-          this._debug('tools.ready', { tool_count: tools.length, providers: adapters.map((a) => a?.name).filter(Boolean).slice(0, 8) });
-
-          const toolNamesForPrompt = tools.map((t) => t?.name).filter(Boolean).slice(0, 32);
-
-          const toolSystemPromptNative = `${systemPrompt}
-
-工具使用规则（很重要）：
-1. 当问题需要实时信息（车票/天气/搜索/网页等）时，先调用合适工具，再基于工具结果作答；不要编造实时数据。
-2. 车票/高铁/动车余票查询：优先调用 query_train_tickets，补全 from、to，以及 date(YYYY-MM-DD) 或 relative(今天/明天/后天)。
-3. 工具返回后，用中文把关键信息整理成清晰结果（可用列表/表格），并说明信息可能随时变动。
-4. 如果工具失败或返回为空，说明原因并给出下一步建议（比如让用户补充信息）。
-5. 工具调用最多 ${maxToolCallsPerChat} 次；达到上限后必须停止工具调用并输出当前结论或让用户补充信息。
-
-可用工具：${toolNamesForPrompt.join(', ')}`;
-
-          const maxIterationsRaw = Number(process.env.AI_CHAT_AGENT_MAX_ITERATIONS || '8');
-          const maxIterationsParsed = Number.isFinite(maxIterationsRaw) && maxIterationsRaw > 0 ? maxIterationsRaw : 8;
-          const maxIterations = Math.min(Math.max(1, maxIterationsParsed), 30);
-          const recursionLimitEnvRaw = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '');
-          const recursionLimit =
-            Number.isFinite(recursionLimitEnvRaw) && recursionLimitEnvRaw > 0
-              ? recursionLimitEnvRaw
-              : Math.max(50, maxIterations * 12 + 20, maxToolCallsPerChat * 8 + 20);
-
-          const toBaseMessages = (items) => {
-            const out = [];
-            for (const m of Array.isArray(items) ? items : []) {
-              if (!m || typeof m !== 'object') continue;
-              if (m.role === 'user') out.push(new HumanMessage(m.content));
-              else if (m.role === 'assistant') out.push(new AIMessage(m.content));
-              else if (m.role === 'system') out.push(new SystemMessage(m.content));
-            }
-            return out;
-          };
-
-          const baseMessages = [...toBaseMessages(history), new HumanMessage(message)];
-
-          const modelscopeMaxRequestsRaw = Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20');
-          const modelscopeMaxRequestsPerChat =
-            Number.isFinite(modelscopeMaxRequestsRaw) && modelscopeMaxRequestsRaw > 0 ? modelscopeMaxRequestsRaw : 20;
-
-          let lastErr = null;
-          try {
-            const provider = preferredProvider && adapters.some((a) => a?.name === preferredProvider) ? preferredProvider : '';
-            this._debug('agent.invoke', { provider: 'auto', recursionLimit, tool_count: tools.length });
-            const started = Date.now();
-            const out = await this.langChainManager.invokeToolCallingAgent({
-              adapters,
-              provider,
-              messages: baseMessages,
-              tools,
-              prompt: toolSystemPromptNative,
-              recursionLimit,
-              modelInvokeTimeoutMs,
-              modelscopeMaxRequestsPerChat,
-              onAdapterStart: async ({ adapter }) => {
-                const provider = typeof adapter?.name === 'string' ? adapter.name : '';
-                if (provider) this._debug('agent.invoke.try', { provider });
-                recordAdapterMeta(adapter);
-              },
-              onAdapterError: async ({ adapter, error }) => {
-                const provider = adapter?.name;
-                const summary = this._summarizeError(error);
-                const baseURL = typeof adapter?.baseURL === 'string' ? adapter.baseURL : '';
-                const modelName = typeof adapter?.model === 'string' ? adapter.model : '';
-                const baseURLHasV1 = typeof baseURL === 'string' ? baseURL.includes('/v1') : false;
-                this._debug('agent.invoke.err', { provider, model: modelName, baseURL, baseURLHasV1, error: summary });
-
-                if (
-                  typeof adapter?.name === 'string' &&
-                  adapter.name.startsWith('modelscope') &&
-                  (this._isRateLimitError(error) || error?.code === 'MODEL_EMPTY_RESPONSE' || this._isProviderProtocolError(error) || this._isTimeoutError(error))
-                ) {
-                  await this._probeOpenAIModelsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey });
-                  await this._probeOpenAIChatCompletionsEndpoint({ provider: adapter?.name, baseURL, apiKey: adapter?.apiKey, model: modelName });
-                }
-
-                if (this._isRateLimitError(error)) this._setModelCooldown(provider);
-              },
-            });
-            this._debug('agent.invoke.ok', { provider: out?.provider || '', ms: Date.now() - started });
-            if (aiMeta) {
-              const providerUsed = typeof out?.provider === 'string' ? out.provider : '';
-              if (providerUsed) aiMeta.provider = providerUsed;
-              const modelUsed = providerUsed ? modelByProvider.get(providerUsed) : '';
-              if (modelUsed) aiMeta.model = modelUsed;
-              aiMeta.mcp = true;
-            }
-            response = typeof out?.text === 'string' ? out.text : '';
-            if (!response) {
-              lastErr = new Error('MODEL_EMPTY_RESPONSE');
-              lastErr.code = 'MODEL_EMPTY_RESPONSE';
-            }
-          } catch (e) {
-            lastErr = e;
-          }
-
-          if (!response) {
-            if (lastErr && (this._isRateLimitError(lastErr) || this._isTimeoutError(lastErr))) {
-              response = this._isTimeoutError(lastErr)
-                ? '当前模型响应超时，我暂时无法完成这个请求。请稍后重试。'
-                : '当前请求过于频繁，我暂时无法完成这个请求。请稍后重试。';
-            } else if (lastErr && (lastErr?.code === 'GRAPH_RECURSION_LIMIT' || lastErr?.name === 'GraphRecursionError')) {
-              response = '模型在工具调用上进入了过多步骤/循环，我已中止本次执行。请你补充更明确的出发地、目的地、日期等关键信息，或换个更具体的问法后重试。';
-            } else if (lastErr && lastErr?.code === 'TOOL_CALLS_EXCEEDED') {
-              response = `本次对话的工具调用次数已达到上限（${maxToolCallsPerChat} 次），我已停止继续调用工具。请补充更明确的信息后重试（例如城市/日期/筛选条件）。`;
-            } else if (lastErr && lastErr?.code === 'MODELSCOPE_REQUEST_LIMIT') {
-              response = '魔搭模型在本次请求中已达到调用上限（单次最多20次），我已停止继续使用该提供商并尝试切换模型，但仍未能得到最终回答。请稍后重试或切换其它提供商。';
-            } else if (lastErr && (lastErr?.code === 'MODEL_EMPTY_RESPONSE' || lastErr?.message === 'MODEL_EMPTY_RESPONSE')) {
-              response = '模型未返回有效内容（可能被限流/超时或未能完成工具调用链）。我已尝试切换模型但仍失败，请稍后重试或更换更具体的问题。';
-            } else if (lastErr && this._isProviderProtocolError(lastErr)) {
-              response = '当前模型服务接口不兼容或配置异常（可能 baseURL 指向了非 OpenAI 兼容接口）。请检查该提供商的 baseURL 与 API Key 配置后重试。';
-            } else {
-              response = '未能生成最终回答，请重试。';
-            }
+            console.warn('Failed to load MCP tools:', e);
           }
         }
-      } else {
-        const messages = [
-          { role: 'system', content: systemPrompt },
-          ...history,
-          { role: 'user', content: message },
-        ];
-        const optionProvider = this._normalizeProviderName(options?.provider);
-        const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools: false });
-        const allowedProviders = preferredProvider ? [preferredProvider] : [];
-        const mergedOptions = preferredProvider
-          ? { ...options, provider: preferredProvider, allowedProviders }
-          : { ...options, allowedProviders };
-        response = await this.langChainManager.invokeText(messages, mergedOptions);
+        tools = [...mcpTools, trainTicketsTool];
       }
 
-      // 保存对话记录
+      // 3. 创建 Agent Runnable
+      const optionProvider = this._normalizeProviderName(options?.provider);
+      const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools });
+      const allowedProviders = preferredProvider ? [preferredProvider] : [];
+      
+      const agentRunnable = await this.langChainManager.createAgent({
+        tools,
+        systemPrompt: enableTools ? `${systemPrompt}\n\n工具使用规则：\n1. 优先使用工具获取实时信息。\n2. 无法获取时说明原因。` : systemPrompt,
+        provider: preferredProvider,
+        allowedProviders,
+        modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
+      });
+
+      // DEBUG: Inject verbose callback if requested
+      const extraCallbacks = [];
+      if (options.debugTrace) {
+          try {
+              const DebugTraceCallbackHandler = require('../../debug_trace_callback');
+              extraCallbacks.push(new DebugTraceCallbackHandler());
+          } catch (e) { console.warn('Debug trace handler not found'); }
+      }
+
+      // 4. 执行 (带历史记录)
+      let response = '';
+      
+      // 捕获当前的 trace 上下文，确保在回调中可用
+      const currentTrace = this._currentTrace();
+      
+      // 定义通用的元数据捕获回调
+      const recordProvider = (metaInput) => {
+        const meta = metaInput || {};
+        const provider = typeof meta.provider === 'string' ? meta.provider : '';
+        const model = typeof meta.model === 'string' ? meta.model : '';
+        if (!provider && !model) return;
+        const trace = currentTrace || this._currentTrace();
+        if (!trace || !trace.aiMeta) return;
+        const providers = Array.isArray(trace.aiMeta.providers) ? trace.aiMeta.providers : [];
+        const exists = providers.some(p => p.provider === provider && p.model === model);
+        if (!exists) providers.push({ provider, model });
+        trace.aiMeta.providers = providers;
+        if (trace !== this._currentTrace()) {
+          const current = this._currentTrace();
+          if (current && current.aiMeta) {
+            current.aiMeta.providers = providers;
+          }
+        }
+      };
+
+      const metadataCallback = {
+        handleChainStart: (chain, inputs, runId, parentRunId, tags, metadata) => recordProvider(metadata),
+        handleLLMStart: (llm, prompts, runId, parentRunId, extraParams, tags, metadata) => recordProvider(metadata),
+      };
+
+      if (preferredProvider) {
+        const adapter = Array.isArray(this.langChainManager?.textAdapters)
+          ? this.langChainManager.textAdapters.find(a => a && a.name === preferredProvider)
+          : null;
+        recordProvider({ provider: preferredProvider, model: adapter?.model || '' });
+      }
+
       if (sessionId) {
-        await this.saveMessage(sessionId, message, response);
+        // LangGraph 状态管理：手动加载和保存历史
+        // 因为 LangGraph 会返回完整的会话状态，我们手动计算增量并保存，比 RunnableWithMessageHistory 更可靠
+        const history = new SupabaseMessageHistory(sessionId, this.supabase);
+        const storedMessages = await history.getMessages();
+        
+        // 构造输入：历史记录 + 用户新消息
+        const inputMessages = [...storedMessages, new HumanMessage(message)];
+        
+        const eventStream = await agentRunnable.streamEvents(
+          { messages: inputMessages },
+          { 
+            version: 'v2',
+            configurable: { sessionId },
+            callbacks: [metadataCallback, ...extraCallbacks]
+          }
+        );
+        
+        let finalResponse = "";
+        
+        // 使用生成器返回流式内容
+        const streamGenerator = async function* () {
+            // 先发送一些元数据（如果前端支持解析）
+            // yield JSON.stringify({ sessionId }) + "\n"; 
+            
+            for await (const event of eventStream) {
+                recordProvider(event?.metadata);
+                recordProvider(event?.data?.metadata);
+                // 监听 LLM 的流式输出 (on_chat_model_stream)
+                if (event.event === "on_chat_model_stream") {
+                    const chunk = event.data.chunk;
+                    // chunk 是一个 AIMessageChunk
+                    if (chunk && chunk.content) {
+                        finalResponse += chunk.content;
+                        yield chunk.content;
+                    }
+                }
+            }
+            
+            // 循环结束后保存历史记录
+            // 注意：这里需要在流结束后再保存，否则 history 会不完整
+            if (finalResponse) {
+                const aiMsg = new AIMessage(finalResponse);
+                await history.addMessages([new HumanMessage(message), aiMsg]);
+            }
+        };
+        
+        return streamGenerator();
+
+      } else {
+        // 无状态模式 (直接调用，不读取/保存历史)
+        const eventStream = await agentRunnable.streamEvents(
+          { messages: [new HumanMessage(message)] },
+          {
+            version: 'v2',
+            callbacks: [metadataCallback, ...extraCallbacks]
+          }
+        );
+        
+        const streamGenerator = async function* () {
+            for await (const event of eventStream) {
+                recordProvider(event?.metadata);
+                recordProvider(event?.data?.metadata);
+                if (event.event === "on_chat_model_stream") {
+                    const chunk = event.data.chunk;
+                    if (chunk && chunk.content) {
+                        yield chunk.content;
+                    }
+                }
+            }
+        };
+        
+        return streamGenerator();
       }
 
+      // 5. 音频生成 (保持原有逻辑)
       let audio_task_id = null;
       let audio_error = null;
       if (includeAudio) {
@@ -1045,11 +838,20 @@ class AIChatService {
         audio_task_id,
         audio_error,
       };
+
     } catch (error) {
       console.error('AI chat failed:', error);
-      const msg = error && typeof error === 'object' && typeof error.message === 'string'
-        ? error.message
-        : 'Failed to get AI response';
+      
+      // 错误处理映射
+      let msg = error?.message || 'Failed to get AI response';
+      if (msg.includes('GraphRecursionError') || error.code === 'GRAPH_RECURSION_LIMIT') {
+         msg = '模型在工具调用上进入了过多步骤，我已中止本次执行。请尝试提供更具体的信息。';
+      } else if (msg.includes('429') || msg.includes('Rate limit')) {
+         msg = '请求过于频繁，请稍后重试。';
+      } else if (msg.includes('timeout') || msg.includes('TIMEOUT')) {
+         msg = '服务响应超时，请稍后重试。';
+      }
+      
       throw new Error(msg);
     }
   }

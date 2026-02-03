@@ -373,23 +373,84 @@ class PlanService {
           : '';
       const allowedProviders = mcpProviderName ? [mcpProviderName] : [];
       const recursionLimit = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '60');
+      const { HumanMessage } = require('@langchain/core/messages');
 
-      const result = await withTimeout(
-        this.langChainManager.invokeToolCallingAgent({
-          messages,
-          tools,
-          prompt: systemPrompt,
-          provider: preferredProvider,
-          allowedProviders: preferredProvider ? [preferredProvider] : allowedProviders,
-          modelInvokeTimeoutMs: adjustedModelTimeoutMs,
-          recursionLimit: recursionLimit,
-          maxToolCalls,
-          onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
-          onStep,
-        }),
+      const agentRunnable = await this.langChainManager.createAgent({
+        tools,
+        systemPrompt,
+        provider: preferredProvider,
+        allowedProviders: preferredProvider ? [preferredProvider] : allowedProviders,
+        modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
+      });
+
+      const lcMessages = messages.map(m => {
+        if (m.role === 'user') return new HumanMessage(m.content);
+        return new HumanMessage(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+      });
+
+      // 准备回调
+      const callbacks = [];
+
+      // 1. 步骤流式回调
+      if (onStep) {
+        callbacks.push({
+          handleToolStart: (tool, input) => {
+            try {
+              const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
+              onStep({ type: 'tool_start', tool: tool.name, input: inputStr, ts: Date.now() });
+            } catch (e) {}
+          },
+          handleToolEnd: (output) => {
+            try {
+              const outputStr = typeof output === 'string' ? output : JSON.stringify(output);
+              onStep({ type: 'tool_end', output: outputStr, ts: Date.now() });
+            } catch (e) {}
+          },
+          handleAgentAction: (action) => {
+             try {
+               const toolInput = action.toolInput;
+               const inputStr = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput);
+               onStep({ 
+                 type: 'agent_action', 
+                 tool: action.tool, 
+                 input: inputStr, 
+                 log: action.log,
+                 ts: Date.now() 
+               });
+             } catch (e) {}
+          }
+        });
+      }
+
+      // 2. 元数据捕获回调
+      if (aiMeta) {
+         const recordMeta = (metadata) => {
+             const meta = metadata || {};
+             if (meta.provider) {
+                 this._recordProvider(aiMeta, { name: meta.provider, model: meta.model }, 'text');
+             }
+         };
+         callbacks.push({
+             handleChainStart: (chain, inputs, runId, parentRunId, tags, metadata) => recordMeta(metadata),
+             handleLLMStart: (llm, prompts, runId, parentRunId, extraParams, tags, metadata) => recordMeta(metadata)
+         });
+      }
+
+      const finalState = await withTimeout(
+        agentRunnable.invoke({ messages: lcMessages }, { recursionLimit, callbacks }),
         planTimeoutMs,
         'PLAN_TIMEOUT'
       );
+
+      const finalMessages = finalState.messages || [];
+      const lastMsg = finalMessages[finalMessages.length - 1];
+      
+      const result = {
+        text: lastMsg?.content || '',
+        steps: finalMessages,
+        provider: preferredProvider || ''
+      };
+
       if (aiMeta && result?.provider) {
         const model = typeof result?.provider === 'string'
           ? (this.langChainManager?.textAdapters || []).find((a) => a?.name === result.provider)?.model

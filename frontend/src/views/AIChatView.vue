@@ -363,6 +363,7 @@ const callAI = async (prompt) => {
       return
     }
 
+    // 调用AI接口
     const response = await fetch('/api/ai-chat', {
       method: 'POST',
       headers: {
@@ -380,22 +381,53 @@ const callAI = async (prompt) => {
     if (!response.ok) {
       throw new Error('请求失败')
     }
-    
-    const data = await response.json()
-    shouldResetHistory.value = false
-    if (!conversationId.value && data?.sessionId) {
-      conversationId.value = data.sessionId
-    }
-    
-    // 添加AI回复
-    messages.value.push({
+
+    // 初始化回复消息
+    const responseMsgIndex = messages.value.push({
       role: 'assistant',
-      content: data.ai_response || data.message || '抱歉，我暂时无法回答您的问题。',
-    })
+      content: '',
+      loading: true // 可以加一个 loading 状态标识
+    }) - 1;
+
+    // 读取流式响应
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let aiResponse = '';
     
-    // 滚动到底部
-    await nextTick()
-    scrollToBottom()
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        // 假设后端现在直接返回文本流或者 JSON SSE 格式
+        // 如果是直接返回文本内容（非SSE）：
+        aiResponse += chunk;
+        
+        // 更新 UI
+        messages.value[responseMsgIndex].content = aiResponse;
+        
+        // 滚动到底部
+        await nextTick();
+        scrollToBottom();
+      }
+    } finally {
+        // 如果后端返回的是 JSON 对象（非流式），需要处理
+        try {
+            // 尝试解析最后是否是 JSON 格式的完整响应（兼容旧逻辑）
+            if (aiResponse.trim().startsWith('{') && aiResponse.trim().endsWith('}')) {
+                 const data = JSON.parse(aiResponse);
+                 if (data.sessionId) conversationId.value = data.sessionId;
+                 if (data.ai_response) {
+                     aiResponse = data.ai_response;
+                     messages.value[responseMsgIndex].content = aiResponse;
+                 }
+            }
+        } catch(e) {}
+        
+        shouldResetHistory.value = false;
+        messages.value[responseMsgIndex].loading = false;
+    }
     
   } catch (error) {
     if (error.name === 'AbortError') {
