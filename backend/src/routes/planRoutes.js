@@ -66,6 +66,28 @@ module.exports = (planController) => {
     planController.generatePlan(req, res);
   });
 
+  /**
+   * @openapi
+   * /api/plan/stream:
+   *   post:
+   *     tags: [Plan]
+   *     summary: 实时生成旅行计划（SSE）
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *     responses:
+   *       200:
+   *         description: 生成成功
+   *       400:
+   *         description: 参数错误
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
   router.post('/plan/stream', requireAuth, (req, res) => {
     planController.generatePlanStream(req, res);
   });

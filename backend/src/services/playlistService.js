@@ -10,6 +10,65 @@ class PlaylistService {
     this.supabase = supabase;
   }
 
+  _sanitizeJsonLike(text) {
+    if (typeof text !== 'string') return '';
+    let s = text.trim();
+    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenced && fenced[1]) s = fenced[1].trim();
+    const firstBrace = s.indexOf('{');
+    const lastBrace = s.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      s = s.slice(firstBrace, lastBrace + 1);
+    }
+    s = s
+      .replace(/[\u201C\u201D\u201E\u201F\u00AB\u00BB\u2039\u203A\u2018\u2019\u201A\u201B\u0060\u00B4]/g, '"')
+      .replace(/[，]/g, ',')
+      .replace(/[：]/g, ':')
+      .replace(/[、]/g, ',')
+      .replace(/\r/g, '')
+      .replace(/"+/g, '"')
+      .replace(/\[注意[\s\S]*$/g, '')
+      .replace(/,\s*([}\]])/g, '$1')
+      .replace(/([{,]\s*)([A-Za-z0-9_\u4e00-\u9fa5]+)\s*:/g, '$1"$2":');
+    s = s.replace(/:\s*([^"\{\[\d\-][^,\}\]\n]*)/g, (match, value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return match;
+      if (/^(true|false|null)$/i.test(raw)) return `:${raw.toLowerCase()}`;
+      return `:"${raw.replace(/"/g, '\\"')}"`;
+    });
+    return s;
+  }
+
+  _normalizePlaylist(raw, travelInfo) {
+    const parsed = safeParseJSON(raw, null) || safeParseJSON(this._sanitizeJsonLike(raw), null);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const songs = Array.isArray(parsed.songs) ? parsed.songs : [];
+      const cleaned = songs
+        .map((song) => {
+          if (!song || typeof song !== 'object') return null;
+          const title = String(song.title || '').trim();
+          const artist = String(song.artist || '').trim();
+          const genre = String(song.genre || '').trim();
+          const reason = String(song.reason || '').trim();
+          if (!title && !artist && !genre && !reason) return null;
+          return { title, artist, genre, reason };
+        })
+        .filter(Boolean);
+      return {
+        destination: parsed.destination ?? travelInfo?.destination ?? '',
+        title: parsed.title ?? `${travelInfo?.destination ?? ''} 旅行歌单`,
+        description: parsed.description ?? '',
+        songs: cleaned,
+      };
+    }
+    return {
+      destination: travelInfo?.destination ?? '',
+      title: `${travelInfo?.destination ?? ''} 旅行歌单`,
+      description: String(raw ?? '').trim(),
+      songs: [],
+    };
+  }
+
   _ensureAiMeta(meta) {
     if (!meta || typeof meta !== 'object') return null;
     if (!Array.isArray(meta.providers)) meta.providers = [];
@@ -38,7 +97,8 @@ class PlaylistService {
 2) 输出一个对象，包含 destination、title、description、songs
 3) songs 为 10 首歌曲数组，每首包含 title、artist、genre、reason
 4) reason 说明这首歌为何适合本次旅行/地点/风格，简洁 1-2 句
-5) 不要输出任何多余字段`;
+5) 使用标准 JSON 双引号，不要使用花式引号
+6) 不要输出任何多余字段`;
 
       const messages = [
         { role: 'system', content: systemPrompt },
@@ -50,24 +110,7 @@ class PlaylistService {
       const raw = await this.langChainManager.invokeText(messages, {
         onAdapterStart: async ({ adapter }) => this._recordProvider(aiMeta, adapter, 'text'),
       });
-      const parsed = safeParseJSON(raw, null);
-      const playlist = (() => {
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const songs = Array.isArray(parsed.songs) ? parsed.songs : [];
-          return {
-            destination: parsed.destination ?? travelInfo?.destination ?? '',
-            title: parsed.title ?? `${travelInfo?.destination ?? ''} 旅行歌单`,
-            description: parsed.description ?? '',
-            songs,
-          };
-        }
-        return {
-          destination: travelInfo?.destination ?? '',
-          title: `${travelInfo?.destination ?? ''} 旅行歌单`,
-          description: String(raw ?? '').trim(),
-          songs: [],
-        };
-      })();
+      const playlist = this._normalizePlaylist(raw, travelInfo);
 
       // 保存生成记录
       await this.saveGenerationRecord({
