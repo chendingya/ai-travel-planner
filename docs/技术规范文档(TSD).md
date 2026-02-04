@@ -54,7 +54,7 @@
 - **构建工具**：Vite 6.1.0
 - **路由**：Vue Router 4.5.0
 - **状态管理**：Pinia 3.0.1
-- **UI 组件**：自定义组件 + CSS Modules
+- **UI 组件**：TDesign Vue Next (集成 @tdesign-vue-next/chat 0.5.0-alpha.10)
 - **HTTP 客户端**：Axios 1.8.2
 - **地图服务**：高德地图 JS API
 - **认证服务**：Supabase JS Client 2.47.8
