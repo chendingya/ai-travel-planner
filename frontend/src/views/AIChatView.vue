@@ -121,9 +121,22 @@
 
       <!-- 聊天区域 -->
       <div class="chat-container">
-      <!-- 消息列表 -->
-      <div class="chat-list-wrapper" ref="chatRef">
-        <t-chat :clear-history="false" :data="chatData" :reverse="false" :text-loading="isLoading" />
+      <div class="chat-list-wrapper">
+        <t-chatbot
+          ref="chatBotRef"
+          :default-messages="messages"
+          :chat-service-config="chatServiceConfig"
+          :sender-props="{
+            placeholder: currentPlaceholder,
+            disabled: isLoading || !isLoggedIn,
+          }"
+          :list-props="{
+            autoScroll: true,
+            defaultScrollTo: 'bottom',
+          }"
+          :message-props="messageProps"
+          @message-change="handleMessageChange"
+        />
       </div>
 
       <!-- 快捷问题区域 -->
@@ -159,17 +172,6 @@
         </div>
       </div>
 
-      <!-- 输入区域 -->
-      <div class="sender-wrapper">
-        <t-chat-sender
-          v-model="inputValue"
-          :placeholder="currentPlaceholder"
-          :disabled="isLoading"
-          :loading="isLoading"
-          @send="handleSend"
-          @stop="handleStop"
-        />
-      </div>
     </div>
     </div>
   </div>
@@ -201,8 +203,7 @@ const checkLoginStatus = async () => {
 const userAvatar = 'https://tdesign.gtimg.com/site/avatar.jpg'
 const assistantAvatar = 'https://tdesign.gtimg.com/site/chat-avatar.png'
 
-// Chat 组件引用
-const chatRef = ref(null)
+const chatBotRef = ref(null)
 
 // 历史会话相关
 const showHistoryPanel = ref(false)
@@ -247,44 +248,56 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 
 请问有什么可以帮助您的吗？`
 
-// 消息列表
-const messages = ref([
-  {
-    role: 'assistant',
-    content: defaultGreeting,
-  },
-])
-
-// 将消息内容转换为 t-chat-message 需要的 content 格式（数组）
-// 直接使用 AI 返回的原始文本，不做任何预处理
-// TDesign Chat 使用 cherry-markdown 引擎，能正确解析标准 Markdown
-const formatMessageContent = (content, role) => {
-  // 如果已经是数组格式，直接返回
+const toPlainText = (content) => {
+  if (typeof content === 'string') return content
   if (Array.isArray(content)) {
-    return content
+    return content.map((item) => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object') {
+        if (typeof item.data === 'string') return item.data
+        if (typeof item.text === 'string') return item.text
+        if (typeof item.content === 'string') return item.content
+      }
+      return ''
+    }).join('')
   }
-  // AI 消息使用 markdown 类型渲染
-  if (role === 'assistant') {
-    return [{ type: 'markdown', data: content || '' }]
-  }
-  // 用户消息使用 text 类型
-  return [{ type: 'text', data: content || '' }]
+  return content ? String(content) : ''
 }
 
-// 转换为 t-chat 需要的 data 格式（保留用于兼容）
-const chatData = computed(() => {
-  return messages.value.map((msg) => ({
-    avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
-    name: msg.role === 'user' ? '我' : 'AI助手',
-    role: msg.role,
-    content: msg.content,
-  }))
+const normalizeMessage = (msg) => {
+  const role = msg?.role || 'assistant'
+  const rawContent = msg?.content
+  if (Array.isArray(rawContent) && rawContent.every((item) => item && typeof item === 'object' && 'type' in item)) {
+    return {
+      ...msg,
+      role,
+      content: rawContent,
+    }
+  }
+  const text = toPlainText(rawContent)
+  if (role === 'user') {
+    return { ...msg, role: 'user', content: [{ type: 'text', data: text }] }
+  }
+  if (role === 'system') {
+    return { ...msg, role: 'system', content: [{ type: 'text', data: text }] }
+  }
+  return { ...msg, role: 'assistant', content: [{ type: 'markdown', data: text }] }
+}
+
+// 消息列表
+const messages = ref([
+  normalizeMessage({
+    role: 'assistant',
+    content: defaultGreeting,
+  }),
+])
+
+const messageProps = (msg) => ({
+  avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
+  name: msg.role === 'user' ? '我' : msg.role === 'assistant' ? 'AI助手' : '系统',
 })
 
-// 状态
-const inputValue = ref('')
 const isLoading = ref(false)
-const abortController = ref(null)
 
 // 普通模式快捷问题
 const normalQuickQuestions = [
@@ -314,149 +327,89 @@ const currentPlaceholder = computed(() =>
     : '请输入您的问题...'
 )
 
-// 格式化时间
-function formatTime(date) {
-  const hours = date.getHours().toString().padStart(2, '0')
-  const minutes = date.getMinutes().toString().padStart(2, '0')
-  return `今天 ${hours}:${minutes}`
+const updateLoading = (list) => {
+  const last = Array.isArray(list) ? list.at(-1) : null
+  const status = last?.status
+  isLoading.value = status === 'pending' || status === 'streaming'
 }
 
-// 发送消息
-const handleSend = async (value) => {
-  const content = value?.trim() || inputValue.value?.trim()
-  if (!content || isLoading.value) return
-  
-  // 检查登录状态
-  if (!isLoggedIn.value) {
-    MessagePlugin.warning('请先登录后再进行对话')
-    goToLogin()
-    return
-  }
-  
-  // 添加用户消息
-  messages.value.push({
-    role: 'user',
-    content: content,
-  })
-  
-  inputValue.value = ''
-  
-  // 滚动到底部
-  await nextTick()
-  scrollToBottom()
-  
-  // 调用AI
-  await callAI(content)
+const handleMessageChange = (e) => {
+  const next = Array.isArray(e?.detail) ? e.detail : []
+  messages.value = next
+  updateLoading(next)
 }
 
-// 调用AI接口
-const callAI = async (prompt) => {
-  isLoading.value = true
-  abortController.value = new AbortController()
-  
-  try {
+const chatServiceConfig = () => ({
+  endpoint: '/api/ai-chat',
+  stream: true,
+  protocol: 'default',
+  onRequest: async (params) => {
     const session = await getAuthSession('请先登录后再进行对话')
     if (!session) {
-      isLoading.value = false
-      abortController.value = null
       goToLogin()
-      return
+      throw new Error('请先登录后再进行对话')
     }
-
-    // 调用AI接口
-    const response = await fetch('/api/ai-chat', {
+    const urlParams = new URLSearchParams(window.location.search)
+    const debugStream = urlParams.get('debug_stream') === '1'
+    return {
+      ...params,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
-        message: prompt,
+        message: params?.prompt || '',
         sessionId: conversationId.value || undefined,
         enable_tools: enableTools.value,
+        ...(debugStream ? { debug_stream: true } : {}),
       }),
-      signal: abortController.value.signal,
-    })
-    
-    if (!response.ok) {
-      throw new Error('请求失败')
     }
-
-    // 初始化回复消息
-    const responseMsgIndex = messages.value.push({
-      role: 'assistant',
-      content: '',
-      loading: true // 可以加一个 loading 状态标识
-    }) - 1;
-
-    // 读取流式响应
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let aiResponse = '';
-    
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        // 假设后端现在直接返回文本流或者 JSON SSE 格式
-        // 如果是直接返回文本内容（非SSE）：
-        aiResponse += chunk;
-        
-        // 更新 UI
-        messages.value[responseMsgIndex].content = aiResponse;
-        
-        // 滚动到底部
-        await nextTick();
-        scrollToBottom();
+  },
+  onMessage: (chunk) => {
+    const raw = chunk?.data
+    let payload = null
+    if (raw && typeof raw === 'object') {
+      payload = raw
+    } else if (typeof raw === 'string') {
+      try {
+        payload = JSON.parse(raw)
+      } catch (e) {
+        payload = { content: raw }
       }
-    } finally {
-        // 如果后端返回的是 JSON 对象（非流式），需要处理
-        try {
-            // 尝试解析最后是否是 JSON 格式的完整响应（兼容旧逻辑）
-            if (aiResponse.trim().startsWith('{') && aiResponse.trim().endsWith('}')) {
-                 const data = JSON.parse(aiResponse);
-                 if (data.sessionId) conversationId.value = data.sessionId;
-                 if (data.ai_response) {
-                     aiResponse = data.ai_response;
-                     messages.value[responseMsgIndex].content = aiResponse;
-                 }
-            }
-        } catch(e) {}
-        
-        shouldResetHistory.value = false;
-        messages.value[responseMsgIndex].loading = false;
     }
-    
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      console.log('请求已取消')
-    } else {
-      console.error('AI对话请求失败:', error)
-      MessagePlugin.error('发送消息失败，请稍后重试')
+    if (!payload) return null
+    if (payload?.sessionId) conversationId.value = payload.sessionId
+    const type = payload?.type || (payload?.content ? 'text' : '')
+    if (type === 'think') {
+      return {
+        type: 'thinking',
+        data: {
+          title: '思考中...',
+          text: typeof payload?.content === 'string' ? payload.content : '',
+        },
+      }
     }
-  } finally {
-    isLoading.value = false
-    abortController.value = null
-  }
-}
-
-// 停止生成
-const handleStop = () => {
-  if (abortController.value) {
-    abortController.value.abort()
-  }
-}
+    if (type === 'text' || typeof payload?.content === 'string') {
+      return {
+        type: 'markdown',
+        data: typeof payload?.content === 'string' ? payload.content : '',
+      }
+    }
+    return null
+  },
+  onError: () => {
+    MessagePlugin.error('发送消息失败，请稍后重试')
+  },
+  onComplete: () => {
+    shouldResetHistory.value = false
+  },
+})
 
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
-    const chatEl = chatRef.value
-    if (chatEl) {
-      // 新结构：直接使用 chat-list-wrapper 作为滚动容器
-      chatEl.scrollTop = chatEl.scrollHeight
-    }
+    chatBotRef.value?.scrollList?.({ to: 'bottom', behavior: 'auto' })
   })
 }
 
@@ -465,11 +418,12 @@ const handleClear = () => {
   conversationId.value = null
   shouldResetHistory.value = true
   messages.value = [
-    {
+    normalizeMessage({
       role: 'assistant',
       content: defaultGreeting,
-    },
+    }),
   ]
+  chatBotRef.value?.setMessages?.(messages.value, 'replace')
   MessagePlugin.success('已开启新的对话')
 }
 
@@ -547,7 +501,10 @@ const loadSession = async (sessionId) => {
     const historyMessages = Array.isArray(data?.messages) ? data.messages : []
     conversationId.value = sessionId
     shouldResetHistory.value = false
-    messages.value = historyMessages.length ? historyMessages : [{ role: 'assistant', content: '该对话暂无消息' }]
+    messages.value = historyMessages.length
+      ? historyMessages.map(normalizeMessage)
+      : [normalizeMessage({ role: 'assistant', content: '该对话暂无消息' })]
+    chatBotRef.value?.setMessages?.(messages.value, 'replace')
     showHistoryPanel.value = false
     
     await nextTick()
@@ -671,7 +628,7 @@ watch(isLoggedIn, async (loggedIn) => {
 // 快捷问题
 const handleQuickQuestion = (question) => {
   if (!isLoading.value) {
-    handleSend(question)
+    chatBotRef.value?.sendUserMessage?.({ prompt: question })
   }
 }
 

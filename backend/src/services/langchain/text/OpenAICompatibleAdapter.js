@@ -55,6 +55,7 @@ class OpenAICompatibleAdapter extends BaseLLMAdapter {
       maxTokens: 4000,
       timeout: this.requestTimeoutMs(),
       maxRetries: this.maxRetries(),
+      streaming: true,
     });
   }
 

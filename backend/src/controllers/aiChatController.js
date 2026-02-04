@@ -91,11 +91,44 @@ class AIChatController {
 
       res.locals.aiMeta = aiMeta;
       
-      // 设置响应头支持流式传输
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Content-Encoding', 'identity');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+      if (res.socket) {
+        res.socket.setNoDelay(true);
+        res.socket.setKeepAlive(true);
+      }
+      res.write(':\n\n');
+
+      const writeEvent = (payload) => {
+        if (res.writableEnded) return;
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        if (typeof res.flush === 'function') res.flush();
+        if (debug) {
+          const contentLen = typeof payload?.content === 'string' ? payload.content.length : 0;
+          console.log(`[ai-chat] stream chunk (${contentLen})`);
+        }
+      };
 
       await this.aiChatService.runWithTrace(trace, async () => {
+        const useTestStream = String(req.query?.debug_stream || '').trim() === '1' || req.body?.debug_stream === true;
+        if (useTestStream) {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          writeEvent({ type: 'meta', sessionId: effectiveSessionId });
+          const sample = '这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：我会逐字发送，确认前端是否按流显示。这是一个流式调试示例：';
+          for (const ch of sample) {
+            if (res.writableEnded) break;
+            writeEvent({ type: 'text', content: ch });
+            await wait(40);
+          }
+          if (!res.writableEnded) res.end();
+          return;
+        }
+
         const stream = await this.aiChatService.chat(message, effectiveSessionId, {
           enable_tools: enable_tools ?? enableTools,
           include_audio: include_audio ?? includeAudio,
@@ -104,45 +137,17 @@ class AIChatController {
           client_ip,
         });
 
-        // 如果返回的是字符串（非流），直接输出
+        writeEvent({ type: 'meta', sessionId: effectiveSessionId });
+
         if (typeof stream === 'string') {
-             res.write(stream);
-             res.end();
-             return;
+          if (stream) writeEvent({ type: 'text', content: String(stream) });
+          if (!res.writableEnded) res.end();
+          return;
         }
 
-        // 迭代处理流
         for await (const chunk of stream) {
-            if (res.writableEnded) break;
-            // LangGraph stream 模式下，chunk 可能包含 messages 数组更新，或者是 token
-            // 这里我们假设 aiChatService.chat 已经返回了处理好的 token 流或者需要我们从 chunk 中提取
-            
-            // 如果是 LangGraph 原始输出，通常是 { messages: [...] }
-            // 我们需要提取最后一条 AI 消息的 content 增量
-            // 但 createReactAgent 的 .stream 默认行为比较复杂，通常是输出状态更新
-            
-            // 为了简化，我们在 Service 层做转换，或者在这里判断
-            // 假设 Service 层返回的是处理好的 token 字符串流
-            
-            // 如果 chunk 是对象，尝试提取 content
-            if (typeof chunk === 'object' && chunk !== null) {
-                // 处理 LangGraph 默认输出
-                // 这里可能需要根据 aiChatService 的实际返回调整
-                // 暂时假设 Service 返回的是包含 content 的对象或字符串
-                if (chunk.content) {
-                    res.write(chunk.content);
-                } else if (chunk.messages && Array.isArray(chunk.messages)) {
-                    // 如果是全量消息列表，我们需要计算增量（比较复杂），或者 Service 层应该返回增量流
-                    // 这里的逻辑需要和 Service 层配合
-                    // 临时方案：如果 Service 返回的是 Generator，我们假设它 yield 的是文本片段
-                } else {
-                    // 可能是直接的字符串片段
-                    // console.log('Chunk:', chunk);
-                }
-            } else {
-                // 字符串片段
-                res.write(String(chunk));
-            }
+          if (res.writableEnded) break;
+          if (chunk) writeEvent({ type: 'text', content: String(chunk) });
         }
         if (!res.writableEnded) res.end();
       });

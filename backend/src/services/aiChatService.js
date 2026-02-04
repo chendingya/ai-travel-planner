@@ -703,7 +703,6 @@ class AIChatService {
       }
 
       // 4. 执行 (带历史记录)
-      let response = '';
       
       // 捕获当前的 trace 上下文，确保在回调中可用
       const currentTrace = this._currentTrace();
@@ -740,6 +739,29 @@ class AIChatService {
         recordProvider({ provider: preferredProvider, model: adapter?.model || '' });
       }
 
+      const pickChunkText = (value) => {
+        if (typeof value === 'string') return value;
+        if (Array.isArray(value)) {
+          return value
+            .map((part) => {
+              if (typeof part === 'string') return part;
+              if (part && typeof part === 'object') {
+                if (typeof part.text === 'string') return part.text;
+                if (typeof part.content === 'string') return part.content;
+                if (typeof part.value === 'string') return part.value;
+              }
+              return '';
+            })
+            .join('');
+        }
+        if (value && typeof value === 'object') {
+          if (typeof value.text === 'string') return value.text;
+          if (typeof value.content === 'string') return value.content;
+          if (typeof value.value === 'string') return value.value;
+        }
+        return '';
+      };
+
       if (sessionId) {
         // LangGraph 状态管理：手动加载和保存历史
         // 因为 LangGraph 会返回完整的会话状态，我们手动计算增量并保存，比 RunnableWithMessageHistory 更可靠
@@ -758,35 +780,28 @@ class AIChatService {
           }
         );
         
-        let finalResponse = "";
-        
-        // 使用生成器返回流式内容
+        let finalResponse = '';
+
         const streamGenerator = async function* () {
-            // 先发送一些元数据（如果前端支持解析）
-            // yield JSON.stringify({ sessionId }) + "\n"; 
-            
-            for await (const event of eventStream) {
-                recordProvider(event?.metadata);
-                recordProvider(event?.data?.metadata);
-                // 监听 LLM 的流式输出 (on_chat_model_stream)
-                if (event.event === "on_chat_model_stream") {
-                    const chunk = event.data.chunk;
-                    // chunk 是一个 AIMessageChunk
-                    if (chunk && chunk.content) {
-                        finalResponse += chunk.content;
-                        yield chunk.content;
-                    }
-                }
+          for await (const event of eventStream) {
+            recordProvider(event?.metadata);
+            recordProvider(event?.data?.metadata);
+            if (event.event === 'on_chat_model_stream') {
+              const chunk = event.data.chunk;
+              const piece = pickChunkText(chunk?.content) || pickChunkText(chunk?.delta?.content);
+              if (piece) {
+                finalResponse += piece;
+                yield piece;
+              }
             }
-            
-            // 循环结束后保存历史记录
-            // 注意：这里需要在流结束后再保存，否则 history 会不完整
-            if (finalResponse) {
-                const aiMsg = new AIMessage(finalResponse);
-                await history.addMessages([new HumanMessage(message), aiMsg]);
-            }
+          }
+
+          if (finalResponse) {
+            const aiMsg = new AIMessage(finalResponse);
+            await history.addMessages([new HumanMessage(message), aiMsg]);
+          }
         };
-        
+
         return streamGenerator();
 
       } else {
@@ -800,44 +815,19 @@ class AIChatService {
         );
         
         const streamGenerator = async function* () {
-            for await (const event of eventStream) {
-                recordProvider(event?.metadata);
-                recordProvider(event?.data?.metadata);
-                if (event.event === "on_chat_model_stream") {
-                    const chunk = event.data.chunk;
-                    if (chunk && chunk.content) {
-                        yield chunk.content;
-                    }
-                }
+          for await (const event of eventStream) {
+            recordProvider(event?.metadata);
+            recordProvider(event?.data?.metadata);
+            if (event.event === 'on_chat_model_stream') {
+              const chunk = event.data.chunk;
+              const piece = pickChunkText(chunk?.content) || pickChunkText(chunk?.delta?.content);
+              if (piece) yield piece;
             }
+          }
         };
-        
+
         return streamGenerator();
       }
-
-      // 5. 音频生成 (保持原有逻辑)
-      let audio_task_id = null;
-      let audio_error = null;
-      if (includeAudio) {
-        if (!this.ttsService) {
-          audio_error = 'TTS功能不可用';
-        } else {
-          try {
-            const created = await this.ttsService.createTask({ text: response, voice });
-            audio_task_id = created.taskId;
-          } catch (e) {
-            audio_error = String(e?.message || e);
-          }
-        }
-      }
-
-      this._debug('chat.done', { sessionId, response_len: response.length, audio_task_id, audio_error });
-      return {
-        message: response,
-        sessionId,
-        audio_task_id,
-        audio_error,
-      };
 
     } catch (error) {
       console.error('AI chat failed:', error);
