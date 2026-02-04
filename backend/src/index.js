@@ -6,6 +6,34 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+const applyLangChainTokenPatch = () => {
+  try {
+    const base = require('@langchain/core/language_models/base');
+    if (base && base.BaseLanguageModel && base.BaseLanguageModel.prototype) {
+      base.BaseLanguageModel.prototype.getNumTokens = async function getNumTokens(content) {
+        const text = typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? content.map((item) => (typeof item === 'string' ? item : item?.text || '')).join('')
+            : String(content ?? '');
+        return Math.ceil(text.length / 4);
+      };
+    }
+    if (base && typeof base.calculateMaxTokens === 'function') {
+      const getContext = typeof base.getModelContextSize === 'function' ? base.getModelContextSize : () => 4097;
+      base.calculateMaxTokens = async ({ prompt, modelName }) => {
+        const text = typeof prompt === 'string' ? prompt : String(prompt ?? '');
+        const numTokens = Math.ceil(text.length / 4);
+        return getContext(modelName) - numTokens;
+      };
+    }
+  } catch (error) {
+    console.warn('LangChain token patch failed:', error?.message || error);
+  }
+};
+
+applyLangChainTokenPatch();
+
 // 配置
 const { config, getEnabledTextProviders, getEnabledImageProviders } = require('./config');
 

@@ -351,6 +351,23 @@ class MCPService {
     return typeof result === 'string' ? result : JSON.stringify(result);
   }
 
+  _callTimeoutMs() {
+    const raw = Number(process.env.MCP_CALL_TIMEOUT_MS || process.env.AI_CHAT_MCP_CALL_TIMEOUT_MS || '45000');
+    return Number.isFinite(raw) && raw > 0 ? raw : 45000;
+  }
+
+  _stringifyError(error) {
+    if (!error) return 'Unknown error';
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return error.message || String(error);
+    if (typeof error?.message === 'string') return error.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
   async getLangChainTools({ refresh = false } = {}) {
     const listed = await this.listTools({ refresh });
     const tools = [];
@@ -371,8 +388,23 @@ class MCPService {
           description: description || `${serverName}:${toolName}`,
           schema,
           func: async (input) => {
-            const result = await this.callTool(serverName, toolName, input);
-            return this._stringifyToolResult(result);
+            const timeoutMs = this._callTimeoutMs();
+            try {
+              const result = await this._withTimeout(
+                this.callTool(serverName, toolName, input),
+                timeoutMs,
+                'MCP_CALL_TIMEOUT'
+              );
+              return this._stringifyToolResult(result);
+            } catch (error) {
+              const payload = {
+                error: this._stringifyError(error),
+                code: typeof error?.code === 'string' ? error.code : 'MCP_CALL_FAILED',
+                server: serverName,
+                tool: toolName
+              };
+              return JSON.stringify(payload);
+            }
           },
         })
       );

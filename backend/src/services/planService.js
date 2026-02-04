@@ -500,6 +500,9 @@ class PlanService {
       };
     } catch (error) {
       console.error('Generate plan failed:', error);
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error('生成旅行计划失败');
     }
   }
@@ -521,6 +524,9 @@ class PlanService {
       };
     } catch (error) {
       console.error('Generate complete plan failed:', error);
+      if (error instanceof Error) {
+        throw error;
+      }
       throw new Error('生成完整旅行计划失败');
     }
   }
