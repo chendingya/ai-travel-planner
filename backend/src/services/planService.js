@@ -393,29 +393,48 @@ class PlanService {
 
       // 1. 步骤流式回调
       if (onStep) {
+        const toolCallQueue = [];
+        const buildToolCallId = (name, inputStr) => `${name}:${inputStr}`;
         callbacks.push({
           handleToolStart: (tool, input) => {
             try {
               const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
-              onStep({ type: 'tool_start', tool: tool.name, input: inputStr, ts: Date.now() });
+              const toolName = tool?.name || '';
+              const toolCallId = buildToolCallId(toolName, inputStr);
+              toolCallQueue.push({ toolCallId, toolName });
+              onStep({
+                role: 'assistant',
+                toolCalls: JSON.stringify([{ name: toolName, args: input, id: toolCallId }]),
+                toolCallId,
+                toolName
+              });
             } catch (e) {}
           },
           handleToolEnd: (output) => {
             try {
               const outputStr = typeof output === 'string' ? output : JSON.stringify(output);
-              onStep({ type: 'tool_end', output: outputStr, ts: Date.now() });
+              const entry = toolCallQueue.shift();
+              const toolCallId = entry?.toolCallId || '';
+              const toolName = entry?.toolName || '';
+              onStep({
+                role: 'tool',
+                toolResults: outputStr,
+                toolCallId,
+                toolName
+              });
             } catch (e) {}
           },
           handleAgentAction: (action) => {
              try {
                const toolInput = action.toolInput;
                const inputStr = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput);
-               onStep({ 
-                 type: 'agent_action', 
-                 tool: action.tool, 
-                 input: inputStr, 
-                 log: action.log,
-                 ts: Date.now() 
+               const toolName = action.tool || '';
+               const toolCallId = buildToolCallId(toolName, inputStr);
+               onStep({
+                 role: 'assistant',
+                 toolCalls: JSON.stringify([{ name: toolName, args: toolInput, id: toolCallId }]),
+                 toolCallId,
+                 toolName
                });
              } catch (e) {}
           }
