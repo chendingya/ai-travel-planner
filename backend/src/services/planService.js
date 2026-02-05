@@ -339,6 +339,7 @@ class PlanService {
         { role: 'user', content: JSON.stringify(formData ?? {}, null, 2) },
       ];
 
+      // 由 MCP 服务提供 LangChain 工具列表
       const tools = this.mcpService ? await this.mcpService.getLangChainTools() : [];
       const onStep = typeof options?.onStep === 'function' ? options.onStep : null;
       const onTools = typeof options?.onTools === 'function' ? options.onTools : null;
@@ -352,10 +353,12 @@ class PlanService {
         this.langChainManager._debug('plan.tools', { tool_count: tools.length });
       }
 
+      // 根据环境变量决定优先模型提供商
       const preferredProvider = this._getMcpPreferredProvider();
       const aiMeta = this._ensureAiMeta(options?.aiMeta);
       if (aiMeta) aiMeta.mcp = tools.length > 0;
 
+      // 超时与递归层数控制（避免工具调用过多或请求卡死）
       const planTimeoutMs = Number(process.env.AI_PLAN_TIMEOUT_MS || process.env.MCP_PLAN_TIMEOUT_MS || '120000');
       const modelTimeoutMs = Number(process.env.AI_PLAN_MODEL_TIMEOUT_MS || process.env.MCP_PLAN_MODEL_TIMEOUT_MS || '60000');
       const maxToolCallsRaw = Number(process.env.AI_PLAN_MAX_TOOL_CALLS || process.env.AI_CHAT_AGENT_MAX_TOOL_CALLS || '12');
@@ -375,6 +378,7 @@ class PlanService {
       const recursionLimit = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '60');
       const { HumanMessage } = require('@langchain/core/messages');
 
+      // 创建 Agent（LangGraph createReactAgent），并按优先提供商 + fallback 组合
       const agentRunnable = await this.langChainManager.createAgent({
         tools,
         systemPrompt,
@@ -383,15 +387,16 @@ class PlanService {
         modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
       });
 
+      // 将用户输入转为 LangChain 消息类型
       const lcMessages = messages.map(m => {
         if (m.role === 'user') return new HumanMessage(m.content);
         return new HumanMessage(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
       });
 
-      // 准备回调
+      // 准备回调：用于把工具调用步骤流式推给前端
       const callbacks = [];
 
-      // 1. 步骤流式回调
+      // 1. 步骤流式回调：工具开始/结束/动作事件
       if (onStep) {
         const toolCallQueue = [];
         const buildToolCallId = (name, inputStr) => `${name}:${inputStr}`;
@@ -441,7 +446,7 @@ class PlanService {
         });
       }
 
-      // 2. 元数据捕获回调
+      // 2. 元数据捕获回调：记录 provider/model
       if (aiMeta) {
          const recordMeta = (metadata) => {
              const meta = metadata || {};
@@ -455,6 +460,7 @@ class PlanService {
          });
       }
 
+      // 调用 Agent 并施加整体超时
       const finalState = await withTimeout(
         agentRunnable.invoke({ messages: lcMessages }, { recursionLimit, callbacks }),
         planTimeoutMs,
