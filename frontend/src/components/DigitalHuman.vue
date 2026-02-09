@@ -91,20 +91,6 @@
         <!-- 设置区域 -->
         <div class="settings-section">
           <div class="setting-item">
-            <label class="setting-label">音色选择</label>
-            <t-select
-              v-model="selectedVoice"
-              placeholder="选择音色"
-              size="small"
-              style="width: 160px"
-            >
-              <t-option v-for="voice in voiceOptions" :key="voice.value" :value="voice.value">
-                {{ voice.label }}
-              </t-option>
-            </t-select>
-          </div>
-          
-          <div class="setting-item">
             <t-switch
               v-model="autoPlay"
               :label="'自动播放'"
@@ -175,7 +161,7 @@ const errorMessage = ref('')
 const audioUrl = ref('')
 const audioUrls = ref([]) // 多段音频URL数组
 const currentSpot = ref(null)
-const selectedVoice = ref('Cherry')
+const selectedVoice = ref('')
 const autoPlay = ref(true)
 const audioPlayer = ref(null)
 const currentAudioIndex = ref(0) // 当前播放的音频索引
@@ -206,15 +192,6 @@ const status = computed(() => {
   if (currentSpot.value) return 'ready'
   return 'idle'
 })
-
-// 音色选项
-const voiceOptions = [
-  { value: 'Cherry', label: '芊悦' },
-  { value: 'Ethan', label: '晨煦' },
-  { value: 'Eric', label: '程川' },
-  { value: 'Rocky', label: '阿强' },
-  { value: 'Kiki', label: '阿清' }
-]
 
 // 监听景点信息变化
 watch(() => props.spotInfo, (newSpot) => {
@@ -276,9 +253,8 @@ const generateSpotAudio = async (spot) => {
       },
       body: JSON.stringify({
         message: `请为${spotContext.name}这个景点生成一段生动的导游讲解。${spotContext.district ? `位于${spotContext.district}` : ''}${spotContext.city ? `${spotContext.city}市` : ''}。讲解内容要包含景点特色、历史文化背景、游览建议等，语言要生动有趣，时长控制在1-2分钟，大约200-300字。`,
-        voice: selectedVoice.value,
         language_type: 'Chinese',
-        include_audio: true,
+        include_audio: false,
         enable_tools: false
       })
     })
@@ -286,61 +262,103 @@ const generateSpotAudio = async (spot) => {
     if (!response.ok) {
       throw new Error('请求失败')
     }
-    
-    const data = await response.json()
-    
-    if (data.audio_error) {
-      throw new Error(data.audio_error)
+
+    if (!response.body) {
+      throw new Error('未能生成讲解内容')
     }
-    
-    // 处理音频URL
-    if (data.audio_urls && Array.isArray(data.audio_urls) && data.audio_urls.length > 0) {
-      // 多段音频处理
-      audioUrls.value = data.audio_urls
-      currentAudioIndex.value = 0
-      audioUrl.value = audioUrls.value[0]
-      
-      console.log(`🎵 收到 ${audioUrls.value.length} 段音频`)
-      
-      // 自动播放第一段
-      if (autoPlay.value) {
-        await nextTick()
-        playAudio()
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    let finalText = ''
+
+    const handleData = (raw) => {
+      if (!raw) return
+      let payload = null
+      if (typeof raw === 'string') {
+        try {
+          payload = JSON.parse(raw)
+        } catch (e) {
+          payload = { content: raw }
+        }
+      } else if (typeof raw === 'object') {
+        payload = raw
       }
-    } else if (data.audio_url) {
-      // 单段音频处理
-      audioUrls.value = []
-      currentAudioIndex.value = 0
-      audioUrl.value = data.audio_url
-      
-      // 自动播放
-      if (autoPlay.value) {
-        await nextTick()
-        playAudio()
+      if (!payload) return
+      if (typeof payload.content === 'string') {
+        finalText += payload.content
       }
-    } else if (data.audio_task_id) {
-      // 轮询获取音频
-      await pollAudioStatus(data.audio_task_id)
-    } else {
-      throw new Error('未能生成音频')
     }
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+      for (const part of parts) {
+        const lines = part.split('\n').map(l => l.trim()).filter(Boolean)
+        if (!lines.length) continue
+        let dataStr = ''
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            dataStr += line.replace(/^data:\s?/, '')
+          }
+        }
+        if (dataStr) handleData(dataStr)
+      }
+    }
+
+    const speechText = finalText.trim()
+    if (!speechText) {
+      throw new Error('未能生成讲解内容')
+    }
+
+    const ttsResponse = await fetch('/api/tts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        text: speechText,
+        voice: selectedVoice.value || undefined,
+      }),
+    })
+
+    if (!ttsResponse.ok) {
+      const errorData = await ttsResponse.json().catch(() => ({}))
+      throw new Error(errorData?.message || '语音生成失败')
+    }
+
+    const ttsData = await ttsResponse.json()
+    const taskId = ttsData?.taskId || ttsData?.task_id
+    if (!taskId) {
+      throw new Error('语音任务创建失败')
+    }
+
+    await pollAudioStatus(taskId, session.access_token)
     
   } catch (error) {
     console.error('生成讲解音频失败:', error)
-    errorMessage.value = '生成讲解失败，请重试'
+    errorMessage.value = error?.message || '生成讲解失败，请重试'
   } finally {
     isGenerating.value = false
   }
 }
 
 // 轮询音频状态
-const pollAudioStatus = async (taskId) => {
+const pollAudioStatus = async (taskId, accessToken) => {
   const maxAttempts = 20
   const pollInterval = 2000
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const response = await fetch(`/api/tts/audio/${taskId}`)
+      const response = await fetch(`/api/tts/audio/${taskId}`, {
+        headers: {
+          Authorization: accessToken ? `Bearer ${accessToken}` : '',
+        },
+      })
       
       if (!response.ok) {
         throw new Error('查询音频状态失败')
@@ -357,7 +375,9 @@ const pollAudioStatus = async (taskId) => {
         }
         break
       } else if (data.status === 'failed') {
-        throw new Error(data.error || '语音生成失败')
+        const message = data.error || '语音生成失败'
+        errorMessage.value = message
+        throw new Error(message)
       }
       
     } catch (error) {

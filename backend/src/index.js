@@ -86,6 +86,8 @@ app.use(requestLogger);
 
 const audioDir = path.join(process.cwd(), 'runtime', 'audio');
 app.use('/audio', express.static(audioDir));
+const staticDir = path.join(process.cwd(), 'public');
+app.use(express.static(staticDir));
 
 const openApiSpec = createOpenApiSpec();
 
@@ -222,6 +224,9 @@ async function initializeApp() {
 
     // 注册路由（带控制器）- 必须在 404 处理之前
     app.use('/api', apiRoutes(controllers));
+    app.get(/^\/(?!api|audio|config\.js).*/, (req, res, next) => {
+      res.sendFile(path.join(staticDir, 'index.html'));
+    });
 
     // 404 处理 - 必须在所有路由之后
     app.use(notFoundHandler);

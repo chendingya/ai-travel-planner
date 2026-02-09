@@ -1,13 +1,9 @@
 version: '3.8'
 services:
-  frontend:
-    build: ./frontend
+  app:
+    build: .
+    image: ai-travel-planner:latest
     ports:
-      - "8080:80"
-
-  backend:
-    build: ./backend
-    ports:
-      - "3001:3001"
-    environment:
-      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - "3002:3002"
+    env_file:
+      - backend/.env
