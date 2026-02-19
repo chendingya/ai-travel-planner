@@ -52,7 +52,6 @@ dist/
 build/
 
 # Docker
-.dockerignore
 
 # Temporary files
 *.tmp

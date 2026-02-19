@@ -1,0 +1,20 @@
+.git
+.git/*
+
+# Local environment files (never bake secrets into image)
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+!backend/.env.example
+!frontend/.env.example
+!.env.example
+
+# Local artifacts
+**/node_modules
+backend/runtime/audio
+runtime/audio
+**/.DS_Store
+**/Thumbs.db
