@@ -78,6 +78,10 @@ class TTSService {
       await this._synthesizeWithOpenAICompatible({ text, voiceHint, outPath });
       return;
     }
+    if (this._isPiperProvider(provider)) {
+      await this._synthesizeWithPiper({ text, voiceHint, outPath });
+      return;
+    }
 
     if (platform === 'win32') {
       const textB64 = Buffer.from(text || '', 'utf8').toString('base64');
@@ -112,12 +116,17 @@ class TTSService {
   _resolveProvider() {
     const raw = process.env.TTS_PROVIDER;
     if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase();
+    if (process.platform !== 'win32' && process.env.TTS_PIPER_MODEL) return 'piper';
     return process.platform === 'win32' ? 'local' : 'openai-compatible';
   }
 
   _isOpenAICompatibleProvider(provider) {
     const value = String(provider || '').toLowerCase();
     return value === 'openai' || value === 'openai-compatible' || value === 'openai_compatible' || value === 'openai-compat';
+  }
+
+  _isPiperProvider(provider) {
+    return String(provider || '').toLowerCase() === 'piper';
   }
 
   _getOpenAICompatFormat() {
@@ -147,6 +156,71 @@ class TTSService {
     const responseFormat = this._getOpenAICompatFormat();
     const voice = this._pickOpenAiVoice(voiceHint);
     return { baseURL, apiKey, model, responseFormat, voice };
+  }
+
+  _pickPiperModel(voiceHint) {
+    const raw = String(voiceHint || '').trim();
+    const hint = raw.toLowerCase();
+    const defaultModel = process.env.TTS_PIPER_MODEL || '';
+    const femaleModel = process.env.TTS_PIPER_MODEL_FEMALE || defaultModel;
+    const maleModel = process.env.TTS_PIPER_MODEL_MALE || defaultModel;
+    if (hint.includes('female') || hint.includes('woman') || hint.includes('女')) return femaleModel;
+    if (hint.includes('male') || hint.includes('man') || hint.includes('男')) return maleModel;
+    return defaultModel;
+  }
+
+  _pickPiperSpeaker(voiceHint) {
+    const raw = String(voiceHint || '').trim();
+    const hint = raw.toLowerCase();
+    const fallback = process.env.TTS_PIPER_SPEAKER;
+    const female = process.env.TTS_PIPER_SPEAKER_FEMALE ?? fallback;
+    const male = process.env.TTS_PIPER_SPEAKER_MALE ?? fallback;
+    if (hint.includes('female') || hint.includes('woman') || hint.includes('女')) return female;
+    if (hint.includes('male') || hint.includes('man') || hint.includes('男')) return male;
+    return fallback;
+  }
+
+  _toFiniteNumber(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  _toInteger(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isInteger(n) ? n : null;
+  }
+
+  _resolvePiperConfig(voiceHint) {
+    return {
+      binary: process.env.TTS_PIPER_BIN || 'piper',
+      model: this._pickPiperModel(voiceHint),
+      config: process.env.TTS_PIPER_CONFIG || '',
+      speaker: this._toInteger(this._pickPiperSpeaker(voiceHint)),
+      noiseScale: this._toFiniteNumber(process.env.TTS_PIPER_NOISE_SCALE),
+      noiseW: this._toFiniteNumber(process.env.TTS_PIPER_NOISE_W),
+      lengthScale: this._toFiniteNumber(process.env.TTS_PIPER_LENGTH_SCALE),
+      sentenceSilence: this._toFiniteNumber(process.env.TTS_PIPER_SENTENCE_SILENCE),
+    };
+  }
+
+  async _synthesizeWithPiper({ text, voiceHint, outPath }) {
+    const payload = String(text || '').trim();
+    if (!payload) throw new Error('TTS text is empty');
+
+    const config = this._resolvePiperConfig(voiceHint);
+    if (!config.model) {
+      throw new Error('TTS_PIPER_MODEL is required when TTS provider is piper');
+    }
+    const args = ['--model', config.model, '--output_file', outPath];
+    if (config.config) args.push('--config', config.config);
+    if (config.speaker != null) args.push('--speaker', String(config.speaker));
+    if (config.noiseScale != null) args.push('--noise_scale', String(config.noiseScale));
+    if (config.noiseW != null) args.push('--noise_w', String(config.noiseW));
+    if (config.lengthScale != null) args.push('--length_scale', String(config.lengthScale));
+    if (config.sentenceSilence != null) args.push('--sentence_silence', String(config.sentenceSilence));
+    await this._runProcess(config.binary, args, null, payload);
   }
 
   async _synthesizeWithOpenAICompatible({ text, voiceHint, outPath }) {

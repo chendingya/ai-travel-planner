@@ -81,7 +81,7 @@
   - 多提供商自动降级，提高可靠性
 - **图片生成**：魔搭社区 ModelScope（免费额度充足）
 - **MCP 工具**：支持火车票查询、高德地图、Bing 搜索等工具调用
-- **语音合成**：TTS 服务（支持本地 Windows TTS）
+- **语音合成**：TTS 服务（支持本地 Piper 中文语音，兼容 Windows 本地 TTS）
 - **架构模式**：分层架构（Controller → Service → LangChain → AI Providers）
 
 ### 数据库与认证

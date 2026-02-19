@@ -1,9 +1,20 @@
-version: '3.8'
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_BASE: ${NODE_BASE:-node:18-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        PIPER_MODEL_URL: ${PIPER_MODEL_URL-}
+        PIPER_MODEL_CONFIG_URL: ${PIPER_MODEL_CONFIG_URL-}
     image: ai-travel-planner:latest
     ports:
       - "3002:3002"
     env_file:
       - backend/.env
+    environment:
+      TTS_PROVIDER: ${TTS_PROVIDER:-piper}
+      TTS_PIPER_MODEL: ${TTS_PIPER_MODEL:-/app/runtime/piper/model.onnx}
+      TTS_PIPER_CONFIG: ${TTS_PIPER_CONFIG:-/app/runtime/piper/model.onnx.json}
+      TTS_PIPER_MODEL_URL: ${TTS_PIPER_MODEL_URL:-}
+      TTS_PIPER_CONFIG_URL: ${TTS_PIPER_CONFIG_URL:-}
