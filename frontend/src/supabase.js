@@ -28,7 +28,7 @@ const createRealClient = (supabaseUrl, supabaseAnonKey) => {
 			auth: {
 				autoRefreshToken: true,
 				persistSession: true,
-				detectSessionInUrl: true
+				detectSessionInUrl: false
 			}
 		})
 	} catch (error) {
@@ -37,7 +37,7 @@ const createRealClient = (supabaseUrl, supabaseAnonKey) => {
 			auth: {
 				autoRefreshToken: true,
 				persistSession: true,
-				detectSessionInUrl: true
+				detectSessionInUrl: false
 			}
 		})
 	}
@@ -85,6 +85,9 @@ const createMockClient = () => ({
 	auth: {
 		getSession: async () => ({ data: { session: null }, error: null }),
 		signInWithOtp: async () => ({ error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
+		signInWithPassword: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
+		signUp: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
+		setSession: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
 		signOut: async () => ({ error: null }),
 		onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
 	},

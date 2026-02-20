@@ -25,6 +25,7 @@ module.exports = (controllers) => {
   const postcardRoutes = require('./postcardRoutes')(postcardController);
   const shareRoutes = require('./shareRoutes')(shareController);
   const promptRoutes = require('./promptRoutes')(promptController);
+  const authRoutes = require('./authRoutes')();
 
   // 注册路由
   router.use('/', planRoutes);
@@ -34,6 +35,7 @@ module.exports = (controllers) => {
   router.use('/', postcardRoutes);
   router.use('/', shareRoutes);
   router.use('/', promptRoutes);
+  router.use('/', authRoutes);
 
   return router;
 };
