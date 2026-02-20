@@ -36,6 +36,7 @@ pnpm-debug.log*
 # Environment files
 .env*
 !.env.example
+backend/modelscope.env
 
 # IDE and editor files
 .vscode/
