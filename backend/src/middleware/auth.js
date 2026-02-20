@@ -34,6 +34,9 @@ const requireAuth = async (req, res, next) => {
   try {
     const { data, error } = await supabase.auth.getUser(token);
     if (error || !data?.user) {
+      const reason = error?.message || 'unknown';
+      const prefix = token.slice(0, 12);
+      console.warn(`[auth] invalid token reason="${reason}" token_prefix="${prefix}" token_len=${token.length}`);
       return res.status(401).json({ message: '无效的认证令牌', error: '无效的认证令牌' });
     }
     req.user = data.user;
