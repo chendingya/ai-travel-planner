@@ -8,6 +8,7 @@ import HandbookView from '../views/HandbookView.vue';
 import PlaylistView from '../views/PlaylistView.vue';
 import ShareContentView from '../views/ShareContentView.vue';
 import AIChatView from '../views/AIChatView.vue';
+import ProfileView from '../views/ProfileView.vue';
 
 const routes = [
   {
@@ -63,6 +64,12 @@ const routes = [
     name: 'AIChat',
     component: AIChatView,
     meta: { title: 'AI面对面对话 - 拾光绘旅' }
+  },
+  {
+    path: '/profile',
+    name: 'Profile',
+    component: ProfileView,
+    meta: { title: '个人中心 - 拾光绘旅' }
   },
   {
     path: '/:pathMatch(.*)*',

@@ -1,5 +1,6 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -10,10 +11,26 @@ const USER_SCAN_PAGE_SIZE = 200;
 const USER_SCAN_MAX_PAGES = 20;
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || supabaseServiceKey;
 
 const authConfigReady = Boolean(supabaseUrl && supabaseServiceKey && supabaseAnonKey);
+
+const decodeJwtRole = (token) => {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length < 2) return '';
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const normalized = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=');
+    const json = Buffer.from(normalized, 'base64').toString('utf8');
+    const parsed = JSON.parse(json);
+    return typeof parsed.role === 'string' ? parsed.role : '';
+  } catch (error) {
+    return '';
+  }
+};
+
+const isServiceRoleKey = decodeJwtRole(supabaseServiceKey) === 'service_role';
 
 const adminSupabase = authConfigReady
   ? createClient(supabaseUrl, supabaseServiceKey, {
@@ -50,6 +67,25 @@ const ensureAuthConfig = (res) => {
   if (authConfigReady) return true;
   res.status(500).json({ error: '认证服务未配置完成，请联系管理员' });
   return false;
+};
+
+const ensureServiceRoleConfig = (res) => {
+  if (!authConfigReady) {
+    res.status(500).json({ error: '认证服务未配置完成，请联系管理员' });
+    return false;
+  }
+  if (!isServiceRoleKey) {
+    res.status(500).json({
+      error: '后端缺少 Supabase service_role 密钥，无法注册用户',
+    });
+    return false;
+  }
+  return true;
+};
+
+const normalizeOptionalText = (value) => {
+  if (value == null) return '';
+  return String(value).trim();
 };
 
 const findUserByUsername = async (username) => {
@@ -100,7 +136,7 @@ const mapAuthErrorStatus = (error) => {
 
 module.exports = () => {
   router.post('/auth/register', async (req, res) => {
-    if (!ensureAuthConfig(res)) return;
+    if (!ensureServiceRoleConfig(res)) return;
 
     const username = normalizeUsername(req.body?.username);
     const email = normalizeEmail(req.body?.email);
@@ -160,6 +196,7 @@ module.exports = () => {
         ...toAuthPayload(signInData, username),
       });
     } catch (error) {
+      console.error('[auth/register] failed:', error?.message || error);
       return res.status(500).json({ error: '注册失败，请稍后重试' });
     }
   });
@@ -203,7 +240,101 @@ module.exports = () => {
         ...toAuthPayload(data, username),
       });
     } catch (error) {
+      console.error('[auth/login] failed:', error?.message || error);
       return res.status(500).json({ error: '登录失败，请稍后重试' });
+    }
+  });
+
+  router.patch('/auth/profile', requireAuth, async (req, res) => {
+    if (!ensureServiceRoleConfig(res)) return;
+
+    const nextUsername = normalizeUsername(req.body?.username);
+    const currentPassword = String(req.body?.currentPassword || '');
+    const nextPassword = String(req.body?.newPassword || '');
+    const hasUsernameUpdate = normalizeOptionalText(req.body?.username) !== '';
+    const hasPasswordUpdate = normalizeOptionalText(req.body?.newPassword) !== '';
+
+    if (!hasUsernameUpdate && !hasPasswordUpdate) {
+      return res.status(400).json({ error: '请至少填写一个要更新的字段' });
+    }
+
+    if (hasUsernameUpdate && !USERNAME_REGEX.test(nextUsername)) {
+      return res.status(400).json({ error: '账号仅支持 3-32 位字母、数字或下划线' });
+    }
+
+    if (hasPasswordUpdate) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: '修改密码时必须填写当前密码' });
+      }
+      if (nextPassword.length < MIN_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: `新密码长度不能少于 ${MIN_PASSWORD_LENGTH} 位` });
+      }
+    }
+
+    try {
+      const userId = req.user?.id;
+      const currentEmail = normalizeEmail(req.user?.email);
+      if (!userId || !currentEmail) {
+        return res.status(401).json({ error: '登录状态无效，请重新登录' });
+      }
+
+      if (hasUsernameUpdate) {
+        const sameUserName = normalizeUsername(req.user?.user_metadata?.username).toLowerCase();
+        if (nextUsername.toLowerCase() !== sameUserName) {
+          const usernameUser = await findUserByUsername(nextUsername);
+          if (usernameUser && usernameUser.id !== userId) {
+            return res.status(409).json({ error: '该账号已被占用' });
+          }
+        }
+      }
+
+      if (hasPasswordUpdate) {
+        const { error: verifyError } = await authSupabase.auth.signInWithPassword({
+          email: currentEmail,
+          password: currentPassword,
+        });
+        if (verifyError) {
+          return res.status(401).json({ error: '当前密码错误' });
+        }
+      }
+
+      const updatePayload = {};
+      if (hasUsernameUpdate) {
+        updatePayload.user_metadata = {
+          ...(req.user?.user_metadata || {}),
+          username: nextUsername,
+        };
+      }
+      if (hasPasswordUpdate) {
+        updatePayload.password = nextPassword;
+      }
+
+      const { data, error } = await adminSupabase.auth.admin.updateUserById(userId, updatePayload);
+      if (error) {
+        return res.status(mapAuthErrorStatus(error)).json({
+          error: error.message || '更新失败，请稍后重试',
+        });
+      }
+
+      const updatedUser = data?.user || null;
+      const username = updatedUser
+        ? extractUsername(updatedUser)
+        : hasUsernameUpdate
+          ? nextUsername
+          : extractUsername(req.user);
+
+      return res.json({
+        message: '账号信息更新成功',
+        user: {
+          id: userId,
+          email: currentEmail,
+          username: username || null,
+        },
+        passwordUpdated: hasPasswordUpdate,
+      });
+    } catch (error) {
+      console.error('[auth/profile] failed:', error?.message || error);
+      return res.status(500).json({ error: '更新失败，请稍后重试' });
     }
   });
 

@@ -40,6 +40,12 @@
               </template>
               AI面对面
             </t-menu-item>
+            <t-menu-item value="/profile" @click="handleNavigate('/profile')">
+              <template #icon>
+                <t-icon name="user" />
+              </template>
+              个人中心
+            </t-menu-item>
           </t-menu>
         </div>
 

@@ -84,10 +84,13 @@ const initSupabase = async () => {
 const createMockClient = () => ({
 	auth: {
 		getSession: async () => ({ data: { session: null }, error: null }),
+		getUser: async () => ({ data: { user: null }, error: null }),
+		refreshSession: async () => ({ data: { session: null, user: null }, error: null }),
 		signInWithOtp: async () => ({ error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
 		signInWithPassword: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
 		signUp: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
 		setSession: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
+		updateUser: async () => ({ data: { user: null }, error: { message: 'Supabase 服务暂不可用，请稍后再试' } }),
 		signOut: async () => ({ error: null }),
 		onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
 	},

@@ -1,11 +1,26 @@
 <template>
   <div class="auth-container">
-    <t-dropdown v-if="user" trigger="click">
+    <t-skeleton v-if="!authReady" class="auth-entry-skeleton" :loading="true" animation="gradient">
+      <template #content>
+        <div class="auth-skeleton-pill"></div>
+      </template>
+    </t-skeleton>
+
+    <t-dropdown
+      v-else-if="user"
+      trigger="click"
+      placement="bottom-right"
+      :popup-props="{ overlayInnerClassName: 'auth-dropdown-popup', overlayInnerStyle: { marginTop: '8px' } }"
+    >
       <t-button variant="text" class="user-button">
         <t-icon name="user" />
         <span class="user-email">{{ userDisplayName }}</span>
       </t-button>
       <t-dropdown-menu>
+        <t-dropdown-item @click="goToProfile">
+          <t-icon name="user" />
+          个人中心
+        </t-dropdown-item>
         <t-dropdown-item @click="handleLogout">
           <t-icon name="logout" />
           退出登录
@@ -13,7 +28,7 @@
       </t-dropdown-menu>
     </t-dropdown>
 
-    <t-button v-else theme="primary" variant="outline" @click="showLoginDialog = true">
+    <t-button v-else theme="primary" class="login-entry-button" @click="openDialog('login')">
       <t-icon name="login" />
       登录
     </t-button>
@@ -22,22 +37,26 @@
       v-model:visible="showLoginDialog"
       :header="authMode === 'login' ? '账号登录' : '账号注册'"
       :footer="false"
-      width="400px"
+      width="min(460px, 92vw)"
       :z-index="10000"
       attach="body"
     >
       <div class="auth-mode-switch">
         <t-button
-          :theme="authMode === 'login' ? 'primary' : 'default'"
-          :variant="authMode === 'login' ? 'base' : 'outline'"
+          class="mode-button"
+          :class="{ 'mode-button--active': authMode === 'login' }"
+          theme="default"
+          variant="text"
           size="small"
           @click="switchMode('login')"
         >
           登录
         </t-button>
         <t-button
-          :theme="authMode === 'register' ? 'primary' : 'default'"
-          :variant="authMode === 'register' ? 'base' : 'outline'"
+          class="mode-button"
+          :class="{ 'mode-button--active': authMode === 'register' }"
+          theme="default"
+          variant="text"
           size="small"
           @click="switchMode('register')"
         >
@@ -45,9 +64,10 @@
         </t-button>
       </div>
 
-      <t-form @submit="handleSubmit">
+      <t-form class="auth-form" label-align="top" @submit="handleSubmit">
         <template v-if="authMode === 'login'">
-          <t-form-item label="账号/邮箱">
+          <div class="auth-field">
+            <div class="auth-field-label">账号/邮箱</div>
             <t-input
               v-model="loginIdentifier"
               placeholder="请输入账号或邮箱"
@@ -58,8 +78,13 @@
                 <t-icon name="user" />
               </template>
             </t-input>
-          </t-form-item>
-          <t-form-item label="密码">
+            <div class="field-feedback" :class="{ 'is-visible': showLoginIdentifierError }">
+              {{ showLoginIdentifierError ? loginIdentifierError : '' }}
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <div class="auth-field-label">密码</div>
             <t-input
               v-model="loginPassword"
               type="password"
@@ -71,11 +96,15 @@
                 <t-icon name="lock-on" />
               </template>
             </t-input>
-          </t-form-item>
+            <div class="field-feedback" :class="{ 'is-visible': showLoginPasswordError }">
+              {{ showLoginPasswordError ? loginPasswordError : '' }}
+            </div>
+          </div>
         </template>
 
         <template v-else>
-          <t-form-item label="账号">
+          <div class="auth-field">
+            <div class="auth-field-label">账号</div>
             <t-input
               v-model="registerUsername"
               placeholder="仅支持字母、数字、下划线（3-32位）"
@@ -86,8 +115,13 @@
                 <t-icon name="user" />
               </template>
             </t-input>
-          </t-form-item>
-          <t-form-item label="邮箱">
+            <div class="field-feedback" :class="{ 'is-visible': showRegisterUsernameError }">
+              {{ showRegisterUsernameError ? registerUsernameError : '' }}
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <div class="auth-field-label">邮箱</div>
             <t-input
               v-model="registerEmail"
               placeholder="请输入您的邮箱"
@@ -98,8 +132,13 @@
                 <t-icon name="mail" />
               </template>
             </t-input>
-          </t-form-item>
-          <t-form-item label="密码">
+            <div class="field-feedback" :class="{ 'is-visible': showRegisterEmailError }">
+              {{ showRegisterEmailError ? registerEmailError : '' }}
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <div class="auth-field-label">密码</div>
             <t-input
               v-model="registerPassword"
               type="password"
@@ -111,8 +150,13 @@
                 <t-icon name="lock-on" />
               </template>
             </t-input>
-          </t-form-item>
-          <t-form-item label="确认密码">
+            <div class="field-feedback" :class="{ 'is-visible': showRegisterPasswordError }">
+              {{ showRegisterPasswordError ? registerPasswordError : '' }}
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <div class="auth-field-label">确认密码</div>
             <t-input
               v-model="confirmPassword"
               type="password"
@@ -124,14 +168,17 @@
                 <t-icon name="lock-on" />
               </template>
             </t-input>
-          </t-form-item>
+            <div class="field-feedback" :class="{ 'is-visible': showConfirmPasswordError }">
+              {{ showConfirmPasswordError ? confirmPasswordError : '' }}
+            </div>
+          </div>
         </template>
 
-        <t-form-item>
-          <t-button theme="primary" type="submit" block size="large" :loading="loading">
+        <div class="auth-submit">
+          <t-button theme="primary" type="submit" block size="large" :loading="loading" :disabled="!canSubmit">
             {{ submitButtonText }}
           </t-button>
-        </t-form-item>
+        </div>
         <div class="login-tips">
           <t-icon name="info-circle" size="14px" />
           {{ authMode === 'login' ? '使用账号或邮箱 + 密码直接登录' : '注册后可直接使用账号密码登录' }}
@@ -143,10 +190,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { supabase } from '../supabase';
+import { useRouter } from 'vue-router';
 import { MessagePlugin } from 'tdesign-vue-next';
+import { useAuthState } from '../composables/useAuthState';
 
-const user = ref(null);
+const router = useRouter();
+const { user, authReady, refreshAuthState, setSessionFromServer, signOutAndSync } = useAuthState();
+
 const showLoginDialog = ref(false);
 const loading = ref(false);
 const authMode = ref('login');
@@ -158,8 +208,8 @@ const registerUsername = ref('');
 const registerEmail = ref('');
 const registerPassword = ref('');
 const confirmPassword = ref('');
-
-let authSubscription = null;
+const loginSubmitTried = ref(false);
+const registerSubmitTried = ref(false);
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
@@ -175,8 +225,64 @@ const submitButtonText = computed(() => {
   return authMode.value === 'login' ? '登录' : '注册并登录';
 });
 
+const loginIdentifierError = computed(() => {
+  const value = loginIdentifier.value.trim();
+  if (!value) return '请输入账号或邮箱';
+  return '';
+});
+
+const loginPasswordError = computed(() => {
+  if (!loginPassword.value) return '请输入密码';
+  return '';
+});
+
+const registerUsernameError = computed(() => {
+  const value = registerUsername.value.trim();
+  if (!value) return '请输入账号';
+  if (!USERNAME_REGEX.test(value)) return '账号仅支持 3-32 位字母、数字或下划线';
+  return '';
+});
+
+const registerEmailError = computed(() => {
+  const value = registerEmail.value.trim().toLowerCase();
+  if (!value) return '请输入邮箱';
+  if (!EMAIL_REGEX.test(value)) return '请输入有效的邮箱地址';
+  return '';
+});
+
+const registerPasswordError = computed(() => {
+  if (!registerPassword.value) return '请输入密码';
+  if (registerPassword.value.length < 6) return '密码长度不能少于 6 位';
+  return '';
+});
+
+const confirmPasswordError = computed(() => {
+  if (!confirmPassword.value) return '请再次输入密码';
+  if (registerPassword.value !== confirmPassword.value) return '两次输入的密码不一致';
+  return '';
+});
+
+const canLoginSubmit = computed(() => !loginIdentifierError.value && !loginPasswordError.value);
+const canRegisterSubmit = computed(
+  () => !registerUsernameError.value && !registerEmailError.value && !registerPasswordError.value && !confirmPasswordError.value,
+);
+const canSubmit = computed(() => (authMode.value === 'login' ? canLoginSubmit.value : canRegisterSubmit.value));
+const showLoginIdentifierError = computed(() => Boolean((loginSubmitTried.value || loginIdentifier.value) && loginIdentifierError.value));
+const showLoginPasswordError = computed(() => Boolean((loginSubmitTried.value || loginPassword.value) && loginPasswordError.value));
+const showRegisterUsernameError = computed(() => Boolean((registerSubmitTried.value || registerUsername.value) && registerUsernameError.value));
+const showRegisterEmailError = computed(() => Boolean((registerSubmitTried.value || registerEmail.value) && registerEmailError.value));
+const showRegisterPasswordError = computed(() => Boolean((registerSubmitTried.value || registerPassword.value) && registerPasswordError.value));
+const showConfirmPasswordError = computed(() => Boolean((registerSubmitTried.value || confirmPassword.value) && confirmPasswordError.value));
+
 const switchMode = (mode) => {
   authMode.value = mode;
+  loginSubmitTried.value = false;
+  registerSubmitTried.value = false;
+};
+
+const openDialog = (mode = 'login') => {
+  switchMode(mode === 'register' ? 'register' : 'login');
+  showLoginDialog.value = true;
 };
 
 const requestAuth = async (url, payload) => {
@@ -195,16 +301,6 @@ const requestAuth = async (url, payload) => {
   return result;
 };
 
-const applySession = async (session) => {
-  if (!session?.access_token || !session?.refresh_token) return false;
-  const { error } = await supabase.auth.setSession({
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-  });
-  if (error) throw error;
-  return true;
-};
-
 const handleLogin = async () => {
   const identifier = loginIdentifier.value.trim();
   const password = loginPassword.value;
@@ -221,7 +317,7 @@ const handleLogin = async () => {
       password,
     });
 
-    const hasSession = await applySession(data.session);
+    const hasSession = await setSessionFromServer(data.session);
     if (!hasSession) {
       throw new Error('登录会话无效，请稍后重试');
     }
@@ -229,6 +325,7 @@ const handleLogin = async () => {
     showLoginDialog.value = false;
     loginIdentifier.value = '';
     loginPassword.value = '';
+    loginSubmitTried.value = false;
   } catch (error) {
     MessagePlugin.error(error.message || '登录失败，请稍后再试');
   } finally {
@@ -274,7 +371,7 @@ const handleRegister = async () => {
       password,
     });
 
-    const hasSession = await applySession(data.session);
+    const hasSession = await setSessionFromServer(data.session);
     if (hasSession) {
       MessagePlugin.success(data.message || '注册并登录成功');
       showLoginDialog.value = false;
@@ -283,12 +380,14 @@ const handleRegister = async () => {
       authMode.value = 'login';
       loginIdentifier.value = email;
       loginPassword.value = '';
+      loginSubmitTried.value = false;
     }
 
     registerUsername.value = '';
     registerEmail.value = '';
     registerPassword.value = '';
     confirmPassword.value = '';
+    registerSubmitTried.value = false;
   } catch (error) {
     MessagePlugin.error(error.message || '注册失败，请稍后再试');
   } finally {
@@ -299,48 +398,57 @@ const handleRegister = async () => {
 const handleSubmit = async (ctx) => {
   if (ctx && typeof ctx.preventDefault === 'function') ctx.preventDefault();
   if (authMode.value === 'login') {
+    loginSubmitTried.value = true;
+    if (!canLoginSubmit.value) {
+      MessagePlugin.warning(loginIdentifierError.value || loginPasswordError.value || '请完善登录信息');
+      return;
+    }
     await handleLogin();
   } else {
+    registerSubmitTried.value = true;
+    if (!canRegisterSubmit.value) {
+      MessagePlugin.warning(
+        registerUsernameError.value
+        || registerEmailError.value
+        || registerPasswordError.value
+        || confirmPasswordError.value
+        || '请完善注册信息',
+      );
+      return;
+    }
     await handleRegister();
   }
 };
 
 const handleLogout = async () => {
-  try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    user.value = null;
+  const { error } = await signOutAndSync();
+  if (!error) {
     MessagePlugin.success('已退出登录');
-  } catch (error) {
-    MessagePlugin.error('退出登录失败');
+    return;
+  }
+  try {
+    MessagePlugin.warning(`服务器退出失败，已清理本地登录态：${error.message || '未知错误'}`);
+  } catch (_) {
+    MessagePlugin.warning('服务器退出失败，已清理本地登录态');
   }
 };
 
-const checkUser = async () => {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    user.value = session?.user || null;
-  } catch (error) {
-    console.warn('获取用户会话失败:', error.message);
-    user.value = null;
-  }
+const goToProfile = () => {
+  router.push('/profile');
+};
+
+const handleExternalOpenAuthDialog = (event) => {
+  const mode = event?.detail?.mode === 'register' ? 'register' : 'login';
+  openDialog(mode);
 };
 
 onMounted(() => {
-  checkUser();
-
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-    user.value = session?.user || null;
-  });
-
-  authSubscription = data?.subscription || null;
+  refreshAuthState();
+  window.addEventListener('open-auth-dialog', handleExternalOpenAuthDialog);
 });
 
 onUnmounted(() => {
-  if (authSubscription && typeof authSubscription.unsubscribe === 'function') {
-    authSubscription.unsubscribe();
-  }
-  authSubscription = null;
+  window.removeEventListener('open-auth-dialog', handleExternalOpenAuthDialog);
 });
 </script>
 
@@ -348,14 +456,43 @@ onUnmounted(() => {
 .auth-container {
   display: flex;
   align-items: center;
+  min-height: 40px;
+}
+
+.auth-entry-skeleton {
+  display: inline-flex;
+  width: 136px;
+}
+
+.auth-skeleton-pill {
+  width: 136px;
+  height: 40px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .user-button {
   display: inline-flex !important;
   align-items: center !important;
   gap: 8px !important;
-  padding: 8px 16px !important;
-  height: auto !important;
+  padding: 8px 14px !important;
+  height: 40px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(0, 132, 255, 0.18) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 6px 18px rgba(15, 37, 70, 0.08) !important;
+}
+
+.user-button:hover {
+  border-color: rgba(0, 132, 255, 0.36) !important;
+  box-shadow: 0 10px 22px rgba(0, 132, 255, 0.18) !important;
+}
+
+.login-entry-button {
+  height: 40px !important;
+  padding: 0 18px !important;
+  border-radius: 999px !important;
+  box-shadow: 0 8px 18px rgba(0, 132, 255, 0.25) !important;
 }
 
 .user-button :deep(.t-button__text) {
@@ -385,10 +522,71 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(245, 247, 255, 0.95);
+  border: 1px solid rgba(0, 132, 255, 0.12);
 }
 
-.auth-mode-switch :deep(.t-button) {
+.mode-button {
   flex: 1;
+  height: 36px;
+  border-radius: 10px;
+  color: #4b587c;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.mode-button--active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #0084ff, #1677ff) !important;
+  box-shadow: 0 8px 16px rgba(0, 132, 255, 0.25) !important;
+}
+
+.auth-form :deep(.t-form__item) {
+  margin-bottom: 0;
+}
+
+.auth-field {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.auth-field-label {
+  margin-bottom: 8px;
+  line-height: 1.4;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.auth-field :deep(.t-input) {
+  display: flex;
+  width: 100% !important;
+}
+
+.auth-field :deep(.t-input__wrap) {
+  width: 100%;
+}
+
+.auth-submit {
+  margin-top: 4px;
+  width: 100%;
+}
+
+.field-feedback {
+  margin-top: 6px;
+  min-height: 20px;
+  font-size: 12px;
+  color: transparent;
+  width: 100%;
+  line-height: 20px;
+  word-break: break-word;
+  transition: color 0.12s ease;
+}
+
+.field-feedback.is-visible {
+  color: #e34d59;
 }
 
 .login-tips {
@@ -403,8 +601,29 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
+  .auth-entry-skeleton,
+  .auth-skeleton-pill {
+    width: 112px;
+  }
+
   .user-email {
     max-width: 100px;
   }
+}
+
+.auth-container :deep(.t-dropdown) {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+</style>
+
+<style>
+.auth-dropdown-popup {
+  border-radius: 14px !important;
+}
+
+.auth-dropdown-popup .t-dropdown__menu {
+  min-width: 140px;
 }
 </style>

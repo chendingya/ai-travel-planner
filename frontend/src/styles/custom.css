@@ -274,11 +274,10 @@ button .t-button__text > * {
   border-radius: 12px !important;
 }
 
-/* 下拉菜单样式 - 修复双层问题 */
-.t-popup,
+/* 下拉菜单样式 - 仅作用于弹层内容，避免触发器与外层容器双重边框 */
 .t-select-popup,
-.t-dropdown,
-.t-menu {
+.t-popup__content.t-dropdown,
+.t-popup__content.t-menu {
   background: white !important;
   border: 1px solid rgba(0, 0, 0, 0.12) !important;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
