@@ -947,19 +947,26 @@ const getPlan = async () => {
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let finalData = null;
+    let receivedStepEvent = false;
+
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const handleEvent = async (event, data) => {
       if (event === 'step') {
+        receivedStepEvent = true;
         applyStreamStep(data);
         return;
       }
       if (event === 'meta') {
         if (Array.isArray(data?.tools) && data.tools.length) {
+          setProgressAt('tooling');
           processLogs.value.push({
             type: 'info',
             title: '可用工具',
             content: data.tools.join('、')
           });
+        } else {
+          setProgressAt('synthesis');
         }
         return;
       }
@@ -1006,6 +1013,16 @@ const getPlan = async () => {
 
     if (!finalData) {
       throw new Error('生成方案失败');
+    }
+
+    // 某些场景下模型不会产生 tool step 事件，补齐阶段进度，避免直接跳到完成。
+    if (!receivedStepEvent) {
+      setProgressAt('tooling');
+      await wait(220);
+      setProgressAt('synthesis');
+      await wait(220);
+      setProgressAt('draft');
+      await wait(220);
     }
 
     await applyPlanResult(finalData);

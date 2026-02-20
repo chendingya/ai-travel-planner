@@ -7,9 +7,32 @@ import App from './App.vue'
 import router from './router'
 import './styles/custom.css'
 import { loadAmapScript } from './config/amap.js'
+import { supabase } from './supabase'
 
 if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
   const nativeFetch = window.fetch.bind(window);
+  let pendingTokenPromise = null;
+
+  const resolveUrl = (input) => {
+    try {
+      if (input instanceof Request) {
+        return new URL(input.url, window.location.origin);
+      }
+      if (typeof input === 'string') {
+        return new URL(input, window.location.origin);
+      }
+      if (input instanceof URL) {
+        return input;
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  const shouldAttachAuth = (url) => {
+    if (!url) return false;
+    return url.origin === window.location.origin && url.pathname.startsWith('/api/');
+  };
+
   const extractBearerToken = (authorization) => {
     if (typeof authorization !== 'string') return '';
     const trimmed = authorization.trim();
@@ -18,10 +41,37 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
     return trimmed;
   };
 
-  window.fetch = (input, init = {}) => {
+  const getSessionAccessToken = async () => {
+    if (pendingTokenPromise) return pendingTokenPromise;
+    pendingTokenPromise = Promise.resolve()
+      .then(async () => {
+        const { data } = await supabase.auth.getSession();
+        return data?.session?.access_token || '';
+      })
+      .catch(() => '')
+      .finally(() => {
+        pendingTokenPromise = null;
+      });
+    return pendingTokenPromise;
+  };
+
+  window.fetch = async (input, init = {}) => {
     try {
+      const url = resolveUrl(input);
       const requestHeaders = input instanceof Request ? input.headers : undefined;
-      const headers = new Headers(init.headers || requestHeaders);
+      const headers = new Headers(requestHeaders);
+      if (init.headers) {
+        const initHeaders = new Headers(init.headers);
+        initHeaders.forEach((value, key) => headers.set(key, value));
+      }
+
+      if (shouldAttachAuth(url) && !headers.get('Authorization')) {
+        const accessToken = await getSessionAccessToken();
+        if (accessToken) {
+          headers.set('Authorization', `Bearer ${accessToken}`);
+        }
+      }
+
       const authHeader = headers.get('Authorization');
       const bearerToken = extractBearerToken(authHeader);
       if (authHeader && !headers.get('X-Authorization')) {
