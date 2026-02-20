@@ -8,6 +8,27 @@ import router from './router'
 import './styles/custom.css'
 import { loadAmapScript } from './config/amap.js'
 
+if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    try {
+      const requestHeaders = input instanceof Request ? input.headers : undefined;
+      const headers = new Headers(init.headers || requestHeaders);
+      const authHeader = headers.get('Authorization');
+      if (authHeader && !headers.get('X-Authorization')) {
+        // 某些托管网关会过滤 Authorization，额外附带一份自定义头兜底。
+        headers.set('X-Authorization', authHeader);
+      }
+      return nativeFetch(input, {
+        ...init,
+        headers,
+      });
+    } catch (_) {
+      return nativeFetch(input, init);
+    }
+  };
+}
+
 const app = createApp(App)
 const pinia = createPinia()
 app.use(pinia)

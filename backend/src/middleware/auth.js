@@ -1,11 +1,28 @@
 const supabase = require('../supabase');
 
+const parseTokenFromHeaderValue = (value) => {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (trimmed.toLowerCase().startsWith('bearer ')) {
+    return trimmed.slice(7).trim();
+  }
+  return trimmed;
+};
+
 const extractToken = (req) => {
-  const header = req.headers?.authorization;
-  if (typeof header !== 'string') return '';
-  const trimmed = header.trim();
-  if (!trimmed.toLowerCase().startsWith('bearer ')) return '';
-  return trimmed.slice(7).trim();
+  const candidates = [
+    req.headers?.authorization,
+    req.headers?.['x-authorization'],
+    req.headers?.['x-access-token'],
+    req.headers?.['x-auth-token'],
+  ];
+
+  for (const headerValue of candidates) {
+    const token = parseTokenFromHeaderValue(headerValue);
+    if (token) return token;
+  }
+  return '';
 };
 
 const requireAuth = async (req, res, next) => {

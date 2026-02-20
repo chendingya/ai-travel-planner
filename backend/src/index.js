@@ -125,8 +125,8 @@ app.get('/health', (req, res) => {
  *         description: 配置脚本
  */
 app.get('/config.js', (req, res) => {
-  const supabaseUrl = process.env.SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY || '';
   const amapKey = process.env.AMAP_KEY || '';
   const amapSecurityCode = process.env.AMAP_SECURITY_CODE || '';
   const amapRestKey = process.env.AMAP_REST_KEY || '';
