@@ -357,6 +357,9 @@ const chatServiceConfig = () => ({
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
+        'X-Supabase-Access-Token': session.access_token,
+        'X-Access-Token': session.access_token,
+        'X-Auth-Token': session.access_token,
       },
       body: JSON.stringify({
         message: params?.prompt || '',
