@@ -3,9 +3,7 @@ const { DynamicStructuredTool } = require('@langchain/core/tools');
 
 class MCPService {
   constructor(config = {}) {
-    const sseUrlRaw =
-      process.env.MCP_12306_URL ||
-      'https://mcp.api-inference.modelscope.net/27e6b8cbcea047/sse';
+    const sseUrlRaw = process.env.MCP_12306_URL;
     const authorizationRaw = process.env.MCP_12306_AUTHORIZATION || '';
     const tokenRaw = process.env.MCP_12306_TOKEN || '';
     const authorizationTmp = authorizationRaw ? authorizationRaw.trim() : (tokenRaw ? tokenRaw.trim() : '');
@@ -100,6 +98,16 @@ class MCPService {
           if (typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
           if (typeof cfg.command === 'string') entry.command = cfg.command;
           if (Array.isArray(cfg.args)) entry.args = cfg.args;
+          if (cfg.cwd != null) entry.cwd = String(cfg.cwd);
+          if (cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)) {
+            const envObj = {};
+            for (const [k, v] of Object.entries(cfg.env)) {
+              if (typeof k !== 'string' || !k.trim()) continue;
+              if (v == null) continue;
+              envObj[k] = String(v);
+            }
+            if (Object.keys(envObj).length) entry.env = envObj;
+          }
         } else {
           const url = normalizeUrl(cfg.url);
           if (!url) continue;
@@ -116,28 +124,34 @@ class MCPService {
     const normalizedFromConfig = normalizeServers(serversFromConfig);
     const normalizedFromEnv = normalizeServers(serversFromEnv);
 
-    const defaults = {
-      '12306-mcp': {
-        transport: 'sse',
-        url: normalizeUrl(sseUrlRaw),
+    const defaults = {};
+    const normalized12306 = normalizeUrl(sseUrlRaw);
+    const normalizedBing = normalizeUrl(bingUrlRaw);
+    const normalizedAmap = normalizeUrl(amapUrlRaw);
+
+    if (normalized12306) {
+      defaults['12306-mcp'] = {
+        transport: inferTransport(normalized12306, 'sse'),
+        url: normalized12306,
         headers: authorization ? { Authorization: authorization } : undefined,
-      },
-      'bing-cn-mcp-server': {
-        transport: inferTransport(bingUrlRaw, 'sse'),
-        url: normalizeUrl(bingUrlRaw),
+      };
+    }
+    if (normalizedBing) {
+      defaults['bing-cn-mcp-server'] = {
+        transport: inferTransport(normalizedBing, 'sse'),
+        url: normalizedBing,
         headers: bingAuthorization ? { Authorization: bingAuthorization } : undefined,
-      },
-      'amap-maps': {
-        transport: inferTransport(amapUrlRaw, 'sse'),
-        url: normalizeUrl(amapUrlRaw),
+      };
+    }
+    if (normalizedAmap) {
+      defaults['amap-maps'] = {
+        transport: inferTransport(normalizedAmap, 'sse'),
+        url: normalizedAmap,
         headers: amapAuthorization ? { Authorization: amapAuthorization } : undefined,
-      },
-    };
+      };
+    }
 
     const merged = { ...defaults, ...normalizedFromEnv, ...normalizedFromConfig };
-    if (!merged['12306-mcp'] || typeof merged['12306-mcp'] !== 'object') {
-      merged['12306-mcp'] = defaults['12306-mcp'];
-    }
     this.servers = merged;
 
     this._sdk = null;
@@ -216,9 +230,31 @@ class MCPService {
 
     let transport = null;
     if (cfg.transport === 'stdio') {
+      const env = {
+        // SDK stdio transport only inherits a minimal env set by default.
+        // Pass through selected project vars required by local MCP servers.
+        ...((cfg.env && typeof cfg.env === 'object') ? cfg.env : {}),
+      };
+      const passEnvKeys = [
+        'AMAP_MAPS_API_KEY',
+        'AMAP_KEY',
+        'AMAP_REST_KEY',
+        'BING_SEARCH_API_KEY',
+        'BING_SEARCH_ENDPOINT',
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'NO_PROXY',
+      ];
+      for (const key of passEnvKeys) {
+        const value = process.env[key];
+        if (typeof value === 'string' && value.trim()) env[key] = value;
+      }
+
       transport = new sdk.StdioClientTransport({
         command: cfg.command,
         args: cfg.args || [],
+        cwd: typeof cfg.cwd === 'string' && cfg.cwd ? cfg.cwd : undefined,
+        env: Object.keys(env).length ? env : undefined,
       });
     } else if (cfg.transport === 'sse') {
       const headers = cfg.headers && typeof cfg.headers === 'object' ? cfg.headers : undefined;

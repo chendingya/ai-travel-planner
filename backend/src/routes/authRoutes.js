@@ -10,11 +10,12 @@ const MIN_PASSWORD_LENGTH = 6;
 const USER_SCAN_PAGE_SIZE = 200;
 const USER_SCAN_MAX_PAGES = 20;
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseUrl = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || supabaseServiceKey;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.PUBLIC_SUPABASE_ANON_KEY || supabaseServiceKey;
 
-const authConfigReady = Boolean(supabaseUrl && supabaseServiceKey && supabaseAnonKey);
+const baseAuthConfigReady = Boolean(supabaseUrl && supabaseAnonKey);
+const adminAuthConfigReady = Boolean(supabaseUrl && supabaseServiceKey);
 
 const decodeJwtRole = (token) => {
   try {
@@ -31,8 +32,9 @@ const decodeJwtRole = (token) => {
 };
 
 const isServiceRoleKey = decodeJwtRole(supabaseServiceKey) === 'service_role';
+const serviceRoleConfigReady = Boolean(adminAuthConfigReady && isServiceRoleKey);
 
-const adminSupabase = authConfigReady
+const adminSupabase = serviceRoleConfigReady
   ? createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
       autoRefreshToken: false,
@@ -41,7 +43,7 @@ const adminSupabase = authConfigReady
   })
   : null;
 
-const authSupabase = authConfigReady
+const authSupabase = baseAuthConfigReady
   ? createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       autoRefreshToken: false,
@@ -64,19 +66,25 @@ const extractUsername = (user) => {
 };
 
 const ensureAuthConfig = (res) => {
-  if (authConfigReady) return true;
-  res.status(500).json({ error: '认证服务未配置完成，请联系管理员' });
+  if (baseAuthConfigReady) return true;
+  res.status(503).json({ error: '认证服务未配置完成，请联系管理员' });
   return false;
 };
 
 const ensureServiceRoleConfig = (res) => {
-  if (!authConfigReady) {
-    res.status(500).json({ error: '认证服务未配置完成，请联系管理员' });
+  if (!baseAuthConfigReady) {
+    res.status(503).json({ error: '认证服务未配置完成，请联系管理员' });
     return false;
   }
-  if (!isServiceRoleKey) {
-    res.status(500).json({
-      error: '后端缺少 Supabase service_role 密钥，无法注册用户',
+  if (!adminAuthConfigReady) {
+    res.status(503).json({
+      error: '后端缺少 Supabase service_role 密钥，无法执行该操作',
+    });
+    return false;
+  }
+  if (!serviceRoleConfigReady) {
+    res.status(503).json({
+      error: '后端缺少 Supabase service_role 密钥，无法执行该操作',
     });
     return false;
   }
@@ -89,6 +97,7 @@ const normalizeOptionalText = (value) => {
 };
 
 const findUserByUsername = async (username) => {
+  if (!adminSupabase) return null;
   const target = normalizeUsername(username).toLowerCase();
   if (!target) return null;
 
@@ -218,6 +227,11 @@ module.exports = () => {
       if (isEmail(identifier)) {
         email = normalizeEmail(identifier);
       } else {
+        if (!adminSupabase) {
+          return res.status(400).json({
+            error: '当前仅支持邮箱登录，请联系管理员配置 Supabase service_role 以启用账号登录',
+          });
+        }
         username = normalizeUsername(identifier);
         const matchedUser = await findUserByUsername(username);
         if (!matchedUser?.email) {

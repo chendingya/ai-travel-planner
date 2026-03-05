@@ -37,17 +37,6 @@ function Stop-PortProcess {
     }
 }
 
-# 清理可能残留的进程
-Write-Host "🧹 检查并清理残留进程..." -ForegroundColor Yellow
-
-# 停止占用端口的进程
-Stop-PortProcess -Port 3001 -ServiceName "后端"
-Stop-PortProcess -Port 8080 -ServiceName "前端"
-
-Start-Sleep -Seconds 1
-Write-Host "✅ 进程清理完成" -ForegroundColor Green
-Write-Host ""
-
 # 检查环境变量是否配置
 Write-Host "🔍 检查配置文件..." -ForegroundColor Yellow
 
@@ -60,6 +49,43 @@ if (-not (Test-Path $backendEnv)) {
 
 Write-Host "✅ 配置文件检查通过" -ForegroundColor Green
 Write-Host "ℹ️  提示: 前端运行时配置将通过 backend/.env 中的 PUBLIC_* 变量注入" -ForegroundColor DarkCyan
+Write-Host ""
+
+function Get-BackendPortFromEnv {
+    param([string]$EnvPath, [int]$DefaultPort = 3002)
+
+    try {
+        $line = Get-Content $EnvPath | Where-Object { $_ -match '^\s*PORT\s*=' } | Select-Object -First 1
+        if ($line) {
+            $value = ($line -split '=', 2)[1].Trim()
+            $parsed = 0
+            if ([int]::TryParse($value, [ref]$parsed) -and $parsed -gt 0) {
+                return $parsed
+            }
+        }
+    } catch {
+        # 忽略错误，回退到默认端口
+    }
+
+    return $DefaultPort
+}
+
+$backendPort = Get-BackendPortFromEnv -EnvPath $backendEnv -DefaultPort 3002
+
+# 清理可能残留的进程
+Write-Host "🧹 检查并清理残留进程..." -ForegroundColor Yellow
+
+$portsToClean = @($backendPort, 8080, 3001, 3002) | Select-Object -Unique
+foreach ($port in $portsToClean) {
+    if ($port -eq 8080) {
+        Stop-PortProcess -Port $port -ServiceName "前端"
+    } else {
+        Stop-PortProcess -Port $port -ServiceName "后端"
+    }
+}
+
+Start-Sleep -Seconds 1
+Write-Host "✅ 进程清理完成" -ForegroundColor Green
 Write-Host ""
 
 # 检查 Node.js 是否安装
@@ -111,7 +137,7 @@ Write-Host "🚀 正在启动前端服务..." -ForegroundColor Cyan
 Start-Process pwsh -ArgumentList @(
     '-NoExit',
     '-Command',
-    "Set-Location '$projectRoot\frontend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 前端'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; npm run dev"
+    "Set-Location '$projectRoot\frontend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 前端'; `$env:VITE_API_PROXY_TARGET = 'http://127.0.0.1:$backendPort'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; Write-Host ('🔗 前端代理目标: ' + `$env:VITE_API_PROXY_TARGET) -ForegroundColor DarkCyan; npm run dev"
 )
 
 Write-Host ""
@@ -121,7 +147,7 @@ Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "📍 访问地址：" -ForegroundColor Cyan
 Write-Host "   前端: http://localhost:8080" -ForegroundColor White
-Write-Host "   后端: http://localhost:3001" -ForegroundColor White
+Write-Host "   后端: http://localhost:$backendPort" -ForegroundColor White
 Write-Host ""
 Write-Host "💡 提示：" -ForegroundColor Yellow
 Write-Host "   - 在新打开的终端窗口中按 Ctrl+C 可停止服务" -ForegroundColor White
