@@ -327,6 +327,14 @@ button .t-button__text > * {
   transform: translateZ(0);
 }
 
+.t-button:not(.t-button--shape-circle):not(.t-button--shape-round) {
+  border-radius: 12px !important;
+}
+
+.t-button.t-size-s:not(.t-button--shape-circle):not(.t-button--shape-round) {
+  border-radius: 10px !important;
+}
+
 .t-button,
 .glass-button {
   transition: transform 0.12s ease, box-shadow 0.2s ease;

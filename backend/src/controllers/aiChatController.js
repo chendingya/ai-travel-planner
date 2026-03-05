@@ -147,7 +147,12 @@ class AIChatController {
 
         for await (const chunk of stream) {
           if (res.writableEnded) break;
-          if (chunk) writeEvent({ type: 'text', content: String(chunk) });
+          if (!chunk) continue;
+          if (typeof chunk === 'object' && chunk.type) {
+            writeEvent(chunk);
+            continue;
+          }
+          writeEvent({ type: 'text', content: String(chunk) });
         }
         if (!res.writableEnded) res.end();
       });

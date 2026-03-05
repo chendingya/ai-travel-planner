@@ -181,6 +181,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { supabase } from '../supabase'
+import { createAIStreamEventParser } from '../utils/aiStreamEventParser'
 
 // 登录状态
 const isLoggedIn = ref(false)
@@ -247,6 +248,8 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 - **网络搜索**：获取最新旅游资讯
 
 请问有什么可以帮助您的吗？`
+const debugToolRaw = new URLSearchParams(window.location.search).get('debug_tool_raw') === '1'
+const streamEventParser = createAIStreamEventParser({ includeRaw: debugToolRaw })
 
 const toPlainText = (content) => {
   if (typeof content === 'string') return content
@@ -367,36 +370,10 @@ const chatServiceConfig = () => ({
     }
   },
   onMessage: (chunk) => {
-    const raw = chunk?.data
-    let payload = null
-    if (raw && typeof raw === 'object') {
-      payload = raw
-    } else if (typeof raw === 'string') {
-      try {
-        payload = JSON.parse(raw)
-      } catch (e) {
-        payload = { content: raw }
-      }
-    }
-    if (!payload) return null
-    if (payload?.sessionId) conversationId.value = payload.sessionId
-    const type = payload?.type || (payload?.content ? 'text' : '')
-    if (type === 'think') {
-      return {
-        type: 'thinking',
-        data: {
-          title: '思考中...',
-          text: typeof payload?.content === 'string' ? payload.content : '',
-        },
-      }
-    }
-    if (type === 'text' || typeof payload?.content === 'string') {
-      return {
-        type: 'markdown',
-        data: typeof payload?.content === 'string' ? payload.content : '',
-      }
-    }
-    return null
+    const parsed = streamEventParser.parseChunk(chunk)
+    if (!parsed) return null
+    if (parsed.sessionId) conversationId.value = parsed.sessionId
+    return parsed.content || null
   },
   onError: () => {
     MessagePlugin.error('发送消息失败，请稍后重试')
@@ -417,6 +394,7 @@ const scrollToBottom = () => {
 const handleClear = () => {
   conversationId.value = null
   shouldResetHistory.value = true
+  streamEventParser.reset()
   messages.value = [
     normalizeMessage({
       role: 'assistant',
@@ -501,6 +479,7 @@ const loadSession = async (sessionId) => {
     const historyMessages = Array.isArray(data?.messages) ? data.messages : []
     conversationId.value = sessionId
     shouldResetHistory.value = false
+    streamEventParser.reset()
     messages.value = historyMessages.length
       ? historyMessages.map(normalizeMessage)
       : [normalizeMessage({ role: 'assistant', content: '该对话暂无消息' })]
@@ -1009,6 +988,7 @@ const getAuthSession = async (tip = '') => {
   overflow-y: auto;
   padding: 16px 0;
 }
+
 
 /* t-chat-list 组件样式 */
 :deep(.t-chat-list) {
