@@ -125,7 +125,7 @@ MCP_BING_AUTHORIZATION=Bearer xxx
 
 4. **高德地图配置**
    - `PUBLIC_AMAP_KEY` 和 `PUBLIC_AMAP_REST_KEY` 必须是两个不同的 Key
-   - 详见 [高德地图配置说明](./高德地图配置说明.md)
+  - 详见 [高德地图配置说明](../integrations/高德地图配置说明.md)
 
 5. **MCP 工具配置**（可选）
    - 用于增强 AI 聊天的功能
@@ -136,7 +136,7 @@ MCP_BING_AUTHORIZATION=Bearer xxx
    - 建议在 `backend/.env` 设置：
      - `AUTH_HIDE_SESSION_IN_RESPONSE=1`
      - `AUTH_COOKIE_SECURE=false`（本地）/`true`（生产 HTTPS）
-   - 详细设计见：[认证与AI聊天安全改造说明](./认证与AI聊天安全改造说明.md)
+  - 详细设计见：[认证与AI聊天安全改造说明](../auth/认证与AI聊天安全改造说明.md)
 
 ## 验证是否成功
 
@@ -244,9 +244,9 @@ taskkill /PID <进程ID> /F
 
 ## 📚 更多文档
 
-- **[后端架构文档](./后端架构文档.md)** - 详细的系统架构设计和技术说明
-- **[部署指南](./部署指南.md)** - Docker、云平台等多种部署方式
-- **[高德地图配置说明](./高德地图配置说明.md)** - 高德地图 API 详细配置
+- **[后端架构文档](../architecture/后端架构文档.md)** - 详细的系统架构设计和技术说明
+- **[部署指南](../operations/部署指南.md)** - Docker、云平台等多种部署方式
+- **[高德地图配置说明](../integrations/高德地图配置说明.md)** - 高德地图 API 详细配置
 
 ## 🔧 进阶配置
 

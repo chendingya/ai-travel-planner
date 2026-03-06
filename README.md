@@ -2,7 +2,7 @@
 
 一个基于 AI 的智能旅行规划 Web 应用，帮助用户轻松创建个性化的旅行方案。采用现代化技术栈，提供流畅的用户体验和强大的功能。
 
-> **🚀 首次使用？** 查看 [快速开始指南 (QUICKSTART.md)](./docs/QUICKSTART.md) 快速上手！
+> **🚀 首次使用？** 查看 [快速开始指南 (QUICKSTART.md)](./docs/getting-started/QUICKSTART.md) 快速上手！
 
 ## ✨ 核心功能
 
@@ -194,7 +194,7 @@
    - **Web端(JS API)** Key → 配置到 `PUBLIC_AMAP_KEY`（JS SDK 加载用）
    - **Web服务** Key → 配置到 `PUBLIC_AMAP_REST_KEY`（POI/地理编码等 REST 接口用）
 3. 如需开启安全防护，可同时复制 JS Key 对应的 `securityJsCode` 配置到 `PUBLIC_AMAP_SECURITY_CODE`
-4. 详细配置说明见：`docs/高德地图配置说明.md`
+4. 详细配置说明见：`docs/integrations/高德地图配置说明.md`
 
 ### 🎯 方式一：一键启动（Windows 推荐）
 
@@ -216,7 +216,7 @@
    cp .env.example .env
    ```
 
-   编辑 `.env` 文件，详细配置示例见 [QUICKSTART.md](./QUICKSTART.md)
+   编辑 `.env` 文件，详细配置示例见 [QUICKSTART.md](./docs/getting-started/QUICKSTART.md)
 
    > 前端运行时会通过 `/config.js` 自动读取 `PUBLIC_*` 变量，无需再在 `frontend/.env` 中重复配置。
 
@@ -401,7 +401,7 @@ AI_IMAGE_PROVIDERS_JSON='[
 - 确认 `backend/.env` 中的 PUBLIC_AMAP_KEY / PUBLIC_AMAP_SECURITY_CODE 已配置
 - 检查浏览器控制台是否有地图加载错误
 - 确认 API Key 类型为 "Web端(JS API)"
-- 查看 `docs/高德地图配置说明.md` 获取详细配置说明
+- 查看 `docs/integrations/高德地图配置说明.md` 获取详细配置说明
 
 **Q: 地理编码或 POI 搜索报错 `USERKEY_PLAT_NOMATCH`？**
 - 确认已在 `.env` 中配置 `PUBLIC_AMAP_REST_KEY`
@@ -518,19 +518,20 @@ AI_IMAGE_PROVIDERS_JSON='[
 - [LangChain 文档](https://js.langchain.com/)
 
 ### 项目文档
-- [测试用例清单](./docs/测试用例清单.md) - 完整的功能测试用例，覆盖所有核心功能
-- [后端架构文档](./docs/后端架构文档.md) - 详细的系统架构设计和技术说明
-- [部署指南](./docs/部署指南.md) - 多种部署方式的详细指南
-- [快速开始指南](./docs/QUICKSTART.md) - 5分钟快速上手
-- [高德地图配置说明](./docs/高德地图配置说明.md)
+- [文档总览](./docs/README.md) - docs 目录分类入口与阅读建议
+- [测试用例清单](./docs/testing/测试用例清单.md) - 完整的功能测试用例，覆盖所有核心功能
+- [后端架构文档](./docs/architecture/后端架构文档.md) - 详细的系统架构设计和技术说明
+- [部署指南](./docs/operations/部署指南.md) - 多种部署方式的详细指南
+- [快速开始指南](./docs/getting-started/QUICKSTART.md) - 5分钟快速上手
+- [高德地图配置说明](./docs/integrations/高德地图配置说明.md)
 
 ### 功能文档
-- [数字人及AI面对面对话功能说明](./docs/数字人及AI面对面对话功能说明.md)
-- [AI 速记卡片功能说明](./docs/AI速记卡片功能说明.md)
-- [听见山河BGM歌单功能说明](./docs/听见山河BGM歌单功能说明.md)
-- [尺素锦书旅游明信片功能说明](./docs/尺素锦书旅游明信片功能说明.md)
-- [妙笔云章分享文案功能说明](./docs/妙笔云章分享文案功能说明.md)
-- [生图提示词完整说明](./docs/生图提示词完整说明.md)
+- [数字人及AI面对面对话功能说明](./docs/features/数字人及AI面对面对话功能说明.md)
+- [AI 速记卡片功能说明](./docs/features/AI速记卡片功能说明.md)
+- [听见山河BGM歌单功能说明](./docs/features/听见山河BGM歌单功能说明.md)
+- [尺素锦书旅游明信片功能说明](./docs/features/尺素锦书旅游明信片功能说明.md)
+- [妙笔云章分享文案功能说明](./docs/features/妙笔云章分享文案功能说明.md)
+- [生图提示词完整说明](./docs/features/生图提示词完整说明.md)
 
 ---
 
@@ -562,7 +563,7 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 ### 配置 AI 提供商
 
-在 `backend/.env` 中通过 `AI_TEXT_PROVIDERS_JSON` 和 `AI_IMAGE_PROVIDERS_JSON` 配置多个提供商，详细配置示例见 [QUICKSTART.md](./QUICKSTART.md)
+在 `backend/.env` 中通过 `AI_TEXT_PROVIDERS_JSON` 和 `AI_IMAGE_PROVIDERS_JSON` 配置多个提供商，详细配置示例见 [QUICKSTART.md](./docs/getting-started/QUICKSTART.md)
 
 ### 自定义样式
 
