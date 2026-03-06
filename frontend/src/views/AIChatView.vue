@@ -1,28 +1,31 @@
 <template>
-  <div class="ai-chat-view">
-    <!-- 页面标题 -->
-    <div class="page-header">
-      <div class="header-content">
-        <div class="title-section">
-          <h1 class="page-title">AI面对面对话</h1>
-          <p class="page-subtitle">与智能旅行助手进行对话，获取专业的旅行建议</p>
-        </div>
-        <div class="header-actions">
-          <!-- 历史会话按钮 -->
-          <t-button 
-            variant="outline" 
-            @click="toggleHistoryPanel" 
-            shape="round" 
-            class="history-btn"
-            :class="{ 'is-active': showHistoryPanel }"
-          >
-            <template #icon><t-icon name="time" /></template>
-            历史记录
-          </t-button>
-          
-          <!-- 工具模式开关 -->
-          <div 
-            class="tool-mode-toggle" 
+  <div class="ai-chat-view" ref="viewRootRef" :style="{ '--view-height': `${viewHeight}px` }">
+
+    <!-- 主体区域 -->
+    <div class="main-content">
+      <!-- 左侧栏 -->
+      <div class="history-panel">
+        <div class="sidebar-top">
+          <h1 class="sidebar-title">AI面对面对话</h1>
+          <p class="sidebar-subtitle">与智能旅行助手进行对话，获取专业的旅行建议</p>
+          <div class="sidebar-actions">
+            <t-button
+              variant="outline"
+              @click="toggleHistoryPanel"
+              shape="round"
+              class="history-btn"
+              :class="{ 'is-active': showHistoryPanel }"
+            >
+              <template #icon><t-icon name="time" /></template>
+              历史记录
+            </t-button>
+            <t-button variant="outline" @click="handleClear" shape="round" class="new-chat-btn">
+              <template #icon><t-icon name="refresh" /></template>
+              新对话
+            </t-button>
+          </div>
+          <div
+            class="tool-mode-toggle sidebar-tool-toggle"
             :class="{ 'is-active': enableTools }"
             @click="!isLoading && (enableTools = !enableTools)"
             :title="enableTools ? '已启用MCP工具（火车票查询、网络搜索）' : '启用MCP工具可查询火车票、搜索网络'"
@@ -35,144 +38,135 @@
               <span class="toggle-text">{{ enableTools ? '工具模式' : '普通对话' }}</span>
             </div>
           </div>
-
-          <t-button variant="outline" @click="handleClear" shape="round" class="new-chat-btn">
-            <template #icon><t-icon name="refresh" /></template>
-            新对话
-          </t-button>
         </div>
-      </div>
-    </div>
 
-    <!-- 主体区域 -->
-    <div class="main-content">
-      <!-- 历史会话侧边栏 -->
-      <transition name="slide-left">
-        <div v-if="showHistoryPanel" class="history-panel">
+        <template v-if="showHistoryPanel">
           <div class="history-header">
             <h3>历史对话</h3>
             <div class="history-header-actions">
-              <t-button v-if="isLoggedIn" variant="text" size="small" @click="handleManualRefreshSessions" :loading="isLoadingSessions" title="刷新">
+                <t-button v-if="isLoggedIn" variant="text" size="small" @click="handleManualRefreshSessions" :loading="isLoadingSessions" title="刷新">
                 <t-icon name="refresh" />
               </t-button>
-              <t-button variant="text" size="small" @click="showHistoryPanel = false" title="关闭">
-                <t-icon name="close" />
+            </div>
+          </div>
+
+          <div class="history-body">
+            <!-- 未登录提示 -->
+            <div v-if="!isLoggedIn" class="history-login-tip">
+              <t-icon name="user-circle" size="48px" />
+              <p class="login-tip-title">登录后查看历史记录</p>
+              <p class="login-tip-desc">登录账号后，您的对话记录将被保存，方便随时查看</p>
+              <t-button theme="primary" @click="goToLogin">
+                <template #icon><t-icon name="login" style="color: white;" /></template>
+                立即登录
               </t-button>
             </div>
-          </div>
-          
-          <!-- 未登录提示 -->
-          <div v-if="!isLoggedIn" class="history-login-tip">
-            <t-icon name="user-circle" size="48px" />
-            <p class="login-tip-title">登录后查看历史记录</p>
-            <p class="login-tip-desc">登录账号后，您的对话记录将被保存，方便随时查看</p>
-            <t-button theme="primary" @click="goToLogin">
-              <template #icon><t-icon name="login" style="color: white;" /></template>
-              立即登录
-            </t-button>
-          </div>
-          
-          <!-- 已登录 - 显示历史列表 -->
-          <template v-else>
-            <div class="history-list" v-if="sessions.length > 0">
-              <div 
-                v-for="session in displayedSessions" 
-                :key="session.conversation_id"
-                class="history-item"
-                :class="{ 'is-active': session.conversation_id === conversationId }"
-              >
-                <div class="history-item-content" @click="loadSession(session.conversation_id)">
-                  <div class="history-item-title">{{ session.title }}</div>
-                  <div class="history-item-meta">
-                    <span>{{ session.message_count }} 条消息</span>
-                    <span>{{ formatDate(session.updated_at) }}</span>
+
+            <!-- 已登录 - 显示历史列表 -->
+            <template v-else>
+              <div class="history-list" v-if="displayedSessions.length > 0" ref="historyListRef" @scroll="handleHistoryScroll">
+                <div class="history-virtual-spacer" :style="{ height: `${virtualPaddingTop}px` }"></div>
+                <div
+                  v-for="session in visibleSessions"
+                  :key="session.conversation_id"
+                  class="history-item"
+                  :class="{
+                    'is-active': session.conversation_id === conversationId,
+                    'is-appearing': hasSessionAppearAnimation(session.conversation_id),
+                  }"
+                  :style="sessionAppearStyle(session.conversation_id)"
+                >
+                  <div class="history-item-content" @click="loadSession(session.conversation_id)">
+                    <div class="history-item-title">{{ session.title }}</div>
+                    <div class="history-item-meta">
+                      <span>{{ session.message_count }} 条消息</span>
+                      <span>{{ formatDate(session.updated_at) }}</span>
+                    </div>
                   </div>
+                  <t-button
+                    variant="text"
+                    size="small"
+                    class="history-item-delete"
+                    @click.stop="confirmDeleteSession(session.conversation_id)"
+                    title="删除此对话"
+                  >
+                    <t-icon name="delete" />
+                  </t-button>
                 </div>
-                <t-button 
-                  variant="text" 
-                  size="small" 
-                  class="history-item-delete"
-                  @click.stop="confirmDeleteSession(session.conversation_id)"
-                  title="删除此对话"
-                >
-                  <t-icon name="delete" />
-                </t-button>
+                <div class="history-virtual-spacer" :style="{ height: `${virtualPaddingBottom}px` }"></div>
+                <div class="history-load-more" v-if="hasMoreSessions || isLoadingMoreSessions">
+                  <t-loading v-if="isLoadingMoreSessions" size="small" />
+                  <span>{{ isLoadingMoreSessions ? '正在加载更多历史对话...' : '下拉到底加载更多' }}</span>
+                </div>
               </div>
-              <!-- 展开更多按钮 -->
-              <div v-if="sessions.length > initialDisplayCount" class="history-expand">
-                <t-button 
-                  variant="text" 
-                  size="small" 
-                  block
-                  @click="showAllSessions = !showAllSessions"
-                >
-                  <t-icon :name="showAllSessions ? 'chevron-up' : 'chevron-down'" />
-                  {{ showAllSessions ? '收起' : `展开更多 (${sessions.length - initialDisplayCount})` }}
-                </t-button>
+              <div v-else class="history-empty">
+                <t-icon name="chat" size="32px" />
+                <p>暂无历史对话</p>
               </div>
-            </div>
-            <div v-else class="history-empty">
-              <t-icon name="chat" size="32px" />
-              <p>暂无历史对话</p>
-            </div>
-          </template>
+            </template>
+          </div>
+        </template>
+        <div v-else class="history-collapsed-placeholder">
+          <t-icon name="time" />
+          <span>历史记录已收起</span>
         </div>
-      </transition>
+      </div>
 
       <!-- 聊天区域 -->
       <div class="chat-container">
-      <div class="chat-list-wrapper">
-        <t-chatbot
-          ref="chatBotRef"
-          :default-messages="messages"
-          :chat-service-config="chatServiceConfig"
-          :sender-props="{
-            placeholder: currentPlaceholder,
-            disabled: isLoading || !isLoggedIn,
-          }"
-          :list-props="{
-            autoScroll: true,
-            defaultScrollTo: 'bottom',
-          }"
-          :message-props="messageProps"
-          @message-change="handleMessageChange"
-        />
-      </div>
+        <div class="chat-list-wrapper">
+          <t-chatbot
+            ref="chatBotRef"
+            :default-messages="messages"
+            :chat-service-config="chatServiceConfig"
+            :sender-props="{
+              placeholder: currentPlaceholder,
+              disabled: isLoading || !isLoggedIn,
+            }"
+            :list-props="{
+              autoScroll: true,
+              defaultScrollTo: 'bottom',
+            }"
+            :message-props="messageProps"
+            @message-change="handleMessageChange"
+          />
+        </div>
 
-      <!-- 快捷问题区域 -->
-      <div v-if="messages.length <= 1" class="quick-questions">
-        <div class="quick-header">
-          <t-icon name="lightbulb" />
-          <span>快捷问题</span>
-          <t-tag v-if="enableTools" theme="primary" size="small" variant="light">
-            <t-icon name="tools" size="12px" style="margin-right: 4px;" />
-            工具增强
-          </t-tag>
-        </div>
-        
-        <!-- 工具模式提示 -->
-        <div v-if="!enableTools" class="tool-mode-tip" @click="enableTools = true">
-          <t-icon name="tips" />
-          <span>开启<strong>工具模式</strong>可查询火车票、搜索网络等实时信息</span>
-          <t-icon name="chevron-right" size="16px" />
-        </div>
-        
-        <div class="quick-buttons">
-          <t-button
-            v-for="question in currentQuickQuestions"
-            :key="question"
-            variant="outline"
-            size="small"
-            :disabled="isLoading"
-            @click="handleQuickQuestion(question)"
-            class="quick-btn"
-          >
-            {{ question }}
-          </t-button>
-        </div>
-      </div>
+        <!-- 快捷问题区域 -->
+        <div v-if="messages.length <= 1" class="quick-questions">
+          <div class="quick-header">
+            <div class="quick-title-row">
+              <t-icon name="lightbulb" />
+              <span>快捷问题</span>
+              <t-tag v-if="enableTools" theme="primary" size="small" variant="light">
+                <t-icon name="tools" size="12px" style="margin-right: 4px;" />
+                工具增强
+              </t-tag>
+            </div>
+          </div>
 
-    </div>
+          <div v-if="!enableTools" class="tool-mode-tip" @click="enableTools = true">
+            <t-icon name="tips" />
+            <span>开启<strong>工具模式</strong>可查询火车票、搜索网络等实时信息</span>
+            <t-icon name="chevron-right" size="16px" />
+          </div>
+
+          <div class="quick-buttons">
+            <t-button
+              v-for="question in currentQuickQuestions"
+              :key="question"
+              variant="outline"
+              size="small"
+              :disabled="isLoading"
+              @click="handleQuickQuestion(question)"
+              class="quick-btn"
+            >
+              {{ question }}
+            </t-button>
+          </div>
+        </div>
+
+      </div>
     </div>
   </div>
 </template>
@@ -205,25 +199,52 @@ const userAvatar = 'https://tdesign.gtimg.com/site/avatar.jpg'
 const assistantAvatar = 'https://tdesign.gtimg.com/site/chat-avatar.png'
 
 const chatBotRef = ref(null)
+const viewRootRef = ref(null)
+const viewHeight = ref(window.innerHeight)
 
 // 历史会话相关
-const showHistoryPanel = ref(false)
+const showHistoryPanel = ref(true)
 const sessions = ref([])
 const isLoadingSessions = ref(false)
+const isLoadingMoreSessions = ref(false)
+const hasMoreSessions = ref(true)
+const sessionsPage = ref(0)
+const sessionsPageSize = 20
 const sessionsLoadedOnce = ref(false)
-const showAllSessions = ref(false)
-const initialDisplayCount = 5
 const isLoadingHistory = ref(false)
 const loadingHistoryId = ref(null)
+const historyListRef = ref(null)
+const historyScrollTop = ref(0)
+const historyListHeight = ref(0)
+const historyItemHeight = 84
+const historyOverscan = 6
+const sessionAppearDelayMap = ref({})
 let authSubscription = null
+let historyResizeObserver = null
 
 // 计算显示的会话列表
-const displayedSessions = computed(() => {
-  if (showAllSessions.value || sessions.value.length <= initialDisplayCount) {
-    return sessions.value
-  }
-  return sessions.value.slice(0, initialDisplayCount)
+const displayedSessions = computed(() => sessions.value)
+
+const virtualVisibleCount = computed(() => {
+  if (!historyListHeight.value) return 20
+  return Math.ceil(historyListHeight.value / historyItemHeight) + historyOverscan * 2
 })
+
+const virtualStartIndex = computed(() => {
+  const base = Math.floor(historyScrollTop.value / historyItemHeight) - historyOverscan
+  return Math.max(0, base)
+})
+
+const virtualEndIndex = computed(() => {
+  return Math.min(displayedSessions.value.length, virtualStartIndex.value + virtualVisibleCount.value)
+})
+
+const visibleSessions = computed(() => {
+  return displayedSessions.value.slice(virtualStartIndex.value, virtualEndIndex.value)
+})
+
+const virtualPaddingTop = computed(() => virtualStartIndex.value * historyItemHeight)
+const virtualPaddingBottom = computed(() => Math.max(0, (displayedSessions.value.length - virtualEndIndex.value) * historyItemHeight))
 
 // 会话管理
 const conversationId = ref(null)
@@ -241,7 +262,7 @@ const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您�
 - **行程规划**：路线设计、时间安排
 - **实用建议**：交通指南、住宿推荐
 
-**提示**：开启右上角的"工具模式"，我还可以：
+**提示**：开启"工具模式"，我还可以：
 - **查询火车票**：查询12306列车信息
 - **天气查询**：查询目的地实时天气
 - **地点搜索**：搜索景点、餐厅、酒店
@@ -383,6 +404,87 @@ const chatServiceConfig = () => ({
   },
 })
 
+const updateViewHeight = () => {
+  const top = viewRootRef.value?.getBoundingClientRect?.().top || 0
+  viewHeight.value = Math.max(420, Math.floor(window.innerHeight - top))
+}
+
+const updateHistoryListMetrics = () => {
+  historyListHeight.value = historyListRef.value?.clientHeight || 0
+}
+
+const appendSessionAppearAnimations = (list) => {
+  const ids = Array.isArray(list)
+    ? list
+        .map((s) => (s && typeof s.conversation_id === 'string' ? s.conversation_id : ''))
+        .filter(Boolean)
+    : []
+  if (!ids.length) return
+
+  const next = { ...sessionAppearDelayMap.value }
+  ids.forEach((id, index) => {
+    next[id] = index * 55
+  })
+  sessionAppearDelayMap.value = next
+
+  const removeAfterMs = 1400 + ids.length * 60
+  setTimeout(() => {
+    const current = { ...sessionAppearDelayMap.value }
+    ids.forEach((id) => {
+      delete current[id]
+    })
+    sessionAppearDelayMap.value = current
+  }, removeAfterMs)
+}
+
+const hasSessionAppearAnimation = (conversationId) => {
+  return sessionAppearDelayMap.value[conversationId] != null
+}
+
+const sessionAppearStyle = (conversationId) => {
+  const delay = sessionAppearDelayMap.value[conversationId]
+  if (delay == null) return undefined
+  return { '--appear-delay': `${delay}ms` }
+}
+
+const loadMoreSessionsIfNeeded = () => {
+  if (!showHistoryPanel.value) return
+  if (!isLoggedIn.value) return
+  if (isLoadingSessions.value || isLoadingMoreSessions.value) return
+  if (!hasMoreSessions.value) return
+  loadSessions({ append: true })
+}
+
+const handleHistoryScroll = (event) => {
+  const target = event?.target
+  historyScrollTop.value = target?.scrollTop || 0
+  if (!target) return
+  const distanceToBottom = target.scrollHeight - (target.scrollTop + target.clientHeight)
+  if (distanceToBottom <= 36) {
+    loadMoreSessionsIfNeeded()
+  }
+}
+
+const resetHistoryVirtualScroll = () => {
+  historyScrollTop.value = 0
+  if (historyListRef.value) {
+    historyListRef.value.scrollTop = 0
+  }
+}
+
+const setupHistoryResizeObserver = () => {
+  if (historyResizeObserver) {
+    historyResizeObserver.disconnect()
+    historyResizeObserver = null
+  }
+  if (!historyListRef.value) return
+  historyResizeObserver = new ResizeObserver(() => {
+    updateHistoryListMetrics()
+  })
+  historyResizeObserver.observe(historyListRef.value)
+  updateHistoryListMetrics()
+}
+
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
@@ -406,59 +508,93 @@ const handleClear = () => {
 }
 
 // 加载会话列表
-const loadSessions = async () => {
+const loadSessions = async ({ append = false, forceRefresh = false } = {}) => {
   // 未登录时不加载历史记录
   if (!isLoggedIn.value) {
     sessions.value = []
+    hasMoreSessions.value = false
+    sessionsPage.value = 0
     return
   }
   if (isLoadingSessions.value) return
+  if (append && !hasMoreSessions.value) return
   
   isLoadingSessions.value = true
+  isLoadingMoreSessions.value = append
   try {
     const session = await getAuthSession()
     if (!session) {
       sessions.value = []
+      hasMoreSessions.value = false
+      sessionsPage.value = 0
       return
     }
-    const response = await fetch('/api/ai-chat/sessions', {
+    if (forceRefresh) {
+      sessionsPage.value = 0
+      hasMoreSessions.value = true
+      sessionAppearDelayMap.value = {}
+    }
+
+    const nextPage = append ? sessionsPage.value + 1 : 1
+    const response = await fetch(`/api/ai-chat/sessions?page=${nextPage}&page_size=${sessionsPageSize}`, {
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },
     })
     if (response.ok) {
       const data = await response.json()
-      sessions.value = data.sessions || (Array.isArray(data) ? data : [])
+      const incoming = Array.isArray(data?.sessions) ? data.sessions : (Array.isArray(data) ? data : [])
+      const hasMore = data?.pagination?.hasMore
+      if (append) {
+        const existing = new Set(sessions.value.map((s) => s?.conversation_id).filter(Boolean))
+        const mergedIncoming = incoming.filter((s) => !existing.has(s?.conversation_id))
+        sessions.value = [...sessions.value, ...mergedIncoming]
+        if (mergedIncoming.length) appendSessionAppearAnimations(mergedIncoming)
+      } else {
+        sessions.value = incoming
+      }
+      sessionsPage.value = nextPage
+      hasMoreSessions.value = typeof hasMore === 'boolean' ? hasMore : incoming.length >= sessionsPageSize
       sessionsLoadedOnce.value = true
+      await nextTick()
+      setupHistoryResizeObserver()
     }
   } catch (error) {
     console.error('加载会话列表失败:', error)
   } finally {
     isLoadingSessions.value = false
+    isLoadingMoreSessions.value = false
   }
 }
 
 const handleManualRefreshSessions = (e) => {
   if (e && e.isTrusted === false) return
-  loadSessions()
+  loadSessions({ append: false, forceRefresh: true })
 }
 
 const toggleHistoryPanel = async () => {
   const next = !showHistoryPanel.value
   showHistoryPanel.value = next
-  if (!next) return
+  if (!next) {
+    if (historyResizeObserver) {
+      historyResizeObserver.disconnect()
+      historyResizeObserver = null
+    }
+    historyListHeight.value = 0
+    return
+  }
+  await nextTick()
+  setupHistoryResizeObserver()
+  resetHistoryVirtualScroll()
   if (!isLoggedIn.value) return
-  if (sessionsLoadedOnce.value) return
-  await loadSessions()
+  if (sessionsLoadedOnce.value && sessions.value.length > 0) return
+  await loadSessions({ append: false, forceRefresh: true })
 }
 
 // 加载指定会话的历史记录
 const loadSession = async (sessionId) => {
   if (isLoadingHistory.value) return
-  if (sessionId === conversationId.value) {
-    showHistoryPanel.value = false
-    return
-  }
+  if (sessionId === conversationId.value) return
   
   isLoadingHistory.value = true
   loadingHistoryId.value = sessionId
@@ -484,7 +620,6 @@ const loadSession = async (sessionId) => {
       ? historyMessages.map(normalizeMessage)
       : [normalizeMessage({ role: 'assistant', content: '该对话暂无消息' })]
     chatBotRef.value?.setMessages?.(messages.value, 'replace')
-    showHistoryPanel.value = false
     
     await nextTick()
     scrollToBottom()
@@ -538,7 +673,7 @@ const deleteSession = async (sessionId) => {
       if (sessionId === conversationId.value) {
         conversationId.value = null
         shouldResetHistory.value = true
-        messages.value = [{ role: 'assistant', content: defaultGreeting }]
+        messages.value = [normalizeMessage({ role: 'assistant', content: defaultGreeting })]
       }
       
       MessagePlugin.success('对话已删除')
@@ -578,6 +713,9 @@ const formatDate = (dateStr) => {
 // 页面加载时检查登录状态并获取会话列表
 onMounted(async () => {
   await checkLoginStatus()
+  await nextTick()
+  updateViewHeight()
+  window.addEventListener('resize', updateViewHeight)
   
   // 监听登录状态变化
   authSubscription = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -585,6 +723,9 @@ onMounted(async () => {
     currentUser.value = session?.user || null
     if (!session) {
       sessions.value = []
+      hasMoreSessions.value = false
+      sessionsPage.value = 0
+      sessionAppearDelayMap.value = {}
       sessionsLoadedOnce.value = false
       return
     }
@@ -592,17 +733,30 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', updateViewHeight)
   const sub = authSubscription?.data?.subscription
   if (sub && typeof sub.unsubscribe === 'function') sub.unsubscribe()
   authSubscription = null
+  if (historyResizeObserver) {
+    historyResizeObserver.disconnect()
+    historyResizeObserver = null
+  }
 })
 
 watch(isLoggedIn, async (loggedIn) => {
   if (!loggedIn) return
   if (!showHistoryPanel.value) return
-  if (sessionsLoadedOnce.value) return
-  await loadSessions()
+  if (sessionsLoadedOnce.value && sessions.value.length > 0) return
+  await loadSessions({ append: false, forceRefresh: true })
 })
+
+watch(
+  () => sessions.value.length,
+  async () => {
+    await nextTick()
+    updateHistoryListMetrics()
+  }
+)
 
 // 快捷问题
 const handleQuickQuestion = (question) => {
@@ -619,12 +773,10 @@ const goToLogin = () => {
   for (const btn of buttons) {
     if (btn.textContent.includes('登录') && !btn.textContent.includes('立即')) {
       btn.click()
-      showHistoryPanel.value = false
       return
     }
   }
   MessagePlugin.info('请点击右上角的"登录"按钮进行登录')
-  showHistoryPanel.value = false
 }
 
 const getAuthSession = async (tip = '') => {
@@ -645,9 +797,11 @@ const getAuthSession = async (tip = '') => {
 
 <style scoped>
 .ai-chat-view {
-  min-height: 100vh;
+  height: var(--view-height);
+  min-height: 420px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: linear-gradient(135deg, #f5f7fa 0%, #e4ecfb 100%);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -657,15 +811,17 @@ const getAuthSession = async (tip = '') => {
   flex: 1;
   display: flex;
   position: relative;
+  min-height: 0;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 /* 历史会话侧边栏 */
 .history-panel {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 280px;
+  position: relative;
+  flex: 0 0 320px;
+  width: 320px;
+  height: 100%;
   background: rgba(255, 255, 255, 0.98);
   backdrop-filter: blur(20px);
   border-right: 1px solid rgba(0, 0, 0, 0.08);
@@ -676,11 +832,49 @@ const getAuthSession = async (tip = '') => {
   box-shadow: 4px 0 20px rgba(0, 0, 0, 0.08);
 }
 
+.sidebar-top {
+  flex: none;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #1d1d1f;
+}
+
+.sidebar-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #86868b;
+  line-height: 1.4;
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar-actions .history-btn,
+.sidebar-actions .new-chat-btn {
+  flex: 1;
+}
+
+.sidebar-tool-toggle {
+  width: 100%;
+}
+
 .history-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 14px 16px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
@@ -697,21 +891,77 @@ const getAuthSession = async (tip = '') => {
   gap: 4px;
 }
 
+.history-collapsed-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.history-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .history-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
   padding: 8px;
+}
+
+.history-virtual-spacer {
+  width: 100%;
+  flex: none;
+}
+
+.history-load-more {
+  min-height: 36px;
+  padding: 8px 10px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #7b8598;
+  font-size: 12px;
 }
 
 .history-item {
   display: flex;
   align-items: center;
   padding: 8px 12px;
+  min-height: 76px;
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
   margin-bottom: 4px;
   gap: 8px;
+}
+
+.history-item.is-appearing {
+  opacity: 0;
+  transform: translateY(10px) scale(0.985);
+  animation: historyItemAppear 380ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: var(--appear-delay, 0ms);
+}
+
+@keyframes historyItemAppear {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .history-item:hover {
@@ -757,16 +1007,6 @@ const getAuthSession = async (tip = '') => {
 
 .history-item:hover .history-item-delete {
   opacity: 1;
-}
-
-.history-expand {
-  padding: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
-}
-
-.history-expand .t-button {
-  color: #0066cc;
-  font-size: 13px;
 }
 
 .history-empty {
@@ -827,61 +1067,6 @@ const getAuthSession = async (tip = '') => {
   background: rgba(0, 102, 204, 0.1);
   border-color: #0066cc;
   color: #0066cc;
-}
-
-/* 侧边栏动画 */
-.slide-left-enter-active,
-.slide-left-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-
-.slide-left-enter-from,
-.slide-left-leave-to {
-  transform: translateX(-100%);
-  opacity: 0;
-}
-
-/* 页面头部 */
-.page-header {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 16px 32px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-.header-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.title-section {
-  flex: 1;
-}
-
-.page-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1d1d1f;
-  margin: 0 0 4px 0;
-}
-
-.page-subtitle {
-  font-size: 14px;
-  color: #86868b;
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
 }
 
 /* 工具模式开关 */
@@ -973,20 +1158,40 @@ const getAuthSession = async (tip = '') => {
 
 /* 聊天区域 */
 .chat-container {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
-  padding: 24px 20px;
+  padding: 0 20px 16px;
+  overflow: hidden;
 }
 
 /* 消息列表容器 */
 .chat-list-wrapper {
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+:deep(.t-chatbot) {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.t-chatbot__list) {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px 0;
+}
+
+:deep(.t-chatbot__footer) {
+  flex: none;
 }
 
 
@@ -1000,6 +1205,7 @@ const getAuthSession = async (tip = '') => {
 /* t-chat 组件样式 */
 :deep(.t-chat) {
   flex: 1;
+  min-height: 0;
   background: transparent;
 }
 
@@ -1073,19 +1279,29 @@ const getAuthSession = async (tip = '') => {
   background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  padding: 16px 20px;
-  margin-bottom: 16px;
+  padding: 12px 14px;
+  margin-top: 10px;
   border: 1px solid rgba(255, 255, 255, 0.5);
+  flex: none;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .quick-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
   color: #666;
   font-size: 13px;
   font-weight: 600;
+}
+
+.quick-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 工具模式提示 */
@@ -1120,7 +1336,7 @@ const getAuthSession = async (tip = '') => {
 .quick-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .quick-btn {
@@ -1156,27 +1372,38 @@ const getAuthSession = async (tip = '') => {
 
 /* 响应式 */
 @media (max-width: 768px) {
-  .page-header {
-    padding: 12px 16px;
+  .ai-chat-view {
+    min-height: 560px;
   }
-  
-  .header-content {
+
+  .main-content {
     flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
   }
-  
-  .header-actions {
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  
+
   .chat-container {
-    padding: 12px;
+    padding: 0 12px 12px;
+    max-width: none;
   }
-  
+
   .history-panel {
+    position: relative;
+    height: 300px;
     width: 100%;
+    flex: none;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  .sidebar-title {
+    font-size: 20px;
+  }
+
+  .sidebar-subtitle {
+    font-size: 12px;
+  }
+
+  .quick-questions {
+    max-height: 200px;
   }
 }
 </style>

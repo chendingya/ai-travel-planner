@@ -194,11 +194,18 @@ class AIChatController {
     try {
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const pageRaw = Number(req.query?.page);
+      const pageSizeRaw = Number(req.query?.page_size || req.query?.pageSize);
+      const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+      const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, Math.floor(pageSizeRaw)) : 20;
+      const offset = (page - 1) * pageSize;
       res.locals.aiMeta = { mcp: false, providers: [] };
       const sessions = await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/sessions.list', debug }, () =>
-        this.aiChatService.getSessions()
+        this.aiChatService.getSessions({ offset, limit: pageSize })
       );
-      const mapped = (Array.isArray(sessions) ? sessions : [])
+      const source = Array.isArray(sessions?.sessions) ? sessions.sessions : (Array.isArray(sessions) ? sessions : []);
+      const hasMore = typeof sessions?.hasMore === 'boolean' ? sessions.hasMore : source.length >= pageSize;
+      const mapped = source
         .map((s) => {
           const message_count = typeof s.message_count === 'number'
             ? s.message_count
@@ -214,7 +221,14 @@ class AIChatController {
           };
         })
         .filter((s) => typeof s.message_count === 'number' && s.message_count > 0);
-      res.json({ sessions: mapped });
+      res.json({
+        sessions: mapped,
+        pagination: {
+          page,
+          pageSize,
+          hasMore,
+        },
+      });
     } catch (error) {
       console.error('Get sessions error:', error);
       const msg = this.errorMessage(error);

@@ -1147,13 +1147,33 @@ class AIChatService {
   /**
    * 获取会话列表
    */
-  async getSessions() {
+  async getSessions(options = {}) {
+    const limitRaw = Number(options?.limit);
+    const offsetRaw = Number(options?.offset);
+    const paged = Number.isFinite(limitRaw) && limitRaw > 0;
+    const limit = paged ? Math.min(100, Math.floor(limitRaw)) : null;
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
+    const requestSize = paged ? limit + 1 : null;
+    const withPagination = (query) => {
+      if (!paged) return query;
+      return query.range(offset, offset + requestSize - 1);
+    };
+    const finalize = (rows) => {
+      const list = Array.isArray(rows) ? rows : [];
+      if (!paged) return list;
+      const hasMore = list.length > limit;
+      const sessions = hasMore ? list.slice(0, limit) : list;
+      return { sessions, hasMore };
+    };
+
     try {
       const primary = await this.withRetry(async () => {
-        const result = await this.supabase
+        let query = this.supabase
           .from('ai_chat_sessions')
           .select('*')
           .order('updated_at', { ascending: false });
+        query = withPagination(query);
+        const result = await query;
 
         if (!result?.error) return result;
         if (result.error.code === 'PGRST205' || result.error.code === '42703') return result;
@@ -1161,13 +1181,15 @@ class AIChatService {
         throw result.error;
       });
 
-      if (!primary.error) return primary.data;
+      if (!primary.error) return finalize(primary.data);
       if (primary.error.code === '42703') {
         const fallbackOrder = await this.withRetry(async () => {
-          const result = await this.supabase
+          let query = this.supabase
             .from('ai_chat_sessions')
             .select('*')
             .order('created_at', { ascending: false });
+          query = withPagination(query);
+          const result = await query;
 
           if (!result?.error) return result;
           if (result.error.code === 'PGRST205') return result;
@@ -1175,17 +1197,19 @@ class AIChatService {
           throw result.error;
         });
 
-        if (!fallbackOrder.error) return fallbackOrder.data;
+        if (!fallbackOrder.error) return finalize(fallbackOrder.data);
         if (fallbackOrder.error.code !== 'PGRST205') throw fallbackOrder.error;
       } else if (primary.error.code !== 'PGRST205') {
         throw primary.error;
       }
 
       const fallback = await this.withRetry(async () => {
-        const result = await this.supabase
+        let query = this.supabase
           .from('chat_sessions')
           .select('*')
           .order('created_at', { ascending: false });
+        query = withPagination(query);
+        const result = await query;
 
         if (!result?.error) return result;
         if (this.isTransientSupabaseError(result.error)) throw result.error;
@@ -1193,10 +1217,12 @@ class AIChatService {
       });
 
       if (fallback.error) throw fallback.error;
-      return fallback.data;
+      return finalize(fallback.data);
     } catch (error) {
       console.error('Get sessions failed:', error);
-      if (this.isTransientSupabaseError(error)) return [];
+      if (this.isTransientSupabaseError(error)) {
+        return paged ? { sessions: [], hasMore: false } : [];
+      }
       throw new Error('Failed to get chat sessions');
     }
   }

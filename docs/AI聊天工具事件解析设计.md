@@ -1,124 +1,209 @@
-# AI聊天工具事件解析与展示设计
+# AI 对话 SSE 与工具事件解析设计（前后端联调版）
 
-## 1. 背景与目标
-当前问题：
-- 工具调用记录与答案混在一起，且直接暴露大段 JSON/结构体。
-- 缺少稳定的“折叠工具记录 + 独立答案内容”展示。
+## 1. 文档目标
+本文件用于统一解释当前 AI 对话链路中：
+1. 后端如何将模型流式输出与工具事件转换为 SSE。
+2. 前端如何把 SSE 分片解析为聊天组件可渲染的内容。
+3. 工具调用记录如何与最终回答分离展示。
+4. Debug 模式与异常降级策略。
 
-本设计目标：
-1. 前后端流式协议字段稳定。
-2. 前端使用独立 `parser.js` 解析并拆分事件。
-3. 工具调用记录使用 `thinking` 内容（天然可折叠），答案使用 `markdown` 内容。
-4. 默认不暴露原始 JSON，仅展示摘要；保留可控的 debug 原文透出能力。
+适用对象：答辩讲解、联调排障、后续重构。
 
-## 2. 前后端交互字段
+---
 
-### 2.1 后端 SSE 事件（data JSON）
-统一字段：
+## 2. 总体架构
+```mermaid
+flowchart LR
+  U[用户输入] --> FE1[AIChatView.vue]
+  FE1 --> FE2[t-chatbot onRequest]
+  FE2 --> API[/POST /api/ai-chat/]
+  API --> C[aiChatController.chat]
+  C --> S[aiChatService.chat]
+  S --> L[LangGraph/LangChain streamEvents]
+  L --> S2[工具/文本事件归一化]
+  S2 --> C2[SSE: data: JSON]
+  C2 --> FE3[aiStreamEventParser.parseChunk]
+  FE3 --> FE4[thinking/markdown 渲染块]
+  FE4 --> FE1
+```
+
+---
+
+## 3. 端到端时序
+```mermaid
+sequenceDiagram
+  participant User
+  participant View as AIChatView
+  participant Ctrl as aiChatController
+  participant Service as aiChatService
+  participant Agent as LangGraph streamEvents
+  participant Parser as aiStreamEventParser
+
+  User->>View: 发送问题
+  View->>Ctrl: POST /api/ai-chat (stream=true)
+  Ctrl->>View: SSE meta(sessionId)
+  Ctrl->>Service: chat(message, sessionId, options)
+  Service->>Agent: streamEvents(v2)
+  loop 每个 LangGraph 事件
+    Agent-->>Service: on_tool_start/on_tool_end/on_chat_model_stream...
+    Service-->>Ctrl: 统一事件对象 或 文本分片
+    Ctrl-->>View: SSE data: {...}
+    View->>Parser: parseChunk(chunk)
+    Parser-->>View: thinking 或 markdown
+  end
+  Ctrl-->>View: end
+```
+
+---
+
+## 4. 后端 SSE 协议
+控制器位置：`backend/src/controllers/aiChatController.js`
+
+### 4.1 通用字段
 - `type`: `meta | text | think | tool_call | tool_result | tool_error`
-- `sessionId`: string，可选
-- `timestamp`: number，可选（毫秒）
+- `sessionId`: 会话 ID（`meta` 必带，其他事件可带）
+- `content`: 文本内容或归一化后的字符串内容
 
-工具事件字段：
-- `toolCallId`: string，建议必传（同一调用链路唯一）
-- `toolName`: string，建议必传
-- `summary`: string，后端预处理后的可读摘要（前端优先使用）
-- `content`: string，后端规范化后的主要内容（已做基础解包）
-- `rawContent`: string，可选，原始内容截断文本（用于 debug）
+### 4.2 工具事件字段
+- `toolName`: 工具名
+- `toolCallId`: 工具调用唯一标识（尽力解析）
+- `summary`: 后端摘要（优先给前端展示）
+- `content`: 后端解包后的主要内容（便于常规展示）
+- `rawContent`: 原始内容（便于 debug，默认前端不展示）
 
-### 2.2 前端 parser 输出字段（给 t-chatbot 的 content）
-- 工具调用：
-  - `type: "thinking"`
-  - `strategy: "append"`
-  - `data.title`: `🔧 工具调用 · <toolName>`
-  - `data.text`: 摘要文本（参数摘要）
-- 工具返回：
-  - `type: "thinking"`
-  - `strategy: "append"`
-  - `data.title`: `✅ 工具返回 · <toolName>`
-  - `data.text`: 摘要文本（结果摘要）
-- 工具异常：
-  - `type: "thinking"`
-  - `strategy: "append"`
-  - `data.title`: `❌ 工具异常 · <toolName>`
-  - `data.text`: 错误摘要
-- 模型正文：
-  - `type: "markdown"`
-  - `data`: 正文分片文本
-
-## 3. 解析与拆分规则
-1. 先解析 SSE `chunk.data` 为 payload。
-2. `meta` 只更新 `sessionId`，不产出可视内容。
-3. `tool_call/tool_result/tool_error` 统一走工具摘要提取器：
-   - 优先使用后端传入 `summary`。
-   - 无 `summary` 时前端再做兜底结构化提取（城市、日期、天气状态等）。
-   - 默认隐藏原始 JSON；`debug` 模式显示 `rawContent`。
-4. `text` 仅进入答案消息，避免混入工具明细。
-
-## 4. Mermaid 流程图
-```mermaid
-flowchart TD
-  A[后端 streamEvents] --> B{事件类型}
-  B -->|tool_call| C[封装 tool_call 事件]
-  B -->|tool_result| D[封装 tool_result 事件]
-  B -->|tool_error| E[封装 tool_error 事件]
-  B -->|text| F[封装 text 事件]
-  C --> G[前端 aiStreamEventParser]
-  D --> G
-  E --> G
-  F --> G
-  G -->|工具类| H[输出 thinking 折叠块]
-  G -->|正文类| I[输出 markdown 正文]
-  H --> J[t-chatbot 消息渲染]
-  I --> J
+### 4.3 示例
+#### meta
+```json
+{ "type": "meta", "sessionId": "7dbc5c9a-..." }
 ```
 
-## 5. Mermaid 结构图
-```mermaid
-classDiagram
-  class BackendSSEEvent {
-    +string type
-    +string sessionId
-    +string toolCallId
-    +string toolName
-    +string content
-    +number timestamp
-  }
-
-  class AIStreamEventParser {
-    +reset() void
-    +parseChunk(chunk) ParseResult
-    -parsePayload(chunk) object
-    -buildToolThinkingChunk(payload, kind) object
-    -buildTextChunk(payload) object
-    -summarizeToolPayload(payload, kind) string
-  }
-
-  class ParseResult {
-    +string sessionId
-    +object content
-  }
-
-  class AIChatView {
-    +onMessage(chunk)
-    +onRequest(params)
-    +handleClear()
-    +loadSession(id)
-  }
-
-  BackendSSEEvent --> AIStreamEventParser : 输入
-  AIStreamEventParser --> ParseResult : 输出
-  AIChatView --> AIStreamEventParser : 调用
-  AIChatView --> ParseResult : 消费
+#### tool_call
+```json
+{
+  "type": "tool_call",
+  "toolName": "maps_weather",
+  "toolCallId": "run-abc",
+  "summary": "city=杭州",
+  "content": "{\"city\":\"杭州\"}",
+  "rawContent": "{\"input\":\"{\\\"city\\\":\\\"杭州\\\"}\"}"
+}
 ```
 
-## 6. 兼容与降级策略
-- 若 `toolName` 缺失，显示 `unknown_tool`。
-- 若结构化提取失败，展示 `已执行工具，结果已返回`。
-- 若 `content` 过长，截断后附 `...`。
-- 若后端未提供 `toolCallId`，前端仅按事件顺序展示，不做强绑定合并。
+#### text
+```json
+{ "type": "text", "content": "根据查询结果，杭州今天..." }
+```
 
-## 7. 安全与可观测性
-- 默认隐藏原始结构体，减少敏感字段外露风险。
-- 仅在 debug 模式（如 `?debug_tool_raw=1`）附带脱敏原文片段。
-- parser 为纯函数 + 小状态对象，便于单测。
+---
+
+## 5. 后端服务层实现要点
+服务位置：`backend/src/services/aiChatService.js`
+
+### 5.1 事件映射
+LangGraph 事件映射关系：
+- `on_tool_start` -> `tool_call`
+- `on_tool_end` -> `tool_result`
+- `on_tool_error` -> `tool_error`
+- `on_chat_model_stream` -> `text`
+
+### 5.2 工具 payload 解包
+`unwrapToolPayload` 会递归解包常见结构：
+- `kwargs.content`
+- `additional_kwargs.content`
+- `data.content`
+- `output/result/content/input`
+
+目的：减少前端拿到“套娃 JSON”。
+
+### 5.3 摘要生成
+`summarizeToolPayload(toolName, phase, value)` 负责生成 `summary`：
+- tool_call 阶段优先提取参数（例如 `city=杭州`）
+- 天气工具尝试合成“城市 + 日期 + 温度”摘要
+- 兜底为 key-value 摘要或首行文本
+
+### 5.4 异常映射
+对模型限流/繁忙等错误统一映射为中文可读提示：
+- `Too many requests / throttled / capacity limits / ServiceUnavailable / <503>`
+- 归一为 `MODELSCOPE_REQUEST_LIMIT` 类语义
+
+---
+
+## 6. 前端解析器设计
+解析器位置：`frontend/src/utils/aiStreamEventParser.js`
+
+### 6.1 输入与输出
+输入：SSE `chunk`（包含 `data`）  
+输出：`{ sessionId, content }`
+
+其中 `content` 为 t-chatbot 消息分片：
+- 工具事件 -> `thinking`（折叠块）
+- 模型正文 -> `markdown`
+
+### 6.2 解析策略
+1. 先 `parsePayload`。
+2. `meta`：只回传 `sessionId`，不渲染。
+3. `tool_call/result/error`：
+   - 优先 `payload.summary`
+   - 无 `summary` 则本地 `pickSummary(...)` 兜底
+   - 输出 `thinking`，标题含工具名和阶段
+4. `text`：输出 `markdown` 分片。
+
+### 6.3 原文展示策略
+- 默认：仅显示摘要，不透出原始结构体。
+- `?debug_tool_raw=1`：追加 `rawContent` 片段到折叠块中，便于排障。
+
+---
+
+## 7. AIChatView 中的接入点
+视图位置：`frontend/src/views/AIChatView.vue`
+
+### 7.1 请求阶段
+`chatServiceConfig.onRequest` 负责：
+- 注入 `Authorization`
+- 传递 `enable_tools`
+- 可选 `debug_stream`
+
+### 7.2 流式阶段
+`chatServiceConfig.onMessage`：
+1. 调用 `streamEventParser.parseChunk(chunk)`
+2. 读取 `sessionId`
+3. 返回 `content` 给 t-chatbot 渲染
+
+### 7.3 会话管理阶段
+- 新对话：`handleClear` 会重置 parser 状态
+- 加载历史会话：`loadSession` 会重置 parser 并替换消息列表
+
+---
+
+## 8. Debug 与联调参数
+### 8.1 `debug_stream=1`
+- 入口：`/api/ai-chat?debug_stream=1`
+- 行为：后端不走模型，发送固定测试文本流（逐字），用于验证 SSE 渲染链路。
+
+### 8.2 `debug_tool_raw=1`
+- 入口：前端页面 query 参数
+- 行为：前端解析器在工具折叠块中展示 `rawContent` 片段。
+
+---
+
+## 9. 降级与兼容策略
+1. `toolName` 缺失：展示 `unknown_tool`。
+2. `summary` 缺失：前端本地兜底摘要。
+3. payload 不是合法 JSON：按纯文本处理并截断。
+4. `meta` 缺失：仍可渲染文本，但会话关联能力下降。
+
+---
+
+## 10. 与虚拟列表文档的关系
+本文件关注“消息流解析与展示语义”。  
+历史会话性能优化（虚拟渲染）详见：
+- `docs/历史会话虚拟渲染实现详解.md`
+
+---
+
+## 11. 答辩讲解建议（3 分钟版）
+1. 先讲“协议分层”：后端统一事件类型，前端只做渲染语义转换。
+2. 再讲“工具记录与答案分离”：`thinking` 与 `markdown` 各司其职。
+3. 再讲“可维护性”：后端 `summary` 优先，前端仅做兜底。
+4. 最后讲“可运维”：`debug_stream` 验证链路，`debug_tool_raw` 验证工具原始返回。
+
