@@ -230,6 +230,10 @@ const historyListHeight = ref(0)
 const historyItemHeight = 84
 const historyOverscan = 6
 const sessionAppearDelayMap = ref({})
+const sessionAppearDelayStep = 55
+const sessionAppearDelayMax = 500
+const sessionAppearDuration = 380
+const sessionAppearCleanupBuffer = 240
 let authSubscription = null
 let historyResizeObserver = null
 
@@ -262,7 +266,7 @@ const conversationId = ref(null)
 const shouldResetHistory = ref(true)
 
 // MCP 工具模式开关
-const enableTools = ref(false)
+const enableTools = ref(true)
 
 // 默认问候消息
 const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您服务！
@@ -434,12 +438,15 @@ const appendSessionAppearAnimations = (list) => {
   if (!ids.length) return
 
   const next = { ...sessionAppearDelayMap.value }
+  let maxDelay = 0
   ids.forEach((id, index) => {
-    next[id] = index * 55
+    const delay = Math.min(index * sessionAppearDelayStep, sessionAppearDelayMax)
+    next[id] = delay
+    maxDelay = Math.max(maxDelay, delay)
   })
   sessionAppearDelayMap.value = next
 
-  const removeAfterMs = 1400 + ids.length * 60
+  const removeAfterMs = maxDelay + sessionAppearDuration + sessionAppearCleanupBuffer
   setTimeout(() => {
     const current = { ...sessionAppearDelayMap.value }
     ids.forEach((id) => {
@@ -447,6 +454,11 @@ const appendSessionAppearAnimations = (list) => {
     })
     sessionAppearDelayMap.value = current
   }, removeAfterMs)
+}
+
+const clearSessionAppearAnimations = () => {
+  if (!Object.keys(sessionAppearDelayMap.value).length) return
+  sessionAppearDelayMap.value = {}
 }
 
 const hasSessionAppearAnimation = (conversationId) => {
@@ -469,7 +481,12 @@ const loadMoreSessionsIfNeeded = () => {
 
 const handleHistoryScroll = (event) => {
   const target = event?.target
-  historyScrollTop.value = target?.scrollTop || 0
+  const nextScrollTop = target?.scrollTop || 0
+  const previousScrollTop = historyScrollTop.value
+  historyScrollTop.value = nextScrollTop
+  if (Math.abs(nextScrollTop - previousScrollTop) > 4) {
+    clearSessionAppearAnimations()
+  }
   if (!target) return
   const distanceToBottom = target.scrollHeight - (target.scrollTop + target.clientHeight)
   if (distanceToBottom <= 36) {
