@@ -11,6 +11,12 @@ const USER_SCAN_PAGE_SIZE = 200;
 const USER_SCAN_MAX_PAGES = 20;
 const ACCESS_TOKEN_COOKIE_NAME = process.env.AUTH_ACCESS_COOKIE_NAME || 'sb-access-token';
 const REFRESH_TOKEN_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME || 'sb-refresh-token';
+const REFRESH_TOKEN_COOKIE_ALT_NAME = process.env.AUTH_REFRESH_COOKIE_ALT_NAME || 'sb_refresh_token';
+const REFRESH_TOKEN_COOKIE_NAMES = Array.from(new Set([
+  REFRESH_TOKEN_COOKIE_NAME,
+  REFRESH_TOKEN_COOKIE_ALT_NAME,
+  'refresh_token',
+]));
 const COOKIE_SAMESITE = String(process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
 const COOKIE_PATH = process.env.AUTH_COOKIE_PATH || '/';
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN || '';
@@ -111,6 +117,54 @@ const normalizeOptionalText = (value) => {
   return String(value).trim();
 };
 
+const pickHeaderValue = (value) => {
+  if (Array.isArray(value)) {
+    const first = value.find((item) => typeof item === 'string' && item.trim());
+    return first || '';
+  }
+  return typeof value === 'string' ? value : '';
+};
+
+const parseCookieHeader = (cookieHeader) => {
+  const out = {};
+  const raw = pickHeaderValue(cookieHeader);
+  if (!raw) return out;
+  const parts = String(raw).split(';');
+  for (const part of parts) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const name = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (!name) continue;
+    try {
+      out[name] = decodeURIComponent(value);
+    } catch (_) {
+      out[name] = value;
+    }
+  }
+  return out;
+};
+
+const readCookieToken = (req, cookieNames = []) => {
+  const names = Array.isArray(cookieNames) ? cookieNames : [];
+  if (!names.length) return '';
+  const parsedCookies = parseCookieHeader(req.headers?.cookie);
+
+  if (req.cookies && typeof req.cookies === 'object') {
+    for (const name of names) {
+      const value = req.cookies[name];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  }
+
+  for (const name of names) {
+    const value = parsedCookies[name];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+
+  return '';
+};
+
 const cookieBaseOptions = () => {
   const opts = {
     httpOnly: true,
@@ -131,7 +185,7 @@ const setAuthCookies = (res, session) => {
   const accessMaxAge = Number.isFinite(accessExpiresInSecRaw) && accessExpiresInSecRaw > 0
     ? Math.floor(accessExpiresInSecRaw * 1000)
     : 60 * 60 * 1000;
-  const refreshMaxAge = 30 * 24 * 60 * 60 * 1000;
+  const refreshMaxAge = 7 * 24 * 60 * 60 * 1000;
 
   res.cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, {
     ...cookieBaseOptions(),
@@ -412,7 +466,19 @@ module.exports = () => {
 
   router.get('/auth/session', optionalAuth, async (req, res) => {
     try {
-      const currentUser = req.user || null;
+      let currentUser = req.user || null;
+      if (!currentUser?.id) {
+        const refreshToken = readCookieToken(req, REFRESH_TOKEN_COOKIE_NAMES);
+        if (refreshToken && authSupabase) {
+          const { data, error } = await authSupabase.auth.refreshSession({
+            refresh_token: refreshToken,
+          });
+          if (!error && data?.session?.access_token) {
+            setAuthCookies(res, data.session);
+            currentUser = data?.user || data?.session?.user || null;
+          }
+        }
+      }
       if (!currentUser?.id) {
         return res.json({ authenticated: false, user: null });
       }

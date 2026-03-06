@@ -58,6 +58,28 @@ test('summarizeToolPayload: summarizes weather and poi payloads', () => {
   assert.ok(poi.includes('西湖餐厅'));
 });
 
+test('summarizeToolPayload: call phase object fallback is readable', () => {
+  const summary = summarizeToolPayload({
+    toolName: 'get-current-date',
+    phase: 'call',
+    value: {},
+  });
+  assert.equal(summary, '已收到工具参数');
+  assert.notEqual(summary, '[object Object]');
+});
+
+test('summarizeToolPayload: summarizes geo return payloads', () => {
+  const summary = summarizeToolPayload({
+    toolName: 'maps_geo',
+    phase: 'result',
+    value: {
+      return: [{ country: '中国', province: '江西省', city: '南昌市' }],
+    },
+  });
+  assert.ok(summary.includes('返回1条地理结果'));
+  assert.ok(summary.includes('江西省'));
+});
+
 test('buildToolEventPayload: always returns unified fields', () => {
   const payload = buildToolEventPayload({
     source: 'chat',

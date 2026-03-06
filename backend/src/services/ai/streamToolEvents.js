@@ -240,6 +240,27 @@ const summarizeWebResults = (obj) => {
   return normalizeText(`返回${list.length}条结果：${titles.join('；')}${suffix}`, 180);
 };
 
+const summarizeGeoResults = (obj) => {
+  if (!obj || typeof obj !== 'object') return '';
+  const rows = Array.isArray(obj.return) ? obj.return : Array.isArray(obj.geocodes) ? obj.geocodes : [];
+  if (!rows.length) return '';
+  const names = rows
+    .slice(0, 2)
+    .map((item) => {
+      if (!item || typeof item !== 'object') return '';
+      const country = pickStr(item, ['country']);
+      const province = pickStr(item, ['province']);
+      const city = pickStr(item, ['city', 'cityname']);
+      const district = pickStr(item, ['district']);
+      const pieces = [country, province, city, district].filter(Boolean);
+      return pieces.join(' ');
+    })
+    .filter(Boolean);
+  if (!names.length) return normalizeText(`返回${rows.length}条地理结果`, 160);
+  const suffix = rows.length > names.length ? '等' : '';
+  return normalizeText(`返回${rows.length}条地理结果：${names.join('；')}${suffix}`, 180);
+};
+
 const summarizeToolPayload = ({ toolName = '', phase = 'result', value }) => {
   const phaseName = typeof phase === 'string' ? phase : 'result';
   const name = resolveToolName({ toolName, fallback: 'tool' });
@@ -263,8 +284,12 @@ const summarizeToolPayload = ({ toolName = '', phase = 'result', value }) => {
           .map((key) => `${key}=${normalizeText(typeof data[key] === 'object' ? JSON.stringify(data[key]) : data[key], 50)}`)
           .join('，');
       }
+      return '已收到工具参数';
     }
-    return normalizeText(firstLine(typeof data === 'string' ? data : '') || data || '已收到工具参数', 180);
+    if (typeof data === 'string') {
+      return normalizeText(firstLine(data) || data || '已收到工具参数', 180);
+    }
+    return '已收到工具参数';
   }
 
   if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -286,6 +311,9 @@ const summarizeToolPayload = ({ toolName = '', phase = 'result', value }) => {
     const webSummary = summarizeWebResults(data);
     if (webSummary) return webSummary;
 
+    const geoSummary = summarizeGeoResults(data);
+    if (geoSummary) return geoSummary;
+
     if (typeof data.status === 'string' && typeof data.content === 'string') {
       const line = firstLine(data.content);
       if (line) return normalizeText(`${data.status}: ${line}`, 180);
@@ -300,7 +328,8 @@ const summarizeToolPayload = ({ toolName = '', phase = 'result', value }) => {
   }
 
   const fallback = phaseName === 'error' ? '工具执行失败' : '工具执行完成';
-  return normalizeText(firstLine(typeof data === 'string' ? data : '') || data || fallback, 180);
+  if (typeof data === 'string') return normalizeText(firstLine(data) || data || fallback, 180);
+  return fallback;
 };
 
 const buildToolEventPayload = ({ source = 'chat', phase = 'result', toolName = '', toolCallId = '', rawValue, eventPhase = '' }) => {
