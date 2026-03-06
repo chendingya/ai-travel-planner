@@ -3,6 +3,7 @@
  * 封装旅行规划相关的业务逻辑
  */
 const { safeParseJSON } = require('../utils/helpers');
+const { createToolStepCallbacks } = require('./ai/streamToolEvents');
 
 class PlanService {
   constructor(langChainManager, mcpService, supabase) {
@@ -417,55 +418,16 @@ class PlanService {
 
       // 准备回调：用于把工具调用步骤流式推给前端
       const callbacks = [];
-
       // 1. 步骤流式回调：工具开始/结束/动作事件
       if (onStep) {
-        const toolCallQueue = [];
-        const buildToolCallId = (name, inputStr) => `${name}:${inputStr}`;
-        callbacks.push({
-          handleToolStart: (tool, input) => {
-            try {
-              const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
-              const toolName = tool?.name || '';
-              const toolCallId = buildToolCallId(toolName, inputStr);
-              toolCallQueue.push({ toolCallId, toolName });
-              onStep({
-                role: 'assistant',
-                toolCalls: JSON.stringify([{ name: toolName, args: input, id: toolCallId }]),
-                toolCallId,
-                toolName
-              });
-            } catch (e) {}
-          },
-          handleToolEnd: (output) => {
-            try {
-              const outputStr = typeof output === 'string' ? output : JSON.stringify(output);
-              const entry = toolCallQueue.shift();
-              const toolCallId = entry?.toolCallId || '';
-              const toolName = entry?.toolName || '';
-              onStep({
-                role: 'tool',
-                toolResults: outputStr,
-                toolCallId,
-                toolName
-              });
-            } catch (e) {}
-          },
-          handleAgentAction: (action) => {
-             try {
-               const toolInput = action.toolInput;
-               const inputStr = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput);
-               const toolName = action.tool || '';
-               const toolCallId = buildToolCallId(toolName, inputStr);
-               onStep({
-                 role: 'assistant',
-                 toolCalls: JSON.stringify([{ name: toolName, args: toolInput, id: toolCallId }]),
-                 toolCallId,
-                 toolName
-               });
-             } catch (e) {}
-          }
+        const toolCallbacks = createToolStepCallbacks({
+          onStep,
+          source: 'plan',
+          callPhase: 'tooling',
+          resultPhase: 'synthesis',
+          errorPhase: 'synthesis',
         });
+        if (toolCallbacks) callbacks.push(toolCallbacks);
       }
 
       // 2. 元数据捕获回调：记录 provider/model
@@ -516,16 +478,16 @@ class PlanService {
             ? m.content
             : (Array.isArray(m.content) ? JSON.stringify(m.content) : (m.content && typeof m.content === 'object' ? JSON.stringify(m.content) : String(m.content || '')));
           const toolCalls = m.tool_calls || m.additional_kwargs?.tool_calls;
-          const toolResults = role === 'ToolMessage' ? content : undefined;
           const toolCallId = m.tool_call_id || m?.kwargs?.tool_call_id || m?.lc_kwargs?.tool_call_id || '';
           const toolName = m?.name || m?.tool_name || '';
+          const type = toolCalls ? 'tool_call' : role === 'ToolMessage' ? 'tool_result' : 'text';
           return {
-            role,
+            source: 'plan',
+            type,
             content: content.substring(0, 500) + (content.length > 500 ? '...' : ''),
-            toolCalls: toolCalls ? JSON.stringify(toolCalls) : undefined,
-            toolResults,
+            summary: content.substring(0, 180) + (content.length > 180 ? '...' : ''),
             toolCallId,
-            toolName
+            toolName,
           };
         });
         if (shouldLogSteps) {

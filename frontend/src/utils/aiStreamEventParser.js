@@ -150,7 +150,7 @@ const summarizeObject = (obj) => {
 
 const summarizeWeather = (obj) => {
   if (!obj || typeof obj !== 'object') return '';
-  const city = obj.city || obj.province || '';
+  const city = obj.city || obj.province || obj.cityname || '';
   const forecasts = Array.isArray(obj.forecasts) ? obj.forecasts : [];
   const first = forecasts[0] || null;
   if (!city || !first) return '';
@@ -160,6 +160,33 @@ const summarizeWeather = (obj) => {
   const dayTemp = first.daytemp || '';
   const nightTemp = first.nighttemp || '';
   return normalizeText(`${city} ${date} 白天${day} ${dayTemp}°C，夜间${night} ${nightTemp}°C`, 180);
+};
+
+const summarizePoiResults = (obj) => {
+  if (!obj || typeof obj !== 'object') return '';
+  const pois = Array.isArray(obj.pois) ? obj.pois : Array.isArray(obj.poi_list) ? obj.poi_list : [];
+  if (!pois.length) return '';
+  const names = pois
+    .slice(0, 3)
+    .map((item) => {
+      if (!item) return '';
+      if (typeof item === 'string') return item;
+      if (typeof item === 'object') return item.name || item.title || item.poi_name || '';
+      return '';
+    })
+    .filter(Boolean);
+  const city = obj.city || obj.cityname || (pois[0] && typeof pois[0] === 'object' ? (pois[0].cityname || pois[0].city || '') : '');
+  if (!names.length) return normalizeText(`${city ? `${city} ` : ''}找到${pois.length}个地点`, 180);
+  return normalizeText(`${city ? `${city} ` : ''}找到${pois.length}个地点：${names.join('、')}${pois.length > names.length ? '等' : ''}`, 180);
+};
+
+const isLowQualitySummary = (value) => {
+  const s = normalizeText(value, 260);
+  if (!s) return true;
+  if (s.length > 120 && (s.includes('={') || s.includes('=[{') || s.includes('"id"') || s.includes('"address"'))) {
+    return true;
+  }
+  return false;
 };
 
 const pickSummary = (toolName, kind, rawContent) => {
@@ -176,10 +203,14 @@ const pickSummary = (toolName, kind, rawContent) => {
     return normalizeText(unwrapped, 180) || '已收到工具参数';
   }
 
-  if (toolName.includes('weather')) {
+  const looksLikeWeather =
+    unwrapped && typeof unwrapped === 'object' && !Array.isArray(unwrapped) && Array.isArray(unwrapped.forecasts) && unwrapped.forecasts.length > 0;
+  if (toolName.includes('weather') || looksLikeWeather) {
     const weather = summarizeWeather(unwrapped);
     if (weather) return weather;
   }
+  const poiSummary = summarizePoiResults(unwrapped);
+  if (poiSummary) return poiSummary;
 
   if (unwrapped && typeof unwrapped === 'object' && !Array.isArray(unwrapped)) {
     return summarizeObject(unwrapped) || '工具执行完成';
@@ -213,12 +244,76 @@ const parsePayload = (chunk) => {
   return null;
 };
 
+const normalizeUnifiedPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  if (typeof payload.type === 'string' && payload.type.trim()) return payload;
+
+  if (Array.isArray(payload.tools)) {
+    return { ...payload, type: 'meta' };
+  }
+
+  if (payload.result != null) {
+    return { ...payload, type: 'final' };
+  }
+
+  if (typeof payload.message === 'string' && payload.message.trim()) {
+    return { ...payload, type: 'error' };
+  }
+
+  if (typeof payload.content === 'string') {
+    return { ...payload, type: 'text' };
+  }
+
+  return payload;
+};
+
+const resolveToolNameFromPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [
+    payload.toolName,
+    payload.tool_name,
+    payload.tool,
+    payload.name,
+    payload?.metadata?.tool_name,
+    payload?.metadata?.name,
+    payload?.data?.toolName,
+    payload?.data?.tool_name,
+    payload?.data?.name,
+    payload?.function?.name,
+  ];
+  for (const item of candidates) {
+    if (typeof item === 'string' && item.trim()) return item.trim();
+  }
+  return '';
+};
+
+const resolveToolCallIdFromPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [
+    payload.toolCallId,
+    payload.tool_call_id,
+    payload.run_id,
+    payload.id,
+    payload?.data?.toolCallId,
+    payload?.data?.tool_call_id,
+    payload?.data?.id,
+  ];
+  for (const item of candidates) {
+    if (typeof item === 'string' && item.trim()) return item.trim();
+  }
+  return '';
+};
+
 export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 } = {}) => {
+  let shouldAppendNextTextChunk = false;
+
   const buildToolThinkingChunk = (payload, kind) => {
-    const toolName = normalizeText(payload?.toolName || payload?.tool || payload?.name || 'unknown_tool', 60);
+    const toolName = normalizeText(resolveToolNameFromPayload(payload) || 'unknown_tool', 60);
     const rawPayloadText = payload?.rawContent || payload?.content || payload?.output || payload?.input || '';
     const fallback = kind === 'error' ? '工具执行失败' : kind === 'call' ? '已收到工具参数' : '工具执行完成';
-    const summary = sanitizeSummary(payload?.summary, sanitizeSummary(pickSummary(toolName, kind, rawPayloadText), fallback));
+    const localSummary = sanitizeSummary(pickSummary(toolName, kind, rawPayloadText), fallback);
+    const backendSummary = sanitizeSummary(payload?.summary, '');
+    const summary = backendSummary && !isLowQualitySummary(backendSummary) ? backendSummary : localSummary;
 
     const title = kind === 'call'
       ? `🔧 工具调用 · ${toolName}`
@@ -243,59 +338,113 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
     };
   };
 
+  const buildEvent = (payload, type, sessionId) => {
+    const source = normalizeText(payload?.source || 'chat', 24) || 'chat';
+    const phase = normalizeText(payload?.phase || '', 24);
+    const base = { type, source, sessionId, phase };
+
+    if (type === 'meta') {
+      return { ...base, tools: Array.isArray(payload?.tools) ? payload.tools : [] };
+    }
+    if (type === 'tool_call' || type === 'tool_result' || type === 'tool_error') {
+      const kind = type === 'tool_call' ? 'call' : type === 'tool_result' ? 'result' : 'error';
+      const toolName = normalizeText(resolveToolNameFromPayload(payload), 60);
+      const rawPayloadText = payload?.rawContent || payload?.content || payload?.output || payload?.input || '';
+      const fallback = kind === 'error' ? '工具执行失败' : kind === 'call' ? '已收到工具参数' : '工具执行完成';
+      const localSummary = sanitizeSummary(pickSummary(toolName, kind, rawPayloadText), fallback);
+      const backendSummary = sanitizeSummary(payload?.summary, '');
+      const summary = backendSummary && !isLowQualitySummary(backendSummary) ? backendSummary : localSummary;
+      return {
+        ...base,
+        toolName,
+        toolCallId: normalizeText(resolveToolCallIdFromPayload(payload), 120),
+        summary,
+        content: normalizeText(payload?.content || '', 1200),
+        rawContent: normalizeText(rawPayloadText, 2600),
+      };
+    }
+    if (type === 'text' || type === 'think') {
+      return { ...base, content: typeof payload?.content === 'string' ? payload.content : '' };
+    }
+    if (type === 'final') {
+      return { ...base, result: payload?.result != null ? payload.result : payload };
+    }
+    if (type === 'error') {
+      return { ...base, message: normalizeText(payload?.message || payload?.content || '请求失败', 300) };
+    }
+    if (type === 'ping') {
+      return { ...base, ts: Number(payload?.ts) || Date.now() };
+    }
+    return base;
+  };
+
   const parseChunk = (chunk) => {
-    const payload = parsePayload(chunk);
+    const rawPayload = parsePayload(chunk);
+    const payload = normalizeUnifiedPayload(rawPayload);
     if (!payload) return null;
 
     const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : '';
     const type = payload?.type || (payload?.content ? 'text' : '');
+    const event = buildEvent(payload, type, sessionId);
 
     if (type === 'meta') {
-      return { sessionId, content: null };
+      return { sessionId, content: null, event };
     }
 
     if (type === 'tool_call') {
-      return { sessionId, content: buildToolThinkingChunk(payload, 'call') };
+      shouldAppendNextTextChunk = true;
+      return { sessionId, content: buildToolThinkingChunk(payload, 'call'), event };
     }
 
     if (type === 'tool_result') {
-      return { sessionId, content: buildToolThinkingChunk(payload, 'result') };
+      shouldAppendNextTextChunk = true;
+      return { sessionId, content: buildToolThinkingChunk(payload, 'result'), event };
     }
 
     if (type === 'tool_error') {
-      return { sessionId, content: buildToolThinkingChunk(payload, 'error') };
+      shouldAppendNextTextChunk = true;
+      return { sessionId, content: buildToolThinkingChunk(payload, 'error'), event };
     }
 
     if (type === 'think') {
+      shouldAppendNextTextChunk = true;
       return {
         sessionId,
         content: {
           type: 'thinking',
+          strategy: 'append',
           data: {
             title: '思考中...',
             text: typeof payload?.content === 'string' ? payload.content : '',
           },
         },
+        event,
       };
     }
 
     if (type === 'text' || typeof payload?.content === 'string') {
+      const content = {
+        type: 'markdown',
+        data: typeof payload?.content === 'string' ? payload.content : '',
+      };
+      if (shouldAppendNextTextChunk) {
+        content.strategy = 'append';
+        shouldAppendNextTextChunk = false;
+      }
       return {
         sessionId,
-        content: {
-          type: 'markdown',
-          data: typeof payload?.content === 'string' ? payload.content : '',
-        },
+        content,
+        event,
       };
     }
 
-    return { sessionId, content: null };
+    return { sessionId, content: null, event };
   };
 
   return {
     parseChunk,
     reset() {
-      // parser currently stateless, reserved for future stateful merge
+      shouldAppendNextTextChunk = false;
     },
   };
 };

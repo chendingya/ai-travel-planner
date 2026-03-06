@@ -1,6 +1,7 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { HumanMessage, AIMessage } = require('@langchain/core/messages');
 const SupabaseMessageHistory = require('./langchain/SupabaseMessageHistory');
+const { buildToolEventFromLangChainEvent } = require('./ai/streamToolEvents');
 
 
 class AIChatService {
@@ -777,182 +778,7 @@ class AIChatService {
         }
         return '';
       };
-
-      const stringifyForStream = (value, maxLen = 800) => {
-        let text = '';
-        if (typeof value === 'string') {
-          text = value;
-        } else if (value == null) {
-          text = '';
-        } else {
-          try {
-            text = JSON.stringify(value, null, 2);
-          } catch {
-            text = String(value);
-          }
-        }
-        if (!text) return '';
-        return text.length > maxLen ? `${text.slice(0, maxLen)}\n...` : text;
-      };
-
-      const parseJsonLoose = (value) => {
-        if (typeof value !== 'string') return null;
-        const text = value.trim();
-        if (!text) return null;
-        const strict = (() => {
-          try {
-            return JSON.parse(text);
-          } catch {
-            return null;
-          }
-        })();
-        if (strict != null) return strict;
-        const noEllipsis = text.replace(/\s*\.\.\.\s*$/, '');
-        try {
-          return JSON.parse(noEllipsis);
-        } catch {}
-        const firstObj = noEllipsis.indexOf('{');
-        const firstArr = noEllipsis.indexOf('[');
-        const start = firstObj >= 0 && firstArr >= 0 ? Math.min(firstObj, firstArr) : Math.max(firstObj, firstArr);
-        if (start < 0) return null;
-        const startChar = noEllipsis[start];
-        const endChar = startChar === '{' ? '}' : ']';
-        let end = noEllipsis.lastIndexOf(endChar);
-        while (end > start) {
-          const candidate = noEllipsis.slice(start, end + 1);
-          try {
-            return JSON.parse(candidate);
-          } catch {}
-          end = noEllipsis.lastIndexOf(endChar, end - 1);
-        }
-        return null;
-      };
-
-      const extractQuotedJsonString = (text, key) => {
-        if (typeof text !== 'string' || !text) return '';
-        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const reg = new RegExp(`"${escapedKey}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`);
-        const m = text.match(reg);
-        if (!m) return '';
-        try {
-          return JSON.parse(`"${m[1]}"`);
-        } catch {
-          return m[1] || '';
-        }
-      };
-
-      const unwrapToolPayload = (value, depth = 0) => {
-        if (depth > 5 || value == null) return value;
-        if (typeof value === 'string') {
-          const parsed = parseJsonLoose(value);
-          if (parsed != null) return unwrapToolPayload(parsed, depth + 1);
-          const kwargsContent = extractQuotedJsonString(value, 'content');
-          if (kwargsContent) {
-            const parsedContent = parseJsonLoose(kwargsContent);
-            if (parsedContent != null) return unwrapToolPayload(parsedContent, depth + 1);
-            return kwargsContent;
-          }
-          return value;
-        }
-        if (Array.isArray(value)) {
-          if (value.length === 1) return unwrapToolPayload(value[0], depth + 1);
-          return value;
-        }
-        if (typeof value === 'object') {
-          if (value.kwargs?.content != null) return unwrapToolPayload(value.kwargs.content, depth + 1);
-          if (value.additional_kwargs?.content != null) return unwrapToolPayload(value.additional_kwargs.content, depth + 1);
-          if (value.data?.content != null) return unwrapToolPayload(value.data.content, depth + 1);
-          if (value.output != null) return unwrapToolPayload(value.output, depth + 1);
-          if (value.result != null) return unwrapToolPayload(value.result, depth + 1);
-          if (value.content != null && value.content !== value) return unwrapToolPayload(value.content, depth + 1);
-          if (value.input != null && value.input !== value) return unwrapToolPayload(value.input, depth + 1);
-          return value;
-        }
-        return value;
-      };
-
-      const summarizeToolPayload = (toolName, phase, value) => {
-        const normalize = (v, maxLen = 180) => {
-          const s = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
-          if (!s) return '';
-          return s.length > maxLen ? `${s.slice(0, maxLen)}...` : s;
-        };
-        const firstLine = (v) => {
-          if (typeof v !== 'string') return '';
-          const lines = v.split('\n').map((line) => line.replace(/^[#>*\-\s`]+/, '').trim()).filter(Boolean);
-          return lines[0] || '';
-        };
-
-        const data = unwrapToolPayload(value, 0);
-        if (phase === 'call') {
-          if (data && typeof data === 'object' && !Array.isArray(data)) {
-            if (typeof data.city === 'string' && data.city.trim()) return `city=${data.city.trim()}`;
-            if (data.input && typeof data.input === 'object' && typeof data.input.city === 'string') {
-              return `city=${data.input.city.trim()}`;
-            }
-            const keys = Object.keys(data).slice(0, 3);
-            if (keys.length) {
-              return keys.map((k) => `${k}=${normalize(typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k], 50)}`).join('，');
-            }
-          }
-          const line = firstLine(typeof data === 'string' ? data : '');
-          return normalize(line || data || '已收到工具参数');
-        }
-
-        if (toolName.includes('weather') && data && typeof data === 'object' && !Array.isArray(data)) {
-          const city = data.city || data.province || '';
-          const first = Array.isArray(data.forecasts) ? data.forecasts[0] : null;
-          if (city && first) {
-            return normalize(`${city} ${first.date || ''} 白天${first.dayweather || ''} ${first.daytemp || ''}°C，夜间${first.nightweather || ''} ${first.nighttemp || ''}°C`);
-          }
-        }
-
-        if (data && typeof data === 'object' && !Array.isArray(data)) {
-          if (typeof data.status === 'string' && typeof data.content === 'string') {
-            const line = firstLine(data.content);
-            if (line) return normalize(`${data.status}: ${line}`);
-          }
-          const keys = Object.keys(data).slice(0, 3);
-          if (keys.length) {
-            return keys.map((k) => `${k}=${normalize(typeof data[k] === 'object' ? JSON.stringify(data[k]) : data[k], 50)}`).join('，');
-          }
-        }
-
-        const line = firstLine(typeof data === 'string' ? data : '');
-        return normalize(line || data || (phase === 'error' ? '工具执行失败' : '工具执行完成'));
-      };
-
-      const buildToolEventPayload = (phase, toolName, toolCallId, rawValue) => {
-        const normalized = unwrapToolPayload(rawValue, 0);
-        const type = phase === 'call' ? 'tool_call' : phase === 'result' ? 'tool_result' : 'tool_error';
-        return {
-          type,
-          toolName,
-          toolCallId,
-          summary: summarizeToolPayload(toolName || '', phase, rawValue),
-          content: stringifyForStream(normalized, 1200),
-          rawContent: stringifyForStream(rawValue, 2600),
-        };
-      };
-
-      const resolveToolName = (event) => {
-        const n1 = typeof event?.name === 'string' ? event.name : '';
-        if (n1) return n1;
-        const n2 = typeof event?.data?.name === 'string' ? event.data.name : '';
-        if (n2) return n2;
-        const n3 = typeof event?.metadata?.tool_name === 'string' ? event.metadata.tool_name : '';
-        return n3 || '';
-      };
-
-      const resolveToolCallId = (event) => {
-        const id1 = typeof event?.run_id === 'string' ? event.run_id : '';
-        if (id1) return id1;
-        const id2 = typeof event?.data?.tool_call_id === 'string' ? event.data.tool_call_id : '';
-        if (id2) return id2;
-        const id3 = typeof event?.data?.id === 'string' ? event.data.id : '';
-        if (id3) return id3;
-        return '';
-      };
+      const toToolChunk = (event) => buildToolEventFromLangChainEvent(event, { source: 'chat' });
 
       if (sessionId) {
         // LangGraph 状态管理：手动加载和保存历史
@@ -978,25 +804,9 @@ class AIChatService {
           for await (const event of eventStream) {
             recordProvider(event?.metadata);
             recordProvider(event?.data?.metadata);
-            if (event?.event === 'on_tool_start') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const input = event?.data?.input ?? event?.data?.inputs ?? event?.data ?? null;
-              yield buildToolEventPayload('call', toolName, toolCallId, input);
-              continue;
-            }
-            if (event?.event === 'on_tool_end') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const output = event?.data?.output ?? event?.data ?? null;
-              yield buildToolEventPayload('result', toolName, toolCallId, output);
-              continue;
-            }
-            if (event?.event === 'on_tool_error') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const errorMsg = event?.data?.error || event?.data || 'Tool call failed';
-              yield buildToolEventPayload('error', toolName, toolCallId, errorMsg);
+            const toolChunk = toToolChunk(event);
+            if (toolChunk) {
+              yield toolChunk;
               continue;
             }
             if (event.event === 'on_chat_model_stream') {
@@ -1031,25 +841,9 @@ class AIChatService {
           for await (const event of eventStream) {
             recordProvider(event?.metadata);
             recordProvider(event?.data?.metadata);
-            if (event?.event === 'on_tool_start') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const input = event?.data?.input ?? event?.data?.inputs ?? event?.data ?? null;
-              yield buildToolEventPayload('call', toolName, toolCallId, input);
-              continue;
-            }
-            if (event?.event === 'on_tool_end') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const output = event?.data?.output ?? event?.data ?? null;
-              yield buildToolEventPayload('result', toolName, toolCallId, output);
-              continue;
-            }
-            if (event?.event === 'on_tool_error') {
-              const toolName = resolveToolName(event);
-              const toolCallId = resolveToolCallId(event);
-              const errorMsg = event?.data?.error || event?.data || 'Tool call failed';
-              yield buildToolEventPayload('error', toolName, toolCallId, errorMsg);
+            const toolChunk = toToolChunk(event);
+            if (toolChunk) {
+              yield toolChunk;
               continue;
             }
             if (event.event === 'on_chat_model_stream') {

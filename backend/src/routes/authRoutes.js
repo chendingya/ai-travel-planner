@@ -1,6 +1,6 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -410,13 +410,14 @@ module.exports = () => {
     }
   });
 
-  router.get('/auth/session', requireAuth, async (req, res) => {
+  router.get('/auth/session', optionalAuth, async (req, res) => {
     try {
       const currentUser = req.user || null;
       if (!currentUser?.id) {
-        return res.status(401).json({ error: '登录状态无效，请重新登录' });
+        return res.json({ authenticated: false, user: null });
       }
       return res.json({
+        authenticated: true,
         user: {
           id: currentUser.id,
           email: currentUser.email || null,

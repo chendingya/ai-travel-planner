@@ -193,6 +193,7 @@ import { ref, watch, onMounted, computed } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { usePlannerStore } from '../stores/planner';
 import { supabase } from '../supabase';
+import { createAIStreamEventParser } from '../utils/aiStreamEventParser';
 
 // 登录状态
 const isLoggedIn = ref(false);
@@ -246,6 +247,7 @@ const processVisible = ref(false);
 const processCompleted = ref(false);
 const processSteps = ref([]);
 const processLogs = ref([]);
+const streamEventParser = createAIStreamEventParser();
 let streamAbortController = null;
 
 // 语音识别 - 快捷输入
@@ -542,6 +544,71 @@ const applyStreamStep = (step) => {
   if (step.toolResults) setProgressAt('synthesis');
   if (step.content && !step.toolCalls) setProgressAt('draft');
   appendStepLogs(step);
+};
+
+const applyUnifiedEvent = (event) => {
+  if (!event || typeof event !== 'object') return { receivedStep: false, finalData: null };
+  const type = String(event.type || '').toLowerCase();
+
+  if (type === 'meta') {
+    if (Array.isArray(event.tools) && event.tools.length) {
+      setProgressAt('tooling');
+      processLogs.value.push({
+        type: 'info',
+        title: '可用工具',
+        content: event.tools.join('、'),
+      });
+    } else {
+      setProgressAt('synthesis');
+    }
+    return { receivedStep: false, finalData: null };
+  }
+
+  if (type === 'tool_call') {
+    applyStreamStep({
+      role: 'assistant',
+      toolName: event.toolName || '',
+      toolCallId: event.toolCallId || '',
+      content: event.summary || event.content || '',
+      toolCalls: JSON.stringify([
+        {
+          name: event.toolName || '',
+          args: event.summary || event.content || '',
+          id: event.toolCallId || '',
+        },
+      ]),
+    });
+    return { receivedStep: true, finalData: null };
+  }
+
+  if (type === 'tool_result' || type === 'tool_error') {
+    applyStreamStep({
+      role: 'tool',
+      toolName: event.toolName || '',
+      toolCallId: event.toolCallId || '',
+      content: event.summary || event.content || event.message || '',
+      toolResults: event.summary || event.content || event.message || '',
+    });
+    return { receivedStep: true, finalData: null };
+  }
+
+  if (type === 'text' || type === 'think') {
+    applyStreamStep({
+      role: 'assistant',
+      content: event.content || '',
+    });
+    return { receivedStep: true, finalData: null };
+  }
+
+  if (type === 'final') {
+    return { receivedStep: false, finalData: event.result ?? null };
+  }
+
+  if (type === 'error') {
+    throw new Error(event.message || '生成方案失败');
+  }
+
+  return { receivedStep: false, finalData: null };
 };
 
 const applyPlanResult = async (data) => {
@@ -914,6 +981,7 @@ const handleSubmit = async () => {
 // 生成方案
 const getPlan = async () => {
   loading.value = true;
+  streamEventParser.reset();
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
@@ -951,33 +1019,13 @@ const getPlan = async () => {
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    const handleEvent = async (event, data) => {
-      if (event === 'step') {
-        receivedStepEvent = true;
-        applyStreamStep(data);
-        return;
-      }
-      if (event === 'meta') {
-        if (Array.isArray(data?.tools) && data.tools.length) {
-          setProgressAt('tooling');
-          processLogs.value.push({
-            type: 'info',
-            title: '可用工具',
-            content: data.tools.join('、')
-          });
-        } else {
-          setProgressAt('synthesis');
-        }
-        return;
-      }
-      if (event === 'done') {
-        finalData = data;
-        return;
-      }
-      if (event === 'error') {
-        const message = data?.message || '生成方案失败';
-        throw new Error(message);
-      }
+    const handleEvent = async (_event, data) => {
+      const parsed = streamEventParser.parseChunk({ data });
+      const unified = parsed?.event || null;
+      if (!unified || !unified.type) return;
+      const { receivedStep, finalData: normalizedFinalData } = applyUnifiedEvent(unified);
+      if (receivedStep) receivedStepEvent = true;
+      if (normalizedFinalData) finalData = normalizedFinalData;
     };
 
     while (true) {

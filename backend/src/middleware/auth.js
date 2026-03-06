@@ -105,6 +105,29 @@ const requireAuth = async (req, res, next) => {
   }
 };
 
+const optionalAuth = async (req, _res, next) => {
+  const extracted = extractToken(req);
+  const token = extracted.token;
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) {
+      req.user = null;
+      return next();
+    }
+    req.user = data.user;
+    return next();
+  } catch (_) {
+    req.user = null;
+    return next();
+  }
+};
+
 module.exports = {
   requireAuth,
+  optionalAuth,
 };

@@ -379,6 +379,7 @@ const chatServiceConfig = () => ({
   stream: true,
   protocol: 'default',
   onRequest: async (params) => {
+    streamEventParser.reset()
     const session = await getAuthSession('请先登录后再进行对话')
     if (!session) {
       goToLogin()

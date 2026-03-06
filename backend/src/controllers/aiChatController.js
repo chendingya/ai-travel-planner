@@ -108,10 +108,13 @@ class AIChatController {
 
       const writeEvent = (payload) => {
         if (res.writableEnded) return;
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        const normalized = payload && typeof payload === 'object'
+          ? { source: payload.source || 'chat', ...payload }
+          : { source: 'chat', type: 'text', content: String(payload ?? '') };
+        res.write(`data: ${JSON.stringify(normalized)}\n\n`);
         if (typeof res.flush === 'function') res.flush();
         if (debug) {
-          const contentLen = typeof payload?.content === 'string' ? payload.content.length : 0;
+          const contentLen = typeof normalized?.content === 'string' ? normalized.content.length : 0;
           console.log(`[ai-chat] stream chunk (${contentLen})`);
         }
       };

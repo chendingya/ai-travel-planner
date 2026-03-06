@@ -79,8 +79,25 @@ class PlanController {
     const sendEvent = (event, payload) => {
       if (res.writableEnded) return;
       const data = payload == null ? {} : payload;
+      const normalized = data && typeof data === 'object'
+        ? {
+            source: data.source || 'plan',
+            type:
+              data.type ||
+              (event === 'meta'
+                ? 'meta'
+                : event === 'done'
+                  ? 'final'
+                  : event === 'error'
+                    ? 'error'
+                    : event === 'ping'
+                      ? 'ping'
+                      : 'step'),
+            ...data,
+          }
+        : { source: 'plan', type: 'text', content: String(data ?? '') };
       res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      res.write(`data: ${JSON.stringify(normalized)}\n\n`);
     };
 
     try {
@@ -99,7 +116,7 @@ class PlanController {
 
       let closed = false;
       const heartbeat = setInterval(() => {
-        sendEvent('ping', { ts: Date.now() });
+        sendEvent('ping', { type: 'ping', ts: Date.now() });
       }, 15000);
 
       req.on('close', () => {
@@ -113,7 +130,7 @@ class PlanController {
       };
       const onTools = (tools) => {
         if (closed) return;
-        sendEvent('meta', { tools });
+        sendEvent('meta', { type: 'meta', phase: 'tooling', tools });
       };
 
       const requestId = req.requestId || '';
@@ -124,7 +141,7 @@ class PlanController {
       );
 
       if (!closed) {
-        sendEvent('done', result);
+        sendEvent('done', { type: 'final', result });
       }
       clearInterval(heartbeat);
       res.end();
@@ -134,7 +151,7 @@ class PlanController {
         res.status(500).json({ message: msg, error: msg });
         return;
       }
-      sendEvent('error', { message: msg });
+      sendEvent('error', { type: 'error', message: msg });
       res.end();
     }
   }
