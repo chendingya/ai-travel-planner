@@ -499,6 +499,19 @@ class AIChatService {
     return raw.length > 18 ? `${raw.slice(0, 18)}...` : raw;
   }
 
+  _normalizeUserId(value) {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  _requireUserId(value) {
+    const userId = this._normalizeUserId(value);
+    if (userId) return userId;
+    const err = new Error('用户身份缺失');
+    err.status = 401;
+    err.code = 'AUTH_REQUIRED';
+    throw err;
+  }
+
   _normalizeMessageContent(content) {
     if (typeof content === 'string') return content;
     if (Array.isArray(content)) {
@@ -590,11 +603,13 @@ class AIChatService {
     return { effectiveDate, from, to, fromCode, toCode, ticketsText };
   }
 
-  async ensureAiChatSession(conversationId) {
+  async ensureAiChatSession(conversationId, userId) {
+    const effectiveUserId = this._requireUserId(userId);
     const { data, error } = await this.supabase
       .from('ai_chat_sessions')
       .select('conversation_id')
       .eq('conversation_id', conversationId)
+      .eq('user_id', effectiveUserId)
       .maybeSingle();
 
     if (!error && data) return true;
@@ -602,7 +617,7 @@ class AIChatService {
 
     const { error: insertError } = await this.supabase
       .from('ai_chat_sessions')
-      .insert([{ conversation_id: conversationId, messages: [] }]);
+      .insert([{ conversation_id: conversationId, user_id: effectiveUserId, messages: [] }]);
 
     if (insertError) throw insertError;
     return true;
@@ -613,6 +628,7 @@ class AIChatService {
    */
   async chat(message, sessionId, options = {}) {
     try {
+      const userId = this._requireUserId(options?.userId);
       const enableTools = !!(options.enable_tools ?? options.enableTools);
       const includeAudio = !!(options.include_audio ?? options.includeAudio);
       const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
@@ -941,7 +957,7 @@ class AIChatService {
       if (sessionId) {
         // LangGraph 状态管理：手动加载和保存历史
         // 因为 LangGraph 会返回完整的会话状态，我们手动计算增量并保存，比 RunnableWithMessageHistory 更可靠
-        const history = new SupabaseMessageHistory(sessionId, this.supabase);
+        const history = new SupabaseMessageHistory(sessionId, this.supabase, { userId });
         const storedMessages = await history.getMessages();
         
         // 构造输入：历史记录 + 用户新消息
@@ -1106,14 +1122,15 @@ class AIChatService {
   /**
    * 创建新的会话
    */
-  async createSession(title) {
+  async createSession(title, userId) {
     try {
+      const effectiveUserId = this._requireUserId(userId);
       const { randomUUID } = require('crypto');
       const conversationId = randomUUID();
 
       const { data, error } = await this.supabase
         .from('ai_chat_sessions')
-        .insert([{ conversation_id: conversationId, messages: [] }])
+        .insert([{ conversation_id: conversationId, user_id: effectiveUserId, messages: [] }])
         .select('*')
         .single();
 
@@ -1132,7 +1149,7 @@ class AIChatService {
 
       const fallback = await this.supabase
         .from('chat_sessions')
-        .insert([{ title: title || '新对话' }])
+        .insert([{ title: title || '新对话', user_id: effectiveUserId }])
         .select()
         .single();
 
@@ -1148,6 +1165,7 @@ class AIChatService {
    * 获取会话列表
    */
   async getSessions(options = {}) {
+    const effectiveUserId = this._requireUserId(options?.userId);
     const limitRaw = Number(options?.limit);
     const offsetRaw = Number(options?.offset);
     const paged = Number.isFinite(limitRaw) && limitRaw > 0;
@@ -1171,6 +1189,7 @@ class AIChatService {
         let query = this.supabase
           .from('ai_chat_sessions')
           .select('*')
+          .eq('user_id', effectiveUserId)
           .order('updated_at', { ascending: false });
         query = withPagination(query);
         const result = await query;
@@ -1187,6 +1206,7 @@ class AIChatService {
           let query = this.supabase
             .from('ai_chat_sessions')
             .select('*')
+            .eq('user_id', effectiveUserId)
             .order('created_at', { ascending: false });
           query = withPagination(query);
           const result = await query;
@@ -1207,6 +1227,7 @@ class AIChatService {
         let query = this.supabase
           .from('chat_sessions')
           .select('*')
+          .eq('user_id', effectiveUserId)
           .order('created_at', { ascending: false });
         query = withPagination(query);
         const result = await query;
@@ -1230,13 +1251,15 @@ class AIChatService {
   /**
    * 获取会话历史记录
    */
-  async getSessionHistory(sessionId) {
+  async getSessionHistory(sessionId, userId) {
     try {
+      const effectiveUserId = this._requireUserId(userId);
       const { data, error } = await this.withRetry(async () => {
         const result = await this.supabase
           .from('ai_chat_sessions')
           .select('messages')
           .eq('conversation_id', sessionId)
+          .eq('user_id', effectiveUserId)
           .maybeSingle();
 
         if (!result?.error) return result;
@@ -1266,9 +1289,13 @@ class AIChatService {
         .from('chat_messages')
         .select('*')
         .eq('session_id', sessionId)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: true });
 
-      if (fallback.error) throw fallback.error;
+      if (fallback.error) {
+        if (fallback.error.code === '42703') return [];
+        throw fallback.error;
+      }
       return (fallback.data || []).map((msg) => ({ role: msg.role, content: msg.content }));
     } catch (error) {
       console.error('Get session history failed:', error);
@@ -1279,14 +1306,16 @@ class AIChatService {
   /**
    * 保存消息
    */
-  async saveMessage(sessionId, userMessage, aiResponse) {
+  async saveMessage(sessionId, userMessage, aiResponse, userId) {
     try {
+      const effectiveUserId = this._requireUserId(userId);
       const now = new Date().toISOString();
 
       const { data, error } = await this.supabase
         .from('ai_chat_sessions')
         .select('messages')
         .eq('conversation_id', sessionId)
+        .eq('user_id', effectiveUserId)
         .maybeSingle();
 
       if (!error) {
@@ -1300,7 +1329,8 @@ class AIChatService {
         const { error: updateError } = await this.supabase
           .from('ai_chat_sessions')
           .update({ messages: nextMessages })
-          .eq('conversation_id', sessionId);
+          .eq('conversation_id', sessionId)
+          .eq('user_id', effectiveUserId);
 
         if (updateError) throw updateError;
         return;
@@ -1314,7 +1344,7 @@ class AIChatService {
 
         const { error: insertError } = await this.supabase
           .from('ai_chat_sessions')
-          .insert([{ conversation_id: sessionId, messages: nextMessages }]);
+          .insert([{ conversation_id: sessionId, user_id: effectiveUserId, messages: nextMessages }]);
 
         if (!insertError) return;
         if (insertError.code !== '23505') throw insertError;
@@ -1323,6 +1353,7 @@ class AIChatService {
           .from('ai_chat_sessions')
           .select('messages')
           .eq('conversation_id', sessionId)
+          .eq('user_id', effectiveUserId)
           .maybeSingle();
 
         if (refetchError) throw refetchError;
@@ -1335,7 +1366,8 @@ class AIChatService {
         const { error: updateError } = await this.supabase
           .from('ai_chat_sessions')
           .update({ messages: merged })
-          .eq('conversation_id', sessionId);
+          .eq('conversation_id', sessionId)
+          .eq('user_id', effectiveUserId);
         if (updateError) throw updateError;
         return;
       }
@@ -1344,12 +1376,12 @@ class AIChatService {
 
       const { error: userError } = await this.supabase
         .from('chat_messages')
-        .insert([{ session_id: sessionId, role: 'user', content: userMessage }]);
+        .insert([{ session_id: sessionId, user_id: effectiveUserId, role: 'user', content: userMessage }]);
       if (userError) throw userError;
 
       const { error: aiError } = await this.supabase
         .from('chat_messages')
-        .insert([{ session_id: sessionId, role: 'assistant', content: aiResponse }]);
+        .insert([{ session_id: sessionId, user_id: effectiveUserId, role: 'assistant', content: aiResponse }]);
       if (aiError) throw aiError;
     } catch (error) {
       console.error('Save message failed:', error);
@@ -1360,18 +1392,20 @@ class AIChatService {
   /**
    * 删除会话
    */
-  async deleteSession(sessionId) {
+  async deleteSession(sessionId, userId) {
     try {
+      const effectiveUserId = this._requireUserId(userId);
       const { error } = await this.supabase
         .from('ai_chat_sessions')
         .delete()
-        .eq('conversation_id', sessionId);
+        .eq('conversation_id', sessionId)
+        .eq('user_id', effectiveUserId);
 
       if (!error) return;
       if (error.code !== 'PGRST205') throw error;
 
-      await this.supabase.from('chat_messages').delete().eq('session_id', sessionId);
-      const fallback = await this.supabase.from('chat_sessions').delete().eq('id', sessionId);
+      await this.supabase.from('chat_messages').delete().eq('session_id', sessionId).eq('user_id', effectiveUserId);
+      const fallback = await this.supabase.from('chat_sessions').delete().eq('id', sessionId).eq('user_id', effectiveUserId);
       if (fallback.error) throw fallback.error;
     } catch (error) {
       console.error('Delete session failed:', error);
@@ -1382,19 +1416,21 @@ class AIChatService {
   /**
    * 更新会话标题
    */
-  async updateSessionTitle(sessionId, title) {
+  async updateSessionTitle(sessionId, title, userId) {
     try {
+      const effectiveUserId = this._requireUserId(userId);
       const { error } = await this.supabase
         .from('ai_chat_sessions')
         .update({ title })
-        .eq('conversation_id', sessionId);
+        .eq('conversation_id', sessionId)
+        .eq('user_id', effectiveUserId);
 
       if (!error) return;
 
       if (error.code === 'PGRST204' || error.code === '42703') return;
       if (error.code !== 'PGRST205') throw error;
 
-      const fallback = await this.supabase.from('chat_sessions').update({ title }).eq('id', sessionId);
+      const fallback = await this.supabase.from('chat_sessions').update({ title }).eq('id', sessionId).eq('user_id', effectiveUserId);
       if (fallback.error) throw fallback.error;
     } catch (error) {
       console.error('Update session title failed:', error);

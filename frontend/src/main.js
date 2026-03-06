@@ -7,11 +7,9 @@ import App from './App.vue'
 import router from './router'
 import './styles/custom.css'
 import { loadAmapScript } from './config/amap.js'
-import { supabase } from './supabase'
 
 if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
   const nativeFetch = window.fetch.bind(window);
-  let pendingTokenPromise = null;
 
   const resolveUrl = (input) => {
     try {
@@ -33,28 +31,6 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
     return url.origin === window.location.origin && url.pathname.startsWith('/api/');
   };
 
-  const extractBearerToken = (authorization) => {
-    if (typeof authorization !== 'string') return '';
-    const trimmed = authorization.trim();
-    if (!trimmed) return '';
-    if (trimmed.toLowerCase().startsWith('bearer ')) return trimmed.slice(7).trim();
-    return trimmed;
-  };
-
-  const getSessionAccessToken = async () => {
-    if (pendingTokenPromise) return pendingTokenPromise;
-    pendingTokenPromise = Promise.resolve()
-      .then(async () => {
-        const { data } = await supabase.auth.getSession();
-        return data?.session?.access_token || '';
-      })
-      .catch(() => '')
-      .finally(() => {
-        pendingTokenPromise = null;
-      });
-    return pendingTokenPromise;
-  };
-
   window.fetch = async (input, init = {}) => {
     try {
       const url = resolveUrl(input);
@@ -65,31 +41,18 @@ if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
         initHeaders.forEach((value, key) => headers.set(key, value));
       }
 
-      if (shouldAttachAuth(url) && !headers.get('Authorization')) {
-        const accessToken = await getSessionAccessToken();
-        if (accessToken) {
-          headers.set('Authorization', `Bearer ${accessToken}`);
-        }
+      if (shouldAttachAuth(url)) {
+        // 纯 Cookie 模式：禁用前端 token 头注入，仅依赖 HttpOnly Cookie。
+        headers.delete('Authorization');
+        headers.delete('X-Authorization');
+        headers.delete('X-Supabase-Access-Token');
+        headers.delete('X-Access-Token');
+        headers.delete('X-Auth-Token');
       }
 
-      const authHeader = headers.get('Authorization');
-      const bearerToken = extractBearerToken(authHeader);
-      if (authHeader && !headers.get('X-Authorization')) {
-        // 某些托管网关会过滤 Authorization，额外附带一份自定义头兜底。
-        headers.set('X-Authorization', authHeader);
-      }
-      if (bearerToken && !headers.get('X-Supabase-Access-Token')) {
-        // 网关可能覆盖标准 Authorization，优先走自定义头传递用户 JWT。
-        headers.set('X-Supabase-Access-Token', bearerToken);
-      }
-      if (bearerToken && !headers.get('X-Access-Token')) {
-        headers.set('X-Access-Token', bearerToken);
-      }
-      if (bearerToken && !headers.get('X-Auth-Token')) {
-        headers.set('X-Auth-Token', bearerToken);
-      }
       return nativeFetch(input, {
         ...init,
+        credentials: shouldAttachAuth(url) ? 'include' : init.credentials,
         headers,
       });
     } catch (_) {

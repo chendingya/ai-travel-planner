@@ -124,5 +124,26 @@ module.exports = (planController) => {
     planController.generateCompletePlan(req, res);
   });
 
+  // 已保存计划（纯 Cookie 鉴权）
+  router.get('/plans', requireAuth, (req, res) => {
+    planController.listSavedPlans(req, res);
+  });
+
+  router.get('/plans/:id', requireAuth, (req, res) => {
+    planController.getSavedPlan(req, res);
+  });
+
+  router.post('/plans', requireAuth, (req, res) => {
+    planController.savePlan(req, res);
+  });
+
+  router.patch('/plans/:id', requireAuth, (req, res) => {
+    planController.updateSavedPlan(req, res);
+  });
+
+  router.delete('/plans/:id', requireAuth, (req, res) => {
+    planController.deleteSavedPlan(req, res);
+  });
+
   return router;
 };

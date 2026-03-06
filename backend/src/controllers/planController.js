@@ -166,6 +166,81 @@ class PlanController {
       res.status(500).json({ message: msg, error: msg });
     }
   }
+
+  async listSavedPlans(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const plans = await this.planService.listSavedPlans(userId);
+      res.json({ plans });
+    } catch (error) {
+      console.error('List saved plans error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async getSavedPlan(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const id = typeof req.params?.id === 'string' ? req.params.id : '';
+      if (!id) return res.status(400).json({ message: '计划 ID 缺失', error: '计划 ID 缺失' });
+      const plan = await this.planService.getSavedPlan(id, userId);
+      if (!plan) return res.status(404).json({ message: '计划不存在', error: '计划不存在' });
+      res.json({ plan });
+    } catch (error) {
+      console.error('Get saved plan error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async savePlan(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const payload = req.body && typeof req.body === 'object' ? req.body : {};
+      const saved = await this.planService.savePlan(payload, userId);
+      res.status(201).json({ plan: saved });
+    } catch (error) {
+      console.error('Save plan error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async updateSavedPlan(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const id = typeof req.params?.id === 'string' ? req.params.id : '';
+      if (!id) return res.status(400).json({ message: '计划 ID 缺失', error: '计划 ID 缺失' });
+      const payload = req.body && typeof req.body === 'object' ? req.body : {};
+      const updated = await this.planService.updateSavedPlan(id, payload, userId);
+      if (!updated) return res.status(404).json({ message: '计划不存在', error: '计划不存在' });
+      res.json({ plan: updated });
+    } catch (error) {
+      console.error('Update saved plan error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async deleteSavedPlan(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const id = typeof req.params?.id === 'string' ? req.params.id : '';
+      if (!id) return res.status(400).json({ message: '计划 ID 缺失', error: '计划 ID 缺失' });
+      await this.planService.deleteSavedPlan(id, userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete saved plan error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
 }
 
 module.exports = PlanController;

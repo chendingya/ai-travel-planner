@@ -199,7 +199,6 @@
 import { ref, onMounted, computed, nextTick, onBeforeUnmount, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePlannerStore } from '../stores/planner';
-import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
 import SimplePieChart from './SimplePieChart.vue';
 import GlassButton from './GlassButton.vue';
@@ -692,16 +691,8 @@ const handleSavePlan = async () => {
   isSaving.value = true;
   saving.value = true;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      MessagePlugin.warning('请先登录以保存计划');
-      return;
-    }
-
     const planPayload = JSON.parse(JSON.stringify(plan.value));
-
-    const insertPayload = {
-      user_id: session.user.id,
+    const requestBody = {
       destination: form.value.destination,
       duration: form.value.duration,
       budget: form.value.budget,
@@ -710,11 +701,29 @@ const handleSavePlan = async () => {
       plan_details: planPayload
     };
 
-    const { error } = await supabase
-      .from('plans')
-      .insert([insertPayload]);
+    const response = await fetch('/api/plans', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
 
-    if (error) throw error;
+    if (response.status === 401) {
+      MessagePlugin.warning('请先登录以保存计划');
+      return;
+    }
+    if (!response.ok) throw new Error('保存计划失败');
+
+    const result = await response.json().catch(() => ({}));
+    const newPlanId = result?.plan?.id;
+    if (typeof newPlanId === 'string' && newPlanId) {
+      planId.value = newPlanId;
+      try {
+        localStorage.setItem('current_plan_id', newPlanId);
+      } catch (e) {
+        console.warn('无法保存计划 ID 到 localStorage', e);
+      }
+    }
 
     MessagePlugin.success('计划已保存！');
   } catch (error) {
@@ -768,23 +777,33 @@ const toggleEdit = async () => {
 // 更新数据库中的计划
 const updatePlanInDatabase = async () => {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      console.warn('用户未登录，无法更新数据库');
+    if (!planId.value) {
+      console.warn('计划 ID 缺失，无法更新数据库');
       return;
     }
 
-    const { error } = await supabase
-      .from('plans')
-      .update({
+    const response = await fetch(`/api/plans/${planId.value}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        destination: form.value?.destination,
+        duration: form.value?.duration,
+        budget: form.value?.budget,
+        travelers: form.value?.travelers,
+        preferences: form.value?.preferences || '',
         plan_details: plan.value,
         updated_at: new Date().toISOString()
       })
-      .eq('id', planId.value)
-      .eq('user_id', session.user.id); // 确保只更新自己的计划
+    });
 
-    if (error) {
-      console.error('更新数据库失败:', error);
+    if (response.status === 401) {
+      MessagePlugin.warning('登录状态已失效，请重新登录');
+      return;
+    }
+
+    if (!response.ok) {
+      console.error('更新数据库失败:', response.status);
       MessagePlugin.warning('编辑已保存到本地，但同步到云端失败');
     } else {
       console.log('✅ 计划已同步到数据库');

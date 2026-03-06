@@ -131,6 +131,13 @@ MCP_BING_AUTHORIZATION=Bearer xxx
    - 用于增强 AI 聊天的功能
    - 支持 12306 火车票查询、高德地图、Bing 搜索等
 
+6. **认证模式（纯 Cookie）**
+   - 当前默认使用 `HttpOnly Cookie` 鉴权，不再依赖前端 `Authorization` 头
+   - 建议在 `backend/.env` 设置：
+     - `AUTH_HIDE_SESSION_IN_RESPONSE=1`
+     - `AUTH_COOKIE_SECURE=false`（本地）/`true`（生产 HTTPS）
+   - 详细设计见：[认证与AI聊天安全改造说明](./认证与AI聊天安全改造说明.md)
+
 ## 验证是否成功
 
 ### 后端终端显示

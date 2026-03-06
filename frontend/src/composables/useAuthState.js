@@ -34,21 +34,21 @@ const refreshAuthState = async (options = {}) => {
   }
 };
 
-const setSessionFromServer = async (session) => {
-  if (!session?.access_token || !session?.refresh_token) return false;
-  const { error } = await supabase.auth.setSession({
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-  });
-  if (error) throw error;
-  await refreshAuthState({ refreshSession: true });
-  return true;
-};
-
 const signOutAndSync = async () => {
+  let backendError = null;
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    backendError = error;
+  }
+
   const { error } = await supabase.auth.signOut({ scope: 'local' });
-  await refreshAuthState();
-  return { error };
+  user.value = null;
+  authReady.value = true;
+  return { error: error || backendError };
 };
 
 const patchUserMetadata = (patch = {}) => {
@@ -82,7 +82,6 @@ export const useAuthState = () => ({
   user,
   authReady,
   refreshAuthState,
-  setSessionFromServer,
   signOutAndSync,
   patchUserMetadata,
 });

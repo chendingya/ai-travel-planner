@@ -90,7 +90,6 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { supabase } from '../supabase';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { usePlannerStore } from '../stores/planner';
 
@@ -105,21 +104,17 @@ const planToDelete = ref(null);
 const fetchPlans = async () => {
   loading.value = true;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
+    const response = await fetch('/api/plans', {
+      credentials: 'include',
+    });
+    if (response.status === 401) {
       MessagePlugin.warning('请先登录以查看保存的计划');
       plans.value = [];
       return;
     }
-
-    const { data, error } = await supabase
-      .from('plans')
-      .select('id, user_id, destination, duration, budget, travelers, preferences, plan_details, created_at, updated_at')
-      .eq('user_id', session.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    plans.value = data || [];
+    if (!response.ok) throw new Error('获取计划列表失败');
+    const result = await response.json().catch(() => ({}));
+    plans.value = Array.isArray(result?.plans) ? result.plans : [];
   } catch (error) {
     console.error('Error fetching plans:', error);
     MessagePlugin.error('获取计划列表失败');
@@ -132,21 +127,15 @@ const viewPlan = async (plan) => {
   // 为避免使用到旧缓存，进入详情前按 ID 强制拉取最新记录
   try {
     loading.value = true;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      MessagePlugin.warning('请先登录');
-      return;
-    }
-
-    const { data: fresh, error } = await supabase
-      .from('plans')
-      .select('id, user_id, destination, duration, budget, travelers, preferences, plan_details, updated_at')
-      .eq('id', plan.id)
-      .eq('user_id', session.user.id)
-      .single();
-
-    if (error) {
-      console.warn('获取计划最新数据失败，使用本地列表项作为兜底', error);
+    let fresh = null;
+    const response = await fetch(`/api/plans/${plan.id}`, {
+      credentials: 'include',
+    });
+    if (response.ok) {
+      const result = await response.json().catch(() => ({}));
+      fresh = result?.plan || null;
+    } else {
+      console.warn('获取计划最新数据失败，使用本地列表项作为兜底', response.status);
     }
 
     const p = fresh || plan;
@@ -211,12 +200,11 @@ const confirmDelete = (id) => {
 
 const handleDelete = async () => {
   try {
-    const { error } = await supabase
-      .from('plans')
-      .delete()
-      .eq('id', planToDelete.value);
-
-    if (error) throw error;
+    const response = await fetch(`/api/plans/${planToDelete.value}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!response.ok) throw new Error('删除计划失败');
 
     plans.value = plans.value.filter((plan) => plan.id !== planToDelete.value);
     MessagePlugin.success('计划已删除');

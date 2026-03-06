@@ -5,9 +5,31 @@
 const { safeParseJSON } = require('../utils/helpers');
 
 class PlanService {
-  constructor(langChainManager, mcpService) {
+  constructor(langChainManager, mcpService, supabase) {
     this.langChainManager = langChainManager;
     this.mcpService = mcpService;
+    this.supabase = supabase || null;
+  }
+
+  _requireUserId(value) {
+    const userId = typeof value === 'string' ? value.trim() : '';
+    if (userId) return userId;
+    const err = new Error('用户身份缺失');
+    err.status = 401;
+    err.code = 'AUTH_REQUIRED';
+    throw err;
+  }
+
+  _requireSupabase() {
+    if (this.supabase) return this.supabase;
+    const err = new Error('数据库服务未配置');
+    err.status = 503;
+    err.code = 'SUPABASE_UNAVAILABLE';
+    throw err;
+  }
+
+  _planSelectFields() {
+    return 'id, user_id, destination, duration, budget, travelers, preferences, plan_details, created_at, updated_at';
   }
 
   _getMcpPreferredProvider() {
@@ -554,6 +576,96 @@ class PlanService {
       }
       throw new Error('生成完整旅行计划失败');
     }
+  }
+
+  async listSavedPlans(userId) {
+    const uid = this._requireUserId(userId);
+    const supabase = this._requireSupabase();
+    const { data, error } = await supabase
+      .from('plans')
+      .select(this._planSelectFields())
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
+  async getSavedPlan(planId, userId) {
+    const uid = this._requireUserId(userId);
+    const id = typeof planId === 'string' ? planId.trim() : '';
+    if (!id) return null;
+    const supabase = this._requireSupabase();
+    const { data, error } = await supabase
+      .from('plans')
+      .select(this._planSelectFields())
+      .eq('id', id)
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  }
+
+  async savePlan(payload, userId) {
+    const uid = this._requireUserId(userId);
+    const supabase = this._requireSupabase();
+    const input = payload && typeof payload === 'object' ? payload : {};
+    const insertPayload = {
+      user_id: uid,
+      destination: input.destination || '',
+      duration: Number.isFinite(Number(input.duration)) ? Number(input.duration) : 0,
+      budget: Number.isFinite(Number(input.budget)) ? Number(input.budget) : 0,
+      travelers: Number.isFinite(Number(input.travelers)) ? Number(input.travelers) : 1,
+      preferences: typeof input.preferences === 'string' ? input.preferences : '',
+      plan_details: input.plan_details ?? input.planDetails ?? {},
+    };
+    const { data, error } = await supabase
+      .from('plans')
+      .insert([insertPayload])
+      .select(this._planSelectFields())
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async updateSavedPlan(planId, payload, userId) {
+    const uid = this._requireUserId(userId);
+    const id = typeof planId === 'string' ? planId.trim() : '';
+    if (!id) return null;
+    const supabase = this._requireSupabase();
+    const input = payload && typeof payload === 'object' ? payload : {};
+    const next = { updated_at: new Date().toISOString() };
+    if (typeof input.destination === 'string') next.destination = input.destination;
+    if (Number.isFinite(Number(input.duration))) next.duration = Number(input.duration);
+    if (Number.isFinite(Number(input.budget))) next.budget = Number(input.budget);
+    if (Number.isFinite(Number(input.travelers))) next.travelers = Number(input.travelers);
+    if (typeof input.preferences === 'string') next.preferences = input.preferences;
+    if (input.plan_details !== undefined || input.planDetails !== undefined) {
+      next.plan_details = input.plan_details ?? input.planDetails;
+    }
+
+    const { data, error } = await supabase
+      .from('plans')
+      .update(next)
+      .eq('id', id)
+      .eq('user_id', uid)
+      .select(this._planSelectFields())
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  }
+
+  async deleteSavedPlan(planId, userId) {
+    const uid = this._requireUserId(userId);
+    const id = typeof planId === 'string' ? planId.trim() : '';
+    if (!id) return false;
+    const supabase = this._requireSupabase();
+    const { error } = await supabase
+      .from('plans')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', uid);
+    if (error) throw error;
+    return true;
   }
 }
 

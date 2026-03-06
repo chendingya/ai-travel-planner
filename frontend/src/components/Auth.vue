@@ -195,7 +195,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import { useAuthState } from '../composables/useAuthState';
 
 const router = useRouter();
-const { user, authReady, refreshAuthState, setSessionFromServer, signOutAndSync } = useAuthState();
+const { user, authReady, refreshAuthState, signOutAndSync } = useAuthState();
 
 const showLoginDialog = ref(false);
 const loading = ref(false);
@@ -288,6 +288,7 @@ const openDialog = (mode = 'login') => {
 const requestAuth = async (url, payload) => {
   const response = await fetch(url, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -312,15 +313,11 @@ const handleLogin = async () => {
 
   loading.value = true;
   try {
-    const data = await requestAuth('/api/auth/login', {
+    await requestAuth('/api/auth/login', {
       identifier,
       password,
     });
-
-    const hasSession = await setSessionFromServer(data.session);
-    if (!hasSession) {
-      throw new Error('登录会话无效，请稍后重试');
-    }
+    await refreshAuthState({ refreshSession: true });
     MessagePlugin.success('登录成功');
     showLoginDialog.value = false;
     loginIdentifier.value = '';
@@ -371,8 +368,8 @@ const handleRegister = async () => {
       password,
     });
 
-    const hasSession = await setSessionFromServer(data.session);
-    if (hasSession) {
+    await refreshAuthState({ refreshSession: true });
+    if (user.value?.id) {
       MessagePlugin.success(data.message || '注册并登录成功');
       showLoginDialog.value = false;
     } else {

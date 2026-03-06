@@ -79,7 +79,14 @@ const app = express();
 let server = null;
 
 // 中间件
-app.use(cors(config.cors));
+const corsOptions = {
+  ...config.cors,
+};
+if (corsOptions.credentials && corsOptions.origin === '*') {
+  // credentials=true 时不能返回通配符；使用 true 让 cors 中间件回显请求 Origin。
+  corsOptions.origin = true;
+}
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);
@@ -193,7 +200,7 @@ async function initializeApp() {
     const configuredServers = mcpService.listServers();
     const configuredEntries = configuredServers && typeof configuredServers === 'object' ? Object.entries(configuredServers) : [];
     
-    const planService = new PlanService(langChainManager, mcpService);
+    const planService = new PlanService(langChainManager, mcpService, supabase);
     const ttsService = new TTSService({ audioDir });
     const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService });
     const promptService = new PromptService(langChainManager);

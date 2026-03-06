@@ -159,7 +159,7 @@ LangGraph 事件映射关系：
 
 ### 7.1 请求阶段
 `chatServiceConfig.onRequest` 负责：
-- 注入 `Authorization`
+- 通过 `credentials: include` 自动携带 HttpOnly Cookie（不再注入 `Authorization`）
 - 传递 `enable_tools`
 - 可选 `debug_stream`
 
@@ -199,6 +199,9 @@ LangGraph 事件映射关系：
 历史会话性能优化（虚拟渲染）详见：
 - `docs/历史会话虚拟渲染实现详解.md`
 
+鉴权与会话安全改造详见：
+- `docs/认证与AI聊天安全改造说明.md`
+
 ---
 
 ## 11. 答辩讲解建议（3 分钟版）
@@ -206,4 +209,3 @@ LangGraph 事件映射关系：
 2. 再讲“工具记录与答案分离”：`thinking` 与 `markdown` 各司其职。
 3. 再讲“可维护性”：后端 `summary` 优先，前端仅做兜底。
 4. 最后讲“可运维”：`debug_stream` 验证链路，`debug_tool_raw` 验证工具原始返回。
-

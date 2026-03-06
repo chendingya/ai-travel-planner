@@ -2,19 +2,27 @@ const { BaseChatMessageHistory } = require('@langchain/core/chat_history');
 const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = require('@langchain/core/messages');
 
 class SupabaseMessageHistory extends BaseChatMessageHistory {
-  constructor(sessionId, supabaseClient) {
+  constructor(sessionId, supabaseClient, options = {}) {
     super();
     this.sessionId = sessionId;
     this.supabase = supabaseClient;
+    this.userId = typeof options?.userId === 'string' ? options.userId.trim() : '';
+    if (!this.userId) {
+      throw new Error('SupabaseMessageHistory requires userId');
+    }
+  }
+
+  _withUserScope(query) {
+    return query.eq('user_id', this.userId);
   }
 
   async getMessages() {
     try {
-      const { data, error } = await this.supabase
+      const { data, error } = await this._withUserScope(this.supabase
         .from('ai_chat_sessions')
         .select('messages')
         .eq('conversation_id', this.sessionId)
-        .maybeSingle();
+        .maybeSingle());
 
       if (error && error.code !== 'PGRST116') {
         console.error('Error loading messages from Supabase:', error);
@@ -51,10 +59,10 @@ class SupabaseMessageHistory extends BaseChatMessageHistory {
 
   async clear() {
     try {
-      await this.supabase
+      await this._withUserScope(this.supabase
         .from('ai_chat_sessions')
         .update({ messages: [] })
-        .eq('conversation_id', this.sessionId);
+        .eq('conversation_id', this.sessionId));
     } catch (err) {
       console.error('Error clearing messages:', err);
     }
@@ -64,24 +72,24 @@ class SupabaseMessageHistory extends BaseChatMessageHistory {
     const serialized = messages.map(m => this._serializeMessage(m));
     
     // Check if session exists
-    const { data, error } = await this.supabase
+    const { data, error } = await this._withUserScope(this.supabase
       .from('ai_chat_sessions')
       .select('conversation_id')
       .eq('conversation_id', this.sessionId)
-      .maybeSingle();
+      .maybeSingle());
 
     if (!data && (!error || error.code === 'PGRST116')) {
         // Insert new session
         const { error: insertError } = await this.supabase
             .from('ai_chat_sessions')
-            .insert([{ conversation_id: this.sessionId, messages: serialized }]);
+            .insert([{ conversation_id: this.sessionId, user_id: this.userId, messages: serialized }]);
         if (insertError) throw insertError;
     } else {
         // Update existing
-        const { error: updateError } = await this.supabase
+        const { error: updateError } = await this._withUserScope(this.supabase
             .from('ai_chat_sessions')
             .update({ messages: serialized })
-            .eq('conversation_id', this.sessionId);
+            .eq('conversation_id', this.sessionId));
         if (updateError) throw updateError;
     }
   }

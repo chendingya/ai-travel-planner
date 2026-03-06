@@ -9,6 +9,21 @@ const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
 const MIN_PASSWORD_LENGTH = 6;
 const USER_SCAN_PAGE_SIZE = 200;
 const USER_SCAN_MAX_PAGES = 20;
+const ACCESS_TOKEN_COOKIE_NAME = process.env.AUTH_ACCESS_COOKIE_NAME || 'sb-access-token';
+const REFRESH_TOKEN_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME || 'sb-refresh-token';
+const COOKIE_SAMESITE = String(process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
+const COOKIE_PATH = process.env.AUTH_COOKIE_PATH || '/';
+const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN || '';
+const COOKIE_SECURE = (() => {
+  const raw = String(process.env.AUTH_COOKIE_SECURE || '').trim().toLowerCase();
+  if (!raw) return process.env.NODE_ENV === 'production';
+  return raw === '1' || raw === 'true' || raw === 'yes';
+})();
+const HIDE_SESSION_IN_RESPONSE = (() => {
+  const raw = String(process.env.AUTH_HIDE_SESSION_IN_RESPONSE || '').trim().toLowerCase();
+  if (!raw) return true;
+  return raw === '1' || raw === 'true' || raw === 'yes';
+})();
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
@@ -96,6 +111,47 @@ const normalizeOptionalText = (value) => {
   return String(value).trim();
 };
 
+const cookieBaseOptions = () => {
+  const opts = {
+    httpOnly: true,
+    secure: COOKIE_SECURE,
+    sameSite: COOKIE_SAMESITE,
+    path: COOKIE_PATH || '/',
+  };
+  if (COOKIE_DOMAIN) opts.domain = COOKIE_DOMAIN;
+  return opts;
+};
+
+const setAuthCookies = (res, session) => {
+  const accessToken = String(session?.access_token || '').trim();
+  const refreshToken = String(session?.refresh_token || '').trim();
+  if (!accessToken) return;
+
+  const accessExpiresInSecRaw = Number(session?.expires_in);
+  const accessMaxAge = Number.isFinite(accessExpiresInSecRaw) && accessExpiresInSecRaw > 0
+    ? Math.floor(accessExpiresInSecRaw * 1000)
+    : 60 * 60 * 1000;
+  const refreshMaxAge = 30 * 24 * 60 * 60 * 1000;
+
+  res.cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, {
+    ...cookieBaseOptions(),
+    maxAge: accessMaxAge,
+  });
+
+  if (refreshToken) {
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, refreshToken, {
+      ...cookieBaseOptions(),
+      maxAge: refreshMaxAge,
+    });
+  }
+};
+
+const clearAuthCookies = (res) => {
+  const clearOptions = cookieBaseOptions();
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, clearOptions);
+  res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, clearOptions);
+};
+
 const findUserByUsername = async (username) => {
   if (!adminSupabase) return null;
   const target = normalizeUsername(username).toLowerCase();
@@ -125,7 +181,7 @@ const toAuthPayload = (data, fallbackUsername = '') => {
   const usernameFromUser = user ? extractUsername(user) : '';
 
   return {
-    session,
+    session: HIDE_SESSION_IN_RESPONSE ? null : session,
     user: user
       ? {
         id: user.id,
@@ -199,6 +255,7 @@ module.exports = () => {
           ...toAuthPayload(null, username),
         });
       }
+      setAuthCookies(res, signInData?.session);
 
       return res.status(201).json({
         message: '注册并登录成功',
@@ -248,6 +305,7 @@ module.exports = () => {
       if (error || !data?.session) {
         return res.status(401).json({ error: '账号或密码错误' });
       }
+      setAuthCookies(res, data?.session);
 
       return res.json({
         message: '登录成功',
@@ -350,6 +408,30 @@ module.exports = () => {
       console.error('[auth/profile] failed:', error?.message || error);
       return res.status(500).json({ error: '更新失败，请稍后重试' });
     }
+  });
+
+  router.get('/auth/session', requireAuth, async (req, res) => {
+    try {
+      const currentUser = req.user || null;
+      if (!currentUser?.id) {
+        return res.status(401).json({ error: '登录状态无效，请重新登录' });
+      }
+      return res.json({
+        user: {
+          id: currentUser.id,
+          email: currentUser.email || null,
+          username: extractUsername(currentUser) || null,
+        },
+      });
+    } catch (error) {
+      console.error('[auth/session] failed:', error?.message || error);
+      return res.status(500).json({ error: '获取会话失败，请稍后重试' });
+    }
+  });
+
+  router.post('/auth/logout', async (_req, res) => {
+    clearAuthCookies(res);
+    return res.json({ message: '已退出登录' });
   });
 
   return router;

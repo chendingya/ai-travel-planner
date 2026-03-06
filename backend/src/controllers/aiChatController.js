@@ -77,11 +77,13 @@ class AIChatController {
 
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       const aiMeta = { providers: [] };
       const trace = {
         requestId,
         route: 'ai-chat',
         sessionId: effectiveSessionId,
+        userId,
         client_ip,
         enableTools: !!(enable_tools ?? enableTools),
         includeAudio: !!(include_audio ?? includeAudio),
@@ -135,6 +137,7 @@ class AIChatController {
           voice,
           language_type,
           client_ip,
+          userId,
         });
 
         writeEvent({ type: 'meta', sessionId: effectiveSessionId });
@@ -175,9 +178,10 @@ class AIChatController {
       const { title } = req.body;
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       res.locals.aiMeta = { mcp: false, providers: [] };
       const session = await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/sessions.create', debug }, () =>
-        this.aiChatService.createSession(title)
+        this.aiChatService.createSession(title, userId)
       );
       res.json(session);
     } catch (error) {
@@ -194,6 +198,7 @@ class AIChatController {
     try {
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       const pageRaw = Number(req.query?.page);
       const pageSizeRaw = Number(req.query?.page_size || req.query?.pageSize);
       const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
@@ -201,7 +206,7 @@ class AIChatController {
       const offset = (page - 1) * pageSize;
       res.locals.aiMeta = { mcp: false, providers: [] };
       const sessions = await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/sessions.list', debug }, () =>
-        this.aiChatService.getSessions({ offset, limit: pageSize })
+        this.aiChatService.getSessions({ offset, limit: pageSize, userId })
       );
       const source = Array.isArray(sessions?.sessions) ? sessions.sessions : (Array.isArray(sessions) ? sessions : []);
       const hasMore = typeof sessions?.hasMore === 'boolean' ? sessions.hasMore : source.length >= pageSize;
@@ -244,9 +249,10 @@ class AIChatController {
       const { id } = req.params;
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       res.locals.aiMeta = { mcp: false, providers: [] };
       const history = await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/history.get', sessionId: id, debug }, () =>
-        this.aiChatService.getSessionHistory(id)
+        this.aiChatService.getSessionHistory(id, userId)
       );
       res.json({ messages: history });
     } catch (error) {
@@ -264,8 +270,9 @@ class AIChatController {
       const { id } = req.params;
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/history.delete', sessionId: id, debug }, () =>
-        this.aiChatService.deleteSession(id)
+        this.aiChatService.deleteSession(id, userId)
       );
       res.json({ success: true });
     } catch (error) {
@@ -289,9 +296,10 @@ class AIChatController {
 
       const requestId = req.requestId || '';
       const debug = req.aiDebug === true;
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
       res.locals.aiMeta = { mcp: false, providers: [] };
       await this.aiChatService.runWithTrace({ requestId, route: 'ai-chat/sessions.patch', sessionId: id, debug }, () =>
-        this.aiChatService.updateSessionTitle(id, title)
+        this.aiChatService.updateSessionTitle(id, title, userId)
       );
       res.json({ success: true });
     } catch (error) {

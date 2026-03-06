@@ -23,19 +23,19 @@
               <template #icon><t-icon name="refresh" /></template>
               新对话
             </t-button>
-          </div>
-          <div
-            class="tool-mode-toggle sidebar-tool-toggle"
-            :class="{ 'is-active': enableTools }"
-            @click="!isLoading && (enableTools = !enableTools)"
-            :title="enableTools ? '已启用MCP工具（火车票查询、网络搜索）' : '启用MCP工具可查询火车票、搜索网络'"
-          >
-            <div class="toggle-bg"></div>
-            <div class="toggle-content">
-              <div class="toggle-icon-wrapper">
-                <t-icon :name="enableTools ? 'tools' : 'chat'" class="toggle-icon" />
+            <div
+              class="tool-mode-toggle sidebar-tool-toggle"
+              :class="{ 'is-active': enableTools }"
+              @click="!isLoading && (enableTools = !enableTools)"
+              :title="enableTools ? '已启用MCP工具（火车票查询、网络搜索）' : '启用MCP工具可查询火车票、搜索网络'"
+            >
+              <div class="toggle-bg"></div>
+              <div class="toggle-content">
+                <div class="toggle-icon-wrapper">
+                  <t-icon :name="enableTools ? 'tools' : 'chat'" class="toggle-icon" />
+                </div>
+                <span class="toggle-text">{{ enableTools ? '工具模式' : '普通对话' }}</span>
               </div>
-              <span class="toggle-text">{{ enableTools ? '工具模式' : '普通对话' }}</span>
             </div>
           </div>
         </div>
@@ -51,8 +51,16 @@
           </div>
 
           <div class="history-body">
+            <!-- 初始加载骨架屏 -->
+            <div v-if="isAuthChecking || (isLoggedIn && !sessionsLoadedOnce)" class="history-skeleton">
+              <div v-for="i in 6" :key="i" class="skeleton-item">
+                <div class="skeleton-line skeleton-title"></div>
+                <div class="skeleton-line skeleton-meta"></div>
+              </div>
+            </div>
+
             <!-- 未登录提示 -->
-            <div v-if="!isLoggedIn" class="history-login-tip">
+            <div v-else-if="!isLoggedIn" class="history-login-tip">
               <t-icon name="user-circle" size="48px" />
               <p class="login-tip-title">登录后查看历史记录</p>
               <p class="login-tip-desc">登录账号后，您的对话记录将被保存，方便随时查看</p>
@@ -180,6 +188,7 @@ import { createAIStreamEventParser } from '../utils/aiStreamEventParser'
 // 登录状态
 const isLoggedIn = ref(false)
 const currentUser = ref(null)
+const isAuthChecking = ref(true)
 
 // 检查登录状态
 const checkLoginStatus = async () => {
@@ -191,6 +200,8 @@ const checkLoginStatus = async () => {
     console.error('检查登录状态失败:', error)
     isLoggedIn.value = false
     currentUser.value = null
+  } finally {
+    isAuthChecking.value = false
   }
 }
 
@@ -858,12 +869,13 @@ const getAuthSession = async (tip = '') => {
 
 .sidebar-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
 .sidebar-actions .history-btn,
 .sidebar-actions .new-chat-btn {
-  flex: 1;
+  width: 100%;
 }
 
 .sidebar-tool-toggle {
@@ -1056,6 +1068,45 @@ const getAuthSession = async (tip = '') => {
   line-height: 1.5;
 }
 
+/* 骨架屏 */
+.history-skeleton {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skeleton-item {
+  padding: 12px;
+  border-radius: 12px;
+  margin-bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.skeleton-line {
+  border-radius: 6px;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s infinite ease-in-out;
+}
+
+.skeleton-title {
+  height: 13px;
+  width: 72%;
+}
+
+.skeleton-meta {
+  height: 11px;
+  width: 45%;
+}
+
+@keyframes skeletonShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* 历史按钮样式 */
 .history-btn {
   height: 40px;
@@ -1072,7 +1123,7 @@ const getAuthSession = async (tip = '') => {
 /* 工具模式开关 */
 .tool-mode-toggle {
   position: relative;
-  width: 140px;
+  width: 100%;
   height: 40px;
   border-radius: 20px;
   background: #f0f2f5;
@@ -1192,6 +1243,63 @@ const getAuthSession = async (tip = '') => {
 
 :deep(.t-chatbot__footer) {
   flex: none;
+}
+
+/* 单行输入框模式 */
+:deep(.t-chat-sender) {
+  border-radius: 24px !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(20px);
+  border: 1.5px solid rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06) !important;
+  padding: 0 6px 0 16px !important;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+:deep(.t-chat-sender:focus-within) {
+  border-color: #0066cc !important;
+  box-shadow: 0 2px 16px rgba(0, 102, 204, 0.12) !important;
+  background: #fff !important;
+}
+
+:deep(.t-chat-sender__content) {
+  align-items: center !important;
+  min-height: unset !important;
+  padding: 0 !important;
+}
+
+:deep(.t-chat-sender__input) {
+  min-height: 44px !important;
+  max-height: 44px !important;
+  height: 44px !important;
+  line-height: 44px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  resize: none !important;
+  white-space: nowrap !important;
+}
+
+:deep(.t-chat-sender__input textarea) {
+  min-height: 44px !important;
+  max-height: 44px !important;
+  height: 44px !important;
+  line-height: 44px !important;
+  padding: 0 !important;
+  resize: none !important;
+  overflow: hidden !important;
+}
+
+:deep(.t-chat-sender__footer) {
+  display: none !important;
+}
+
+:deep(.t-chat-sender__toolbar) {
+  display: none !important;
+}
+
+:deep(.t-chat-sender__submit) {
+  align-self: center !important;
+  margin: 0 2px !important;
 }
 
 

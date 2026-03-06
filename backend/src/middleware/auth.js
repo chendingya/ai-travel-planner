@@ -1,5 +1,12 @@
 const supabase = require('../supabase');
 
+const ACCESS_TOKEN_COOKIE_NAMES = [
+  process.env.AUTH_ACCESS_COOKIE_NAME || 'sb-access-token',
+  process.env.AUTH_ACCESS_COOKIE_ALT_NAME || 'sb_access_token',
+  'access_token',
+  'token',
+];
+
 const pickHeaderValue = (value) => {
   if (Array.isArray(value)) {
     const first = value.find((item) => typeof item === 'string' && item.trim());
@@ -19,38 +26,47 @@ const parseTokenFromHeaderValue = (value) => {
   return trimmed;
 };
 
+const parseCookieHeader = (cookieHeader) => {
+  const out = {};
+  const raw = pickHeaderValue(cookieHeader);
+  if (!raw) return out;
+  const parts = String(raw).split(';');
+  for (const part of parts) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const name = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (!name) continue;
+    try {
+      out[name] = decodeURIComponent(value);
+    } catch (_) {
+      out[name] = value;
+    }
+  }
+  return out;
+};
+
 const jwtSegments = (token) => String(token || '').split('.').filter(Boolean).length;
 const isLikelyJwt = (token) => jwtSegments(token) === 3;
 
 const extractToken = (req) => {
-  const candidates = [
-    { name: 'x-supabase-access-token', value: req.headers?.['x-supabase-access-token'] },
-    { name: 'authorization', value: req.headers?.authorization },
-    { name: 'x-authorization', value: req.headers?.['x-authorization'] },
-    { name: 'x-access-token', value: req.headers?.['x-access-token'] },
-    { name: 'x-auth-token', value: req.headers?.['x-auth-token'] },
-    { name: 'body.access_token', value: req.body?.access_token },
-    { name: 'body.token', value: req.body?.token },
-  ];
-
-  for (const [name, value] of Object.entries(req.headers || {})) {
-    if (!/auth|token/i.test(name)) continue;
-    if (candidates.some((item) => item.name === name)) continue;
-    candidates.push({ name, value });
-  }
-
-  let fallback = null;
-  for (const item of candidates) {
-    const token = parseTokenFromHeaderValue(item?.value);
-    if (!token) continue;
-    if (isLikelyJwt(token)) {
-      return { token, source: item.name, segments: jwtSegments(token) };
+  const parsedCookies = parseCookieHeader(req.headers?.cookie);
+  const cookieToken = (() => {
+    if (req.cookies && typeof req.cookies === 'object') {
+      for (const name of ACCESS_TOKEN_COOKIE_NAMES) {
+        const v = parseTokenFromHeaderValue(req.cookies[name]);
+        if (v) return v;
+      }
     }
-    if (!fallback) {
-      fallback = { token, source: item.name, segments: jwtSegments(token) };
+    for (const name of ACCESS_TOKEN_COOKIE_NAMES) {
+      const v = parseTokenFromHeaderValue(parsedCookies[name]);
+      if (v) return v;
     }
-  }
-  return fallback || { token: '', source: 'none', segments: 0 };
+    return '';
+  })();
+  const token = parseTokenFromHeaderValue(cookieToken);
+  if (!token) return { token: '', source: 'none', segments: 0 };
+  return { token, source: 'cookie.access_token', segments: jwtSegments(token) };
 };
 
 const summarizeAuthInputs = (req) => {
