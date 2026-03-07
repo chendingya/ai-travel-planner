@@ -127,10 +127,11 @@ class ProviderConfigService {
   _normalizeTextProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
-    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !String(src.apiKey || '').trim());
     const directApiKey = this._readApiKey(src.apiKey);
-    const fallbackApiKey = id && keepApiKey && keyMap.has(id) ? keyMap.get(id) : '';
-    const apiKey = directApiKey || fallbackApiKey || '';
+    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
+    const hasExistingApiKey = id && keyMap.has(id);
+    const keptApiKey = hasExistingApiKey ? keyMap.get(id) : '';
+    const apiKey = keepApiKey ? keptApiKey : directApiKey;
     const baseModel = src.model == null ? '' : String(src.model).trim();
     const modelsRaw = Array.isArray(src.models) ? src.models : [];
     const models = (modelsRaw.length ? modelsRaw : baseModel ? [{ model: baseModel, priority: 1 }] : [])
@@ -151,10 +152,11 @@ class ProviderConfigService {
   _normalizeImageProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
-    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !String(src.apiKey || '').trim());
     const directApiKey = this._readApiKey(src.apiKey);
-    const fallbackApiKey = id && keepApiKey && keyMap.has(id) ? keyMap.get(id) : '';
-    const apiKey = directApiKey || fallbackApiKey || '';
+    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
+    const hasExistingApiKey = id && keyMap.has(id);
+    const keptApiKey = hasExistingApiKey ? keyMap.get(id) : '';
+    const apiKey = keepApiKey ? keptApiKey : directApiKey;
     return {
       id,
       name: src.name == null ? '' : String(src.name).trim(),

@@ -73,23 +73,29 @@
               <div class="secret-block">
                 <div class="secret-head">
                   <span>API Key</span>
-                  <t-switch
-                    v-if="provider.hasApiKey"
-                    :model-value="provider.keepApiKey"
-                    @update:model-value="(value) => onKeepApiKeyToggle(provider, value)"
-                  />
+                  <div v-if="provider.hasApiKey" class="secret-toggle">
+                    <span>替换密钥</span>
+                    <t-switch
+                      :model-value="provider.replaceApiKey"
+                      @update:model-value="(value) => onReplaceApiKeyToggle(provider, value)"
+                    />
+                  </div>
                 </div>
-                <div v-if="provider.hasApiKey && provider.keepApiKey" class="secret-mask">
+                <div v-if="provider.hasApiKey && !provider.replaceApiKey" class="secret-mask">
                   <t-icon name="lock-on" />
                   <span>{{ provider.apiKeyMasked || '已配置（脱敏）' }}</span>
                 </div>
                 <t-input
                   v-else
-                  v-model="provider.apiKey"
+                  :model-value="provider.apiKey"
+                  @update:model-value="(value) => onApiKeyInput(provider, value)"
                   type="password"
                   placeholder="输入 API Key"
                   clearable
                 />
+                <div v-if="hasPendingApiKey(provider)" class="secret-hint">
+                  已输入新的 API Key，需要点击页面底部的“校验并保存”才会真正替换旧密钥。
+                </div>
               </div>
 
               <div class="model-block">
@@ -162,23 +168,29 @@
               <div class="secret-block">
                 <div class="secret-head">
                   <span>API Key</span>
-                  <t-switch
-                    v-if="provider.hasApiKey"
-                    :model-value="provider.keepApiKey"
-                    @update:model-value="(value) => onKeepApiKeyToggle(provider, value)"
-                  />
+                  <div v-if="provider.hasApiKey" class="secret-toggle">
+                    <span>替换密钥</span>
+                    <t-switch
+                      :model-value="provider.replaceApiKey"
+                      @update:model-value="(value) => onReplaceApiKeyToggle(provider, value)"
+                    />
+                  </div>
                 </div>
-                <div v-if="provider.hasApiKey && provider.keepApiKey" class="secret-mask">
+                <div v-if="provider.hasApiKey && !provider.replaceApiKey" class="secret-mask">
                   <t-icon name="lock-on" />
                   <span>{{ provider.apiKeyMasked || '已配置（脱敏）' }}</span>
                 </div>
                 <t-input
                   v-else
-                  v-model="provider.apiKey"
+                  :model-value="provider.apiKey"
+                  @update:model-value="(value) => onApiKeyInput(provider, value)"
                   type="password"
                   placeholder="输入 API Key"
                   clearable
                 />
+                <div v-if="hasPendingApiKey(provider)" class="secret-hint">
+                  已输入新的 API Key，需要点击页面右上角或底部的“校验并保存”才会真正替换旧密钥。
+                </div>
               </div>
 
               <div class="result-line" :class="{ ok: provider._test?.ok, fail: provider._test && !provider._test.ok }" v-if="provider._test">
@@ -188,9 +200,12 @@
           </t-tab-panel>
         </t-tabs>
 
-        <div class="save-actions">
+        <div class="save-actions" :class="{ dirty: hasUnsavedChanges }">
+          <div class="save-status">
+            {{ hasUnsavedChanges ? '当前有未保存改动' : '当前没有未保存改动' }}
+          </div>
           <t-button variant="outline" @click="reloadConfig" :disabled="saving">重新加载</t-button>
-          <t-button theme="primary" :loading="saving" @click="saveConfig">校验并保存</t-button>
+          <t-button theme="primary" :loading="saving" :disabled="!hasUnsavedChanges" @click="saveConfig">校验并保存</t-button>
         </div>
       </div>
     </div>
@@ -212,6 +227,7 @@ const activeTab = ref('text');
 const loading = ref(true);
 const saving = ref(false);
 const testingKeys = ref(new Set());
+const lastSavedSnapshot = ref('');
 
 const state = reactive({
   source: 'env',
@@ -223,6 +239,18 @@ const state = reactive({
 
 const sourceLabel = computed(() => (state.source === 'supabase' ? 'Supabase' : '环境变量'));
 
+const buildPayload = () => ({
+  textProviders: state.textProviders.map(toTextPayload),
+  imageProviders: state.imageProviders.map(toImagePayload),
+});
+
+const createSnapshot = () => JSON.stringify(buildPayload());
+
+const hasUnsavedChanges = computed(() => {
+  if (!authReady.value || !isLoggedIn.value || loading.value) return false;
+  return createSnapshot() !== lastSavedSnapshot.value;
+});
+
 const createTextProvider = () => ({
   id: '',
   name: '',
@@ -233,6 +261,7 @@ const createTextProvider = () => ({
   hasApiKey: false,
   apiKeyMasked: '',
   keepApiKey: false,
+  replaceApiKey: true,
   models: [{ id: '', model: '', priority: 1 }],
   _test: null,
 });
@@ -248,6 +277,7 @@ const createImageProvider = () => ({
   hasApiKey: false,
   apiKeyMasked: '',
   keepApiKey: false,
+  replaceApiKey: true,
   _test: null,
 });
 
@@ -261,6 +291,7 @@ const normalizeTextProvider = (provider) => ({
   hasApiKey: provider.hasApiKey === true,
   apiKeyMasked: provider.apiKeyMasked || '',
   keepApiKey: provider.keepApiKey === true,
+  replaceApiKey: provider.hasApiKey === true ? provider.keepApiKey !== true : true,
   models: (Array.isArray(provider.models) ? provider.models : []).map((item) => ({
     id: item.id || '',
     model: item.model || '',
@@ -280,6 +311,7 @@ const normalizeImageProvider = (provider) => ({
   hasApiKey: provider.hasApiKey === true,
   apiKeyMasked: provider.apiKeyMasked || '',
   keepApiKey: provider.keepApiKey === true,
+  replaceApiKey: provider.hasApiKey === true ? provider.keepApiKey !== true : true,
   _test: null,
 });
 
@@ -299,6 +331,7 @@ const setProviders = (payload) => {
   state.updatedAt = payload?.updatedAt || '';
   state.textProviders = (Array.isArray(payload?.textProviders) ? payload.textProviders : []).map(normalizeTextProvider);
   state.imageProviders = (Array.isArray(payload?.imageProviders) ? payload.imageProviders : []).map(normalizeImageProvider);
+  lastSavedSnapshot.value = createSnapshot();
 };
 
 const triggerLoginDialog = () => {
@@ -350,7 +383,7 @@ const toTextPayload = (provider) => ({
   priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
   apiKey: provider.apiKey || '',
   hasApiKey: provider.hasApiKey === true,
-  keepApiKey: provider.keepApiKey === true,
+  keepApiKey: provider.hasApiKey === true ? provider.replaceApiKey !== true : false,
   models: (Array.isArray(provider.models) ? provider.models : []).map((item) => ({
     id: item.id || '',
     model: (item.model || '').trim(),
@@ -367,7 +400,7 @@ const toImagePayload = (provider) => ({
   priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
   apiKey: provider.apiKey || '',
   hasApiKey: provider.hasApiKey === true,
-  keepApiKey: provider.keepApiKey === true,
+  keepApiKey: provider.hasApiKey === true ? provider.replaceApiKey !== true : false,
 });
 
 const summarizeResults = (results = []) => {
@@ -433,12 +466,13 @@ const testProvider = async (kind, index) => {
 };
 
 const saveConfig = async () => {
+  if (!hasUnsavedChanges.value) {
+    MessagePlugin.info('当前没有需要保存的改动');
+    return;
+  }
   saving.value = true;
   try {
-    const payload = {
-      textProviders: state.textProviders.map(toTextPayload),
-      imageProviders: state.imageProviders.map(toImagePayload),
-    };
+    const payload = buildPayload();
     const data = await fetchJson('/api/provider-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -460,11 +494,34 @@ const saveConfig = async () => {
   }
 };
 
-const onKeepApiKeyToggle = (provider, value) => {
-  provider.keepApiKey = value === true;
-  if (provider.keepApiKey) {
-    provider.apiKey = '';
+const onReplaceApiKeyToggle = (provider, value) => {
+  const nextValue = value === true;
+  if (!nextValue && hasPendingApiKey(provider)) {
+    MessagePlugin.warning('新的 API Key 还未保存，请先点击“校验并保存”，或清空输入后再取消替换');
+    return;
   }
+  provider.replaceApiKey = nextValue;
+  provider.keepApiKey = !provider.replaceApiKey;
+};
+
+const onApiKeyInput = (provider, value) => {
+  provider.apiKey = typeof value === 'string' ? value : '';
+  if (provider.apiKey.trim()) {
+    provider.replaceApiKey = true;
+    provider.keepApiKey = false;
+    return;
+  }
+
+  if (provider.hasApiKey) {
+    provider.keepApiKey = provider.replaceApiKey !== true;
+  } else {
+    provider.keepApiKey = false;
+  }
+};
+
+const hasPendingApiKey = (provider) => {
+  const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
+  return !!apiKey;
 };
 
 const addTextProvider = () => {
@@ -655,6 +712,12 @@ onMounted(async () => {
   font-size: 13px;
 }
 
+.secret-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .secret-mask {
   min-height: 38px;
   border-radius: 8px;
@@ -705,9 +768,36 @@ onMounted(async () => {
 
 .save-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
+  position: sticky;
+  bottom: 12px;
+  z-index: 10;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 132, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.save-actions.dirty {
+  border-color: rgba(0, 132, 255, 0.28);
+  box-shadow: 0 10px 30px rgba(0, 132, 255, 0.14);
+}
+
+.save-status {
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.secret-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #0052d9;
 }
 
 .empty-card {
@@ -736,6 +826,20 @@ onMounted(async () => {
 
   .model-row {
     grid-template-columns: 1fr;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .save-actions {
+    bottom: 8px;
+  }
+
+  .save-status {
+    width: 100%;
+    margin-right: 0;
   }
 }
 </style>

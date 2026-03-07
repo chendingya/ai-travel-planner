@@ -310,3 +310,59 @@ test('user without db row falls back to local env even when another user has row
     assert.equal(configB.textProviders[0].name, 'env-provider');
   });
 });
+
+test('keepApiKey=true should keep stored key even if payload contains apiKey', async () => {
+  await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
+    process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([]);
+
+    const seedService = new ProviderConfigService({ supabase: createSupabaseMock(), langChainManager: createManagerMock() });
+    const encryptedOldKey = seedService._writeApiKey('sk-old');
+
+    const supabase = createSupabaseMock([
+      {
+        user_id: USER_A,
+        text_providers: [
+          {
+            name: 'text-a',
+            enabled: true,
+            baseURL: 'https://example.com/v1',
+            apiKey: encryptedOldKey,
+            priority: 1,
+            models: [{ model: 'm1', priority: 1 }],
+          },
+        ],
+        image_providers: [],
+        updated_by: USER_A,
+        updated_at: '',
+      },
+    ]);
+
+    const service = new ProviderConfigService({ supabase, langChainManager: createManagerMock() });
+    service._probeTextModel = async () => ({ ok: true, message: 'ok' });
+    service._probeImageProvider = async () => ({ ok: true, message: 'ok' });
+
+    await service.bootstrap();
+    const current = await service.getConfig(USER_A);
+    const provider = current.textProviders[0];
+
+    await service.updateConfig(
+      {
+        textProviders: [
+          {
+            ...provider,
+            keepApiKey: true,
+            apiKey: 'sk-new-should-be-ignored',
+            models: [{ model: 'm1', priority: 1 }],
+          },
+        ],
+        imageProviders: [],
+      },
+      USER_A
+    );
+
+    const stored = supabase.state.rows.get(USER_A);
+    assert.equal(service._readApiKey(stored.text_providers[0].apiKey), 'sk-old');
+  });
+});
