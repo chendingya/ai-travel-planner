@@ -104,6 +104,19 @@
                   </t-button>
                 </div>
               </section>
+
+              <section class="profile-section provider-section">
+                <h3 class="section-title">提供商管理</h3>
+                <p class="provider-desc">
+                  维护 Text/Pic 生成提供商配置，支持 OpenAI-compatible 格式、连通性校验与热更新。
+                </p>
+                <div class="section-actions">
+                  <t-button theme="primary" variant="outline" @click="goProviderConfig">
+                    <template #icon><t-icon name="setting-1" /></template>
+                    打开提供商管理页
+                  </t-button>
+                </div>
+              </section>
             </div>
           </template>
         </div>
@@ -292,6 +305,10 @@ const triggerLoginDialog = () => {
   MessagePlugin.info('请点击右上角的“登录”按钮');
 };
 
+const goProviderConfig = () => {
+  router.push('/provider-config');
+};
+
 watch(
   () => sessionUser.value,
   (nextUser) => {
@@ -433,6 +450,17 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.provider-section {
+  grid-column: 1 / -1;
+}
+
+.provider-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
 }
 
 .section-title {

@@ -15,6 +15,7 @@ module.exports = (controllers) => {
     postcardController,
     shareController,
     promptController,
+    providerConfigController,
   } = controllers;
 
   // 引入子路由
@@ -26,6 +27,7 @@ module.exports = (controllers) => {
   const shareRoutes = require('./shareRoutes')(shareController);
   const promptRoutes = require('./promptRoutes')(promptController);
   const authRoutes = require('./authRoutes')();
+  const providerConfigRoutes = require('./providerConfigRoutes')(providerConfigController);
 
   // 注册路由
   router.use('/', planRoutes);
@@ -36,6 +38,7 @@ module.exports = (controllers) => {
   router.use('/', shareRoutes);
   router.use('/', promptRoutes);
   router.use('/', authRoutes);
+  router.use('/', providerConfigRoutes);
 
   return router;
 };

@@ -115,8 +115,44 @@ CREATE POLICY "Anyone can delete sessions"
   USING (true);
 
 -- =============================================
+-- 创建 ai_provider_configs 表（全局 AI 提供商配置）
+-- =============================================
+CREATE TABLE IF NOT EXISTS public.ai_provider_configs (
+  id TEXT PRIMARY KEY DEFAULT 'global',
+  text_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  image_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER set_ai_provider_configs_updated_at
+  BEFORE UPDATE ON public.ai_provider_configs
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+ALTER TABLE public.ai_provider_configs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Authenticated users can view provider configs"
+  ON public.ai_provider_configs
+  FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Authenticated users can insert provider configs"
+  ON public.ai_provider_configs
+  FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Authenticated users can update provider configs"
+  ON public.ai_provider_configs
+  FOR UPDATE
+  USING (auth.uid() IS NOT NULL)
+  WITH CHECK (auth.uid() IS NOT NULL);
+
+-- =============================================
 -- 验证表是否创建成功
 -- =============================================
 -- 执行后可以运行以下查询来验证：
 -- SELECT * FROM public.plans LIMIT 1;
 -- SELECT * FROM public.ai_chat_sessions LIMIT 1;
+-- SELECT * FROM public.ai_provider_configs LIMIT 1;

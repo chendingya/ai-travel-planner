@@ -1,6 +1,7 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
 const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
+const OpenAICompatibleImageAdapter = require('./image/OpenAICompatibleImageAdapter');
 const sensitiveFilter = require('../../utils/sensitiveFilter');
 
 /**
@@ -9,26 +10,72 @@ const sensitiveFilter = require('../../utils/sensitiveFilter');
  */
 class LangChainManager {
   constructor(textProviders, imageProviders) {
-    // 初始化文本生成适配器
-    this.textAdapters = textProviders
-      .map(provider => new OpenAICompatibleAdapter(provider))
-      .filter(adapter => adapter !== null && adapter.isAvailable());
-
-    // 初始化图片生成适配器
-    this.imageAdapters = imageProviders.map(provider => {
-      switch (provider.name) {
-        case 'modelscope':
-          return new ModelScopeImageAdapter(provider);
-        default:
-          console.warn(`Unknown image provider: ${provider.name}`);
-          return null;
-      }
-    }).filter(adapter => adapter !== null && adapter.isAvailable());
-
     this._probeCache = new Set();
     this._traceStore = new AsyncLocalStorage();
 
+    this.reload(textProviders, imageProviders, { silent: true });
     console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
+  }
+
+  _buildTextAdapters(textProviders = []) {
+    const parsePriority = (value, fallback) => {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) return Math.floor(n);
+      const fb = Number(fallback);
+      return Number.isFinite(fb) && fb > 0 ? Math.floor(fb) : 1;
+    };
+
+    const expandedProviders = (Array.isArray(textProviders) ? textProviders : [])
+      .flatMap((provider, providerIndex) => {
+        const src = provider && typeof provider === 'object' ? provider : {};
+        const models = Array.isArray(src.models) ? src.models : [];
+        const basePriority = parsePriority(src.priority, providerIndex + 1);
+
+        if (models.length > 0) {
+          return models.map((modelEntry, modelIndex) => {
+            const modelObj = typeof modelEntry === 'string' ? { model: modelEntry } : modelEntry || {};
+            const modelName = typeof modelObj.model === 'string' ? modelObj.model.trim() : '';
+            return {
+              ...src,
+              model: modelName || (typeof src.model === 'string' ? src.model : ''),
+              priority: parsePriority(modelObj.priority, basePriority + modelIndex),
+            };
+          });
+        }
+
+        return [{
+          ...src,
+          model: typeof src.model === 'string' ? src.model : '',
+          priority: basePriority,
+        }];
+      })
+      .sort((a, b) => parsePriority(a.priority, 1) - parsePriority(b.priority, 1));
+
+    return expandedProviders
+      .map((provider) => new OpenAICompatibleAdapter(provider))
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  _buildImageAdapters(imageProviders = []) {
+    return (Array.isArray(imageProviders) ? imageProviders : [])
+      .map((provider) => {
+        const name = typeof provider?.name === 'string' ? provider.name.trim().toLowerCase() : '';
+        if (name === 'modelscope') return new ModelScopeImageAdapter(provider);
+        return new OpenAICompatibleImageAdapter(provider);
+      })
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  reload(textProviders = [], imageProviders = [], options = {}) {
+    this.textAdapters = this._buildTextAdapters(textProviders);
+    this.imageAdapters = this._buildImageAdapters(imageProviders);
+    if (!options || options.silent !== true) {
+      console.log(`Reloaded providers: text=${this.textAdapters.length}, image=${this.imageAdapters.length}`);
+    }
+    return {
+      text: this.textAdapters.length,
+      image: this.imageAdapters.length,
+    };
   }
 
   runWithTrace(trace, runner) {

@@ -9,6 +9,7 @@ import PlaylistView from '../views/PlaylistView.vue';
 import ShareContentView from '../views/ShareContentView.vue';
 import AIChatView from '../views/AIChatView.vue';
 import ProfileView from '../views/ProfileView.vue';
+import ProviderConfigView from '../views/ProviderConfigView.vue';
 
 const routes = [
   {
@@ -70,6 +71,12 @@ const routes = [
     name: 'Profile',
     component: ProfileView,
     meta: { title: '个人中心 - 拾光绘旅' }
+  },
+  {
+    path: '/provider-config',
+    name: 'ProviderConfig',
+    component: ProviderConfigView,
+    meta: { title: '提供商管理 - 拾光绘旅' }
   },
   {
     path: '/:pathMatch(.*)*',

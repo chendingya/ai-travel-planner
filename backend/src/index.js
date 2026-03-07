@@ -54,6 +54,7 @@ const PostcardService = require('./services/postcardService');
 const ShareService = require('./services/shareService');
 const MCPService = require('./services/mcpService');
 const TTSService = require('./services/ttsService');
+const ProviderConfigService = require('./services/providerConfigService');
 
 // Controllers
 const PlanController = require('./controllers/planController');
@@ -63,6 +64,7 @@ const ImageController = require('./controllers/imageController');
 const PlaylistController = require('./controllers/playlistController');
 const PostcardController = require('./controllers/postcardController');
 const ShareController = require('./controllers/shareController');
+const ProviderConfigController = require('./controllers/providerConfigController');
 
 // Supabase
 const supabase = require('./supabase');
@@ -166,11 +168,17 @@ async function initializeApp() {
     const textProviders = getEnabledTextProviders();
     const imageProviders = getEnabledImageProviders();
 
-    console.log('Available text providers:', textProviders.map(p => p.name));
-    console.log('Available image providers:', imageProviders.map(p => p.name));
-
     // 初始化 LangChain Manager
     const langChainManager = new LangChainManager(textProviders, imageProviders);
+    app.locals.langChainManager = langChainManager;
+
+    // 初始化 Provider 配置服务（支持 Supabase 持久化 + 热更新）
+    const providerConfigService = new ProviderConfigService({ supabase, langChainManager });
+    await providerConfigService.bootstrap();
+    app.locals.providerConfigService = providerConfigService;
+
+    console.log('Available text providers:', langChainManager.getAvailableTextProviders().map((p) => p.name));
+    console.log('Available image providers:', langChainManager.getAvailableImageProviders().map((p) => p.name));
 
     // 初始化 Services
     const mcpService = new MCPService();
@@ -217,6 +225,7 @@ async function initializeApp() {
     const playlistController = new PlaylistController(playlistService);
     const postcardController = new PostcardController(postcardService);
     const shareController = new ShareController(shareService);
+    const providerConfigController = new ProviderConfigController(providerConfigService);
 
     // 注册控制器
     const controllers = {
@@ -227,6 +236,7 @@ async function initializeApp() {
       playlistController,
       postcardController,
       shareController,
+      providerConfigController,
     };
 
     // 注册路由（带控制器）- 必须在 404 处理之前
