@@ -17,7 +17,8 @@ class ProviderConfigController {
   async getConfig(req, res) {
     try {
       res.locals.aiMeta = { mcp: false, providers: [] };
-      const config = await this.providerConfigService.getConfig();
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const config = await this.providerConfigService.getConfig(userId);
       res.json(config);
     } catch (error) {
       console.error('Get provider config error:', error);
@@ -29,7 +30,8 @@ class ProviderConfigController {
   async testProvider(req, res) {
     try {
       res.locals.aiMeta = { mcp: false, providers: [] };
-      const result = await this.providerConfigService.testSingle(req.body || {});
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const result = await this.providerConfigService.testSingle(req.body || {}, userId);
       res.json(result);
     } catch (error) {
       console.error('Test provider config error:', error);

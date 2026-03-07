@@ -115,10 +115,12 @@ CREATE POLICY "Anyone can delete sessions"
   USING (true);
 
 -- =============================================
--- 创建 ai_provider_configs 表（全局 AI 提供商配置）
+-- 创建 ai_provider_configs 表（用户级 AI 提供商配置）
 -- =============================================
+DROP TABLE IF EXISTS public.ai_provider_configs;
+
 CREATE TABLE IF NOT EXISTS public.ai_provider_configs (
-  id TEXT PRIMARY KEY DEFAULT 'global',
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   text_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
   image_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -136,18 +138,18 @@ ALTER TABLE public.ai_provider_configs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated users can view provider configs"
   ON public.ai_provider_configs
   FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+  USING (auth.uid() = user_id);
 
 CREATE POLICY "Authenticated users can insert provider configs"
   ON public.ai_provider_configs
   FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
+  WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Authenticated users can update provider configs"
   ON public.ai_provider_configs
   FOR UPDATE
-  USING (auth.uid() IS NOT NULL)
-  WITH CHECK (auth.uid() IS NOT NULL);
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- =============================================
 -- 验证表是否创建成功

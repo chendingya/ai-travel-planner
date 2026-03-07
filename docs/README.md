@@ -44,6 +44,12 @@
 2. [ai-protocols/AI聊天工具事件解析设计.md](ai-protocols/AI聊天工具事件解析设计.md)
 3. [ai-protocols/历史会话虚拟渲染实现详解.md](ai-protocols/历史会话虚拟渲染实现详解.md)
 
+### 排查 AI 提供商配置
+
+1. [features/AI提供商管理功能说明.md](features/AI提供商管理功能说明.md)
+2. [getting-started/QUICKSTART.md](getting-started/QUICKSTART.md)
+3. [architecture/后端架构文档.md](architecture/后端架构文档.md)
+
 ### 做业务功能迭代
 
 先看 `features/` 下对应功能说明，再回看 [product/产品需求文档(PRD).md](product/产品需求文档(PRD).md) 和 [product/技术规范文档(TSD).md](product/技术规范文档(TSD).md)。

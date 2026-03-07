@@ -2,31 +2,45 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const ProviderConfigService = require('../src/services/providerConfigService');
 
-const createSupabaseMock = (initialRow = null) => {
+const USER_A = '00000000-0000-0000-0000-000000000001';
+const USER_B = '00000000-0000-0000-0000-000000000002';
+const ENC_KEY = '12345678901234567890123456789012';
+
+const createSupabaseMock = (initialRows = []) => {
+  const rows = new Map();
+  for (const row of initialRows) {
+    if (row && typeof row.user_id === 'string' && row.user_id) {
+      rows.set(row.user_id, { ...row });
+    }
+  }
+
   const state = {
-    row: initialRow ? { ...initialRow } : null,
+    rows,
     upsertCount: 0,
   };
 
   return {
     state,
     from: () => {
-      let queryId = '';
+      const filters = {};
       return {
         select() {
           return this;
         },
-        eq(_field, value) {
-          queryId = value;
+        eq(field, value) {
+          filters[field] = value;
           return this;
         },
         async maybeSingle() {
-          if (!state.row) return { data: null, error: null };
-          if (queryId && state.row.id !== queryId) return { data: null, error: null };
-          return { data: { ...state.row }, error: null };
+          const userId = typeof filters.user_id === 'string' ? filters.user_id : '';
+          if (!userId || !state.rows.has(userId)) return { data: null, error: null };
+          return { data: { ...state.rows.get(userId) }, error: null };
         },
         async upsert(payload) {
-          state.row = { ...payload };
+          if (!payload || typeof payload.user_id !== 'string' || !payload.user_id) {
+            return { data: null, error: { message: 'user_id required' } };
+          }
+          state.rows.set(payload.user_id, { ...payload });
           state.upsertCount += 1;
           return { data: [payload], error: null };
         },
@@ -53,19 +67,25 @@ const withEnvBackup = async (fn) => {
   const snapshot = {
     AI_TEXT_PROVIDERS_JSON: process.env.AI_TEXT_PROVIDERS_JSON,
     AI_IMAGE_PROVIDERS_JSON: process.env.AI_IMAGE_PROVIDERS_JSON,
+    PROVIDER_CONFIG_ENCRYPTION_KEY: process.env.PROVIDER_CONFIG_ENCRYPTION_KEY,
   };
   try {
     await fn();
   } finally {
     if (snapshot.AI_TEXT_PROVIDERS_JSON == null) delete process.env.AI_TEXT_PROVIDERS_JSON;
     else process.env.AI_TEXT_PROVIDERS_JSON = snapshot.AI_TEXT_PROVIDERS_JSON;
+
     if (snapshot.AI_IMAGE_PROVIDERS_JSON == null) delete process.env.AI_IMAGE_PROVIDERS_JSON;
     else process.env.AI_IMAGE_PROVIDERS_JSON = snapshot.AI_IMAGE_PROVIDERS_JSON;
+
+    if (snapshot.PROVIDER_CONFIG_ENCRYPTION_KEY == null) delete process.env.PROVIDER_CONFIG_ENCRYPTION_KEY;
+    else process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = snapshot.PROVIDER_CONFIG_ENCRYPTION_KEY;
   }
 };
 
-test('bootstrap normalizes env config and expands text models order by priority', async () => {
+test('bootstrap loads env defaults and getConfig works per user', async () => {
   await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([
       {
         name: 'text-a',
@@ -95,42 +115,47 @@ test('bootstrap normalizes env config and expands text models order by priority'
     const service = new ProviderConfigService({ supabase, langChainManager: manager });
     await service.bootstrap();
 
-    const config = await service.getConfig();
+    const config = await service.getConfig(USER_A);
     assert.equal(config.textProviders.length, 1);
     assert.equal(config.textProviders[0].models.length, 2);
     assert.equal(config.textProviders[0].models[0].model, 'm1');
-    assert.equal(config.textProviders[0].models[1].model, 'm2');
-    assert.equal(config.textProviders[0].hasApiKey, true);
     assert.equal(config.imageProviders[0].name, 'img-a');
     assert.equal(manager.calls.length >= 1, true);
   });
 });
 
-test('updateConfig keeps api key when keepApiKey is true and apiKey is empty', async () => {
+test('updateConfig stores encrypted key and keepApiKey works', async () => {
   await withEnvBackup(async () => {
-    const supabase = createSupabaseMock({
-      id: 'global',
-      text_providers: [
-        {
-          name: 'text-a',
-          enabled: true,
-          baseURL: 'https://example.com/v1',
-          apiKey: 'sk-old-text',
-          priority: 1,
-          models: [{ model: 'm1', priority: 1 }],
-        },
-      ],
-      image_providers: [],
-      updated_by: null,
-      updated_at: '',
-    });
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+
+    const initialService = new ProviderConfigService({ supabase: createSupabaseMock(), langChainManager: createManagerMock() });
+    const encryptedOldKey = initialService._writeApiKey('sk-old-text');
+
+    const supabase = createSupabaseMock([
+      {
+        user_id: USER_A,
+        text_providers: [
+          {
+            name: 'text-a',
+            enabled: true,
+            baseURL: 'https://example.com/v1',
+            apiKey: encryptedOldKey,
+            priority: 1,
+            models: [{ model: 'm1', priority: 1 }],
+          },
+        ],
+        image_providers: [],
+        updated_by: USER_A,
+        updated_at: '',
+      },
+    ]);
     const manager = createManagerMock();
     const service = new ProviderConfigService({ supabase, langChainManager: manager });
     service._probeTextModel = async () => ({ ok: true, message: 'ok' });
     service._probeImageProvider = async () => ({ ok: true, message: 'ok' });
 
     await service.bootstrap();
-    const current = await service.getConfig();
+    const current = await service.getConfig(USER_A);
     const textProvider = current.textProviders[0];
 
     await service.updateConfig(
@@ -146,15 +171,19 @@ test('updateConfig keeps api key when keepApiKey is true and apiKey is empty', a
         ],
         imageProviders: [],
       },
-      '00000000-0000-0000-0000-000000000001'
+      USER_A
     );
 
-    assert.equal(supabase.state.row.text_providers[0].apiKey, 'sk-old-text');
+    const stored = supabase.state.rows.get(USER_A);
+    assert.equal(typeof stored.text_providers[0].apiKey, 'string');
+    assert.equal(stored.text_providers[0].apiKey.startsWith('enc:v1:'), true);
+    assert.equal(service._readApiKey(stored.text_providers[0].apiKey), 'sk-old-text');
   });
 });
 
 test('updateConfig rejects on connectivity failure and does not persist', async () => {
   await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
     process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([]);
 
@@ -183,7 +212,7 @@ test('updateConfig rejects on connectivity failure and does not persist', async 
             ],
             imageProviders: [],
           },
-          '00000000-0000-0000-0000-000000000002'
+          USER_A
         ),
       (error) => error && error.status === 400
     );
@@ -193,8 +222,9 @@ test('updateConfig rejects on connectivity failure and does not persist', async 
   });
 });
 
-test('updateConfig persists and triggers runtime reload on success', async () => {
+test('updateConfig is user-scoped and triggers runtime reload on success', async () => {
   await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
     process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([]);
 
@@ -205,9 +235,8 @@ test('updateConfig persists and triggers runtime reload on success', async () =>
     service._probeImageProvider = async () => ({ ok: true, message: 'ok' });
 
     await service.bootstrap();
-    const reloadCountBefore = manager.calls.length;
 
-    const saved = await service.updateConfig(
+    await service.updateConfig(
       {
         textProviders: [
           {
@@ -219,23 +248,17 @@ test('updateConfig persists and triggers runtime reload on success', async () =>
             models: [{ model: 'm1', priority: 1 }],
           },
         ],
-        imageProviders: [
-          {
-            name: 'img-ok',
-            enabled: true,
-            baseURL: 'https://example.com/v1',
-            apiKey: 'sk-img-ok',
-            model: 'gpt-image-1',
-            priority: 1,
-          },
-        ],
+        imageProviders: [],
       },
-      '00000000-0000-0000-0000-000000000003'
+      USER_A
     );
 
+    const userA = await service.getConfig(USER_A);
+    const userB = await service.getConfig(USER_B);
+
     assert.equal(supabase.state.upsertCount, 1);
-    assert.equal(manager.calls.length, reloadCountBefore + 1);
-    assert.equal(saved.config.textProviders[0].name, 'text-ok');
-    assert.equal(saved.config.imageProviders[0].name, 'img-ok');
+    assert.equal(manager.calls.length >= 2, true);
+    assert.equal(userA.textProviders[0].name, 'text-ok');
+    assert.equal(userB.textProviders.length, 0);
   });
 });

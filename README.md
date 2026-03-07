@@ -58,6 +58,14 @@
 - **智能问答**：基于大语言模型，回答关于旅游的各种问题
 - **工具增强**：支持火车票查询、网络搜索等MCP工具，提供更全面的旅行服务
 
+### ⚙️ AI 提供商管理
+- **可视化配置**：在个人中心进入“提供商管理”页面，维护 text/pic 提供商
+- **OpenAI 兼容格式**：统一维护 `name/baseURL/apiKey/model(s)/priority`
+- **安全编辑**：API Key 默认脱敏，支持保留原密钥或替换
+- **用户隔离**：配置按登录用户隔离，不再全局共享
+- **强校验保存**：保存前执行连通性测试，全部通过后才会落库
+- **热更新生效**：保存成功后无需重启，后端即时加载新配置
+
 ---
 
 ## 🛠️ 技术栈
@@ -155,6 +163,12 @@
 - 支持文字，模拟面对面交流体验
 - 提供普通对话和工具增强两种模式
 - 支持火车票查询、网络搜索等MCP工具功能
+
+### 11. 提供商管理 (`/provider-config`)
+- 从“个人中心”进入，管理 text/pic 提供商配置
+- 文本提供商支持 `models[]` 子项维护与优先级配置
+- API Key 默认脱敏，支持“保留原密钥/替换密钥”
+- 保存时强制连通性校验，成功后后端热更新生效
 
 ---
 
@@ -329,16 +343,20 @@ AI_TEXT_PROVIDERS_JSON='[
     "enabled": true,
     "baseURL": "https://api.gitcode.com/api/v5",
     "apiKey": "xxx",
-    "model": "Kimi-K2",
-    "priority": 1
+    "priority": 1,
+    "models": [
+      { "model": "Kimi-K2", "priority": 1 }
+    ]
   },
   {
     "name": "dashscope",
     "enabled": true,
     "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "apiKey": "xxx",
-    "model": "qwen-max",
-    "priority": 2
+    "priority": 2,
+    "models": [
+      { "model": "qwen-max", "priority": 1 }
+    ]
   }
 ]'
 
@@ -347,7 +365,9 @@ AI_IMAGE_PROVIDERS_JSON='[
   {
     "name": "modelscope",
     "enabled": true,
+    "baseURL": "https://api-inference.modelscope.cn/v1",
     "apiKey": "xxx",
+    "model": "Tongyi-MAI/Z-Image-Turbo",
     "priority": 1
   }
 ]'
@@ -359,11 +379,14 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 ### 图片生成配置
 
-支持魔搭社区 ModelScope 图片生成：
+图片提供商采用 OpenAI-compatible 协议（`name/baseURL/apiKey/model/priority`），其中：
 
-| 提供商 | 配置项 | 特点 |
-|--------|--------|------|
-| 魔搭社区 | `MODELSCOPE_API_KEY` | 免费额度充足，推荐 |
+| 提供商类型 | 说明 |
+|--------|------|
+| `modelscope` | 走专用适配器，兼容异步任务轮询 |
+| 其他兼容服务 | 走 OpenAI Compatible 图片适配器（`images.generate`） |
+
+可在“个人中心 → 提供商管理”页面在线维护，保存后立即热更新生效。
 
 ---
 
@@ -380,10 +403,15 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 **Q: AI 速记卡片生成失败？**
 - 检查 `backend/.env` 中的 `AI_IMAGE_PROVIDERS_JSON` 配置是否正确
-- 确认至少配置了一个启用的图片生成提供商（魔搭社区）
-- 确认魔搭社区 API 密钥有效且有免费额度
-- 建议使用魔搭社区（免费额度充足）
+- 确认至少配置了一个启用的图片生成提供商（OpenAI-compatible）
+- 确认对应提供商 API 密钥有效且有可用额度
 - 查看后端日志了解详细错误
+
+**Q: 提供商管理页保存失败（连通性校验未通过）？**
+- 前往 `/provider-config` 逐行点击“测试连接”确认失败项
+- 检查 `baseURL` 是否是 OpenAI-compatible 地址（通常需包含 `/v1`）
+- 若使用“保留原密钥”，确认当前行确实存在已保存密钥
+- 429/token-limit 常见于平台限流或模型额度不足，可稍后重试或切换备用提供商
 
 **Q: 前端无法连接后端？**
 - 确认后端服务器已启动（端口 3001）
@@ -436,6 +464,7 @@ AI_IMAGE_PROVIDERS_JSON='[
 3. **前端安全**：前端只使用 Supabase 提供的公开匿名密钥，不包含任何私密密钥
 4. **后端保护**：后端 API 密钥仅存在于服务器端，不会发送到客户端
 5. **HTTPS 推荐**：生产环境建议使用 HTTPS 协议
+6. **配置落库加密**：提供商管理写入 Supabase 前必须配置 `PROVIDER_CONFIG_ENCRYPTION_KEY`，API Key 会以 AES-256-GCM 加密后入库
 
 **安全最佳实践**：
 - ✅ 不要将 `.env` 文件提交到 Git 仓库
@@ -477,6 +506,7 @@ AI_IMAGE_PROVIDERS_JSON='[
 - [ ] "尺素·锦书"页面能生成旅游明信片
 - [ ] "妙笔·云章"页面能生成分享文案
 - [ ] AI生成的内容能正常下载和分享
+- [ ] “个人中心 → 提供商管理”可成功保存并热更新生效
 
 ---
 
@@ -532,6 +562,7 @@ AI_IMAGE_PROVIDERS_JSON='[
 - [尺素锦书旅游明信片功能说明](./docs/features/尺素锦书旅游明信片功能说明.md)
 - [妙笔云章分享文案功能说明](./docs/features/妙笔云章分享文案功能说明.md)
 - [生图提示词完整说明](./docs/features/生图提示词完整说明.md)
+- [AI 提供商管理功能说明](./docs/features/AI提供商管理功能说明.md)
 
 ---
 
@@ -563,7 +594,13 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 ### 配置 AI 提供商
 
-在 `backend/.env` 中通过 `AI_TEXT_PROVIDERS_JSON` 和 `AI_IMAGE_PROVIDERS_JSON` 配置多个提供商，详细配置示例见 [QUICKSTART.md](./docs/getting-started/QUICKSTART.md)
+可通过两种方式维护：
+
+1. 在 `backend/.env` 中配置 `AI_TEXT_PROVIDERS_JSON` 与 `AI_IMAGE_PROVIDERS_JSON`（冷启动配置）
+2. 在“个人中心 → 提供商管理”（`/provider-config`）在线更新（保存后热更新生效，优先于 `.env`）
+   - 注意：在线配置是当前登录用户私有配置；不同用户互不影响
+
+详细示例见 [QUICKSTART.md](./docs/getting-started/QUICKSTART.md)。
 
 ### 自定义样式
 

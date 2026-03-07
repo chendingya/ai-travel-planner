@@ -58,16 +58,26 @@ AI_TEXT_PROVIDERS_JSON='[
     "enabled": true,
     "baseURL": "https://api.gitcode.com/api/v5",
     "apiKey": "你的GitCode密钥",
-    "model": "Kimi-K2",
-    "priority": 1
+    "priority": 1,
+    "models": [
+      {
+        "model": "Kimi-K2",
+        "priority": 1
+      }
+    ]
   },
   {
     "name": "dashscope",
     "enabled": true,
     "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "apiKey": "你的阿里百炼密钥",
-    "model": "qwen-max",
-    "priority": 2
+    "priority": 2,
+    "models": [
+      {
+        "model": "qwen-max",
+        "priority": 1
+      }
+    ]
   }
 ]'
 
@@ -76,10 +86,15 @@ AI_IMAGE_PROVIDERS_JSON='[
   {
     "name": "modelscope",
     "enabled": true,
+    "baseURL": "https://api-inference.modelscope.cn/v1",
     "apiKey": "你的魔搭社区API密钥",
+    "model": "Tongyi-MAI/Z-Image-Turbo",
     "priority": 1
   }
 ]'
+
+# 提供商配置落库加密密钥（32字节明文或 base64 后为 32 字节）
+PROVIDER_CONFIG_ENCRYPTION_KEY=replace_with_32_byte_key
 
 # ========== Supabase 数据库配置 ==========
 SUPABASE_URL=https://你的项目.supabase.co
@@ -112,12 +127,13 @@ MCP_BING_AUTHORIZATION=Bearer xxx
 
 1. **AI 文本提供商** (`AI_TEXT_PROVIDERS_JSON`)
    - 支持配置多个提供商（GitCode、阿里百炼、OpenAI 等）
+   - 支持单提供商多模型：`models: [{ model, priority }]`
    - 按优先级自动降级，提高可靠性
    - 至少需要配置一个启用的提供商
 
 2. **AI 图片提供商** (`AI_IMAGE_PROVIDERS_JSON`)
-   - 目前支持魔搭社区 ModelScope
-   - 建议使用魔搭社区（免费额度充足）
+   - 使用 OpenAI-compatible 字段：`name/baseURL/apiKey/model/priority`
+   - `name=modelscope` 走专用适配器，其它名称走 OpenAI-compatible 图片适配器
 
 3. **Supabase 配置**
    - `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 用于后端服务
@@ -137,6 +153,12 @@ MCP_BING_AUTHORIZATION=Bearer xxx
      - `AUTH_HIDE_SESSION_IN_RESPONSE=1`
      - `AUTH_COOKIE_SECURE=false`（本地）/`true`（生产 HTTPS）
   - 详细设计见：[认证与AI聊天安全改造说明](../auth/认证与AI聊天安全改造说明.md)
+
+7. **在线提供商管理（推荐）**
+   - 登录后在“个人中心”进入 `提供商管理` 页面（`/provider-config`）
+   - 可编辑 text/pic 提供商并保存到 Supabase（按当前登录用户隔离）
+   - 需要在后端配置 `PROVIDER_CONFIG_ENCRYPTION_KEY`，否则保存会被拒绝
+   - 保存前强制连通性校验，通过后后端会热更新，无需重启服务
 
 ## 验证是否成功
 
@@ -288,22 +310,33 @@ MCP_BING_AUTHORIZATION=xxx
     "enabled": true,
     "baseURL": "https://api.gitcode.com/api/v5",
     "apiKey": "sk-xxx",
-    "model": "Kimi-K2",
-    "priority": 1
+    "priority": 1,
+    "models": [
+      { "model": "Kimi-K2", "priority": 1 },
+      { "model": "Kimi-K2-Thinking", "priority": 2 }
+    ]
   },
   {
     "name": "dashscope",
     "enabled": true,
     "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "apiKey": "sk-yyy",
-    "model": "qwen-max",
-    "priority": 2
+    "priority": 2,
+    "models": [
+      { "model": "qwen-max", "priority": 1 }
+    ]
   }
 ]
 ```
 
-系统会优先使用 `priority=1` 的提供商，失败时自动切换到 `priority=2`。
+系统会按 `priority` 选择提供商，并在每个提供商内部按模型 `priority` 选择模型。
+
+### 提供商管理 API（登录后）
+
+- `GET /api/provider-config`：获取脱敏后的当前配置
+- `POST /api/provider-config/test`：测试单个 provider 连通性
+- `PUT /api/provider-config`：全量校验并保存，成功后热更新
 
 ---
 
-**最后更新：2025-01-20**
+**最后更新：2026-03-07**

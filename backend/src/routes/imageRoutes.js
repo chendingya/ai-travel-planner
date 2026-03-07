@@ -52,14 +52,15 @@ module.exports = (imageController) => {
    *   get:
    *     tags: [Image]
    *     summary: 获取图片提供商
-   *     security: []
    *     responses:
    *       200:
    *         description: 获取成功
+   *       401:
+   *         description: 未授权
    *       500:
    *         description: 服务错误
    */
-  router.get('/image-providers', (req, res) => {
+  router.get('/image-providers', requireAuth, (req, res) => {
     imageController.getProviders(req, res);
   });
 

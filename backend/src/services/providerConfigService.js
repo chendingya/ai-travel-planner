@@ -1,9 +1,11 @@
 const OpenAI = require('openai');
+const crypto = require('crypto');
 const ModelScopeImageAdapter = require('./langchain/image/ModelScopeImageAdapter');
 const OpenAICompatibleImageAdapter = require('./langchain/image/OpenAICompatibleImageAdapter');
 
 const TABLE_NAME = 'ai_provider_configs';
-const ROW_ID = 'global';
+const KEY_ENV_NAME = 'PROVIDER_CONFIG_ENCRYPTION_KEY';
+const ENC_PREFIX = 'enc:v1';
 
 function parseProvidersJson(raw) {
   const value = raw == null ? '' : String(raw).trim();
@@ -52,15 +54,44 @@ function shallowClone(value) {
   return { ...value };
 }
 
+function loadEncryptionKey() {
+  const raw = String(process.env[KEY_ENV_NAME] || '').trim();
+  if (!raw) return null;
+
+  try {
+    const fromBase64 = Buffer.from(raw, 'base64');
+    if (fromBase64.length === 32) return fromBase64;
+  } catch (_) {
+    // ignore base64 parse errors and fallback to utf8
+  }
+
+  const utf8 = Buffer.from(raw, 'utf8');
+  if (utf8.length === 32) return utf8;
+  return null;
+}
+
 class ProviderConfigService {
   constructor({ supabase, langChainManager } = {}) {
     this.supabase = supabase;
     this.langChainManager = langChainManager;
     this.tableName = TABLE_NAME;
-    this.rowId = ROW_ID;
+    this.encryptionKey = loadEncryptionKey();
     this._initialized = false;
-    this._currentConfig = { textProviders: [], imageProviders: [] };
-    this._currentMeta = { source: 'env', updatedBy: '', updatedAt: '' };
+
+    this._defaultConfig = { textProviders: [], imageProviders: [] };
+    this._defaultMeta = { source: 'env', updatedBy: '', updatedAt: '' };
+    this._runtimeConfig = { textProviders: [], imageProviders: [] };
+    this._runtimeMeta = { source: 'runtime', updatedBy: '', updatedAt: '' };
+    this._activeRuntimeUserId = '';
+    this._activeRuntimeSignature = '';
+  }
+
+  _requireUserId(userId) {
+    const value = typeof userId === 'string' ? userId.trim() : '';
+    if (value) return value;
+    const err = new Error('用户身份缺失');
+    err.status = 401;
+    throw err;
   }
 
   _textProviderId(index) {
@@ -86,7 +117,7 @@ class ProviderConfigService {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !String(src.apiKey || '').trim());
-    const directApiKey = src.apiKey == null ? '' : String(src.apiKey).trim();
+    const directApiKey = this._readApiKey(src.apiKey);
     const fallbackApiKey = id && keepApiKey && keyMap.has(id) ? keyMap.get(id) : '';
     const apiKey = directApiKey || fallbackApiKey || '';
     const baseModel = src.model == null ? '' : String(src.model).trim();
@@ -110,7 +141,7 @@ class ProviderConfigService {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !String(src.apiKey || '').trim());
-    const directApiKey = src.apiKey == null ? '' : String(src.apiKey).trim();
+    const directApiKey = this._readApiKey(src.apiKey);
     const fallbackApiKey = id && keepApiKey && keyMap.has(id) ? keyMap.get(id) : '';
     const apiKey = directApiKey || fallbackApiKey || '';
     return {
@@ -141,14 +172,14 @@ class ProviderConfigService {
     return { textProviders, imageProviders };
   }
 
-  _storageShape(config) {
+  _storageShape(config, { encryptKeys = false } = {}) {
     const src = config && typeof config === 'object' ? config : {};
     return {
       textProviders: (Array.isArray(src.textProviders) ? src.textProviders : []).map((provider) => ({
         name: provider.name,
         enabled: provider.enabled,
         baseURL: provider.baseURL,
-        apiKey: provider.apiKey,
+        apiKey: encryptKeys ? this._writeApiKey(provider.apiKey) : provider.apiKey,
         priority: provider.priority,
         models: (Array.isArray(provider.models) ? provider.models : []).map((model) => ({
           model: model.model,
@@ -159,36 +190,80 @@ class ProviderConfigService {
         name: provider.name,
         enabled: provider.enabled,
         baseURL: provider.baseURL,
-        apiKey: provider.apiKey,
+        apiKey: encryptKeys ? this._writeApiKey(provider.apiKey) : provider.apiKey,
         model: provider.model,
         priority: provider.priority,
       })),
     };
   }
 
-  _buildTextKeyMap(config = this._currentConfig) {
+  _configSignature(config) {
+    return JSON.stringify(this._storageShape(config, { encryptKeys: false }));
+  }
+
+  _readApiKey(raw) {
+    const value = raw == null ? '' : String(raw).trim();
+    if (!value) return '';
+    if (!value.startsWith(`${ENC_PREFIX}:`)) return value;
+    if (!this.encryptionKey) {
+      throw new Error(`[provider-config] encrypted apiKey found but ${KEY_ENV_NAME} is not configured`);
+    }
+
+    const parts = value.split(':');
+    if (parts.length !== 5) {
+      throw new Error('[provider-config] invalid encrypted apiKey format');
+    }
+
+    const iv = Buffer.from(parts[2], 'base64');
+    const tag = Buffer.from(parts[3], 'base64');
+    const cipher = Buffer.from(parts[4], 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(cipher), decipher.final()]);
+    return plain.toString('utf8').trim();
+  }
+
+  _writeApiKey(raw) {
+    const value = raw == null ? '' : String(raw).trim();
+    if (!value) return '';
+    if (!this.encryptionKey) {
+      const err = new Error(`[provider-config] ${KEY_ENV_NAME} is required to persist provider api keys securely`);
+      err.status = 500;
+      throw err;
+    }
+
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${ENC_PREFIX}:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
+  }
+
+  _buildTextKeyMap(config) {
     const map = new Map();
     const textProviders = Array.isArray(config?.textProviders) ? config.textProviders : [];
     textProviders.forEach((provider, index) => {
       const key = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
       if (!key) return;
-      map.set(this._textProviderId(index), key);
+      const id = typeof provider?.id === 'string' && provider.id.trim() ? provider.id.trim() : this._textProviderId(index);
+      map.set(id, key);
     });
     return map;
   }
 
-  _buildImageKeyMap(config = this._currentConfig) {
+  _buildImageKeyMap(config) {
     const map = new Map();
     const imageProviders = Array.isArray(config?.imageProviders) ? config.imageProviders : [];
     imageProviders.forEach((provider, index) => {
       const key = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
       if (!key) return;
-      map.set(this._imageProviderId(index), key);
+      const id = typeof provider?.id === 'string' && provider.id.trim() ? provider.id.trim() : this._imageProviderId(index);
+      map.set(id, key);
     });
     return map;
   }
 
-  _maskForClient(config = this._currentConfig, meta = this._currentMeta) {
+  _maskForClient(config, meta) {
     const textProviders = (Array.isArray(config?.textProviders) ? config.textProviders : []).map((provider, providerIndex) => {
       const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
       return {
@@ -257,11 +332,11 @@ class ProviderConfigService {
     return code === '42P01' || code === 'PGRST205' || message.includes('does not exist');
   }
 
-  async _loadFromSupabase() {
+  async _loadUserRow(userId) {
     const { data, error } = await this.supabase
       .from(this.tableName)
       .select('*')
-      .eq('id', this.rowId)
+      .eq('user_id', userId)
       .maybeSingle();
 
     if (error) {
@@ -272,14 +347,20 @@ class ProviderConfigService {
   }
 
   _extractConfigFromRow(row) {
-    const textProviders = Array.isArray(row?.text_providers) ? row.text_providers : [];
-    const imageProviders = Array.isArray(row?.image_providers) ? row.image_providers : [];
+    const textProviders = (Array.isArray(row?.text_providers) ? row.text_providers : []).map((provider) => ({
+      ...(provider && typeof provider === 'object' ? provider : {}),
+      apiKey: this._readApiKey(provider?.apiKey),
+    }));
+    const imageProviders = (Array.isArray(row?.image_providers) ? row.image_providers : []).map((provider) => ({
+      ...(provider && typeof provider === 'object' ? provider : {}),
+      apiKey: this._readApiKey(provider?.apiKey),
+    }));
     return this._normalizeConfig({ textProviders, imageProviders });
   }
 
   _applyRuntimeConfig(config, meta = {}) {
     const normalized = this._normalizeConfig(config);
-    const storageShape = this._storageShape(normalized);
+    const storageShape = this._storageShape(normalized, { encryptKeys: false });
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify(storageShape.textProviders);
     process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify(storageShape.imageProviders);
 
@@ -287,8 +368,8 @@ class ProviderConfigService {
       this.langChainManager.reload(storageShape.textProviders, storageShape.imageProviders);
     }
 
-    this._currentConfig = normalized;
-    this._currentMeta = {
+    this._runtimeConfig = normalized;
+    this._runtimeMeta = {
       source: meta.source || 'runtime',
       updatedBy: meta.updatedBy || '',
       updatedAt: meta.updatedAt || '',
@@ -441,41 +522,72 @@ class ProviderConfigService {
 
   async bootstrap() {
     const envFallback = this._loadFromEnv();
-    try {
-      const { data, error } = await this._loadFromSupabase();
-      if (error) {
-        if (!this._isMissingTableError(error)) {
-          console.warn('[provider-config] failed to load config from supabase:', error.message || error);
-        }
-        this._applyRuntimeConfig(envFallback.config, envFallback.meta);
-      } else if (data) {
-        const config = this._extractConfigFromRow(data);
-        this._applyRuntimeConfig(config, {
-          source: 'supabase',
-          updatedBy: data.updated_by ? String(data.updated_by) : '',
-          updatedAt: data.updated_at ? String(data.updated_at) : '',
-        });
-      } else {
-        this._applyRuntimeConfig(envFallback.config, envFallback.meta);
-      }
-    } catch (error) {
-      console.warn('[provider-config] bootstrap fallback to env:', error?.message || error);
-      this._applyRuntimeConfig(envFallback.config, envFallback.meta);
-    }
+    this._defaultConfig = envFallback.config;
+    this._defaultMeta = envFallback.meta;
+    this._applyRuntimeConfig(envFallback.config, envFallback.meta);
     this._initialized = true;
   }
 
-  async getConfig() {
+  async _loadUserConfig(userId) {
     await this.ensureInitialized();
-    return this._maskForClient(this._currentConfig, this._currentMeta);
+    const effectiveUserId = this._requireUserId(userId);
+
+    try {
+      const { data, error } = await this._loadUserRow(effectiveUserId);
+      if (error) {
+        if (!this._isMissingTableError(error)) {
+          console.warn('[provider-config] failed to load user config from supabase:', error.message || error);
+        }
+        return { config: this._defaultConfig, meta: this._defaultMeta };
+      }
+      if (!data) {
+        return { config: this._defaultConfig, meta: this._defaultMeta };
+      }
+      const config = this._extractConfigFromRow(data);
+      return {
+        config,
+        meta: {
+          source: 'supabase',
+          updatedBy: data.updated_by ? String(data.updated_by) : effectiveUserId,
+          updatedAt: data.updated_at ? String(data.updated_at) : '',
+        },
+      };
+    } catch (error) {
+      const msg = String(error?.message || error || '');
+      if (msg.includes(KEY_ENV_NAME) || msg.includes('invalid encrypted apiKey format')) {
+        const err = new Error(`读取用户提供商配置失败：${msg}`);
+        err.status = 500;
+        throw err;
+      }
+      console.warn('[provider-config] load user config fallback to env:', error?.message || error);
+      return { config: this._defaultConfig, meta: this._defaultMeta };
+    }
   }
 
-  async testSingle(input) {
-    await this.ensureInitialized();
+  async activateUserRuntime(userId) {
+    const effectiveUserId = this._requireUserId(userId);
+    const loaded = await this._loadUserConfig(effectiveUserId);
+    const signature = this._configSignature(loaded.config);
+    if (this._activeRuntimeUserId === effectiveUserId && this._activeRuntimeSignature === signature) {
+      return;
+    }
+
+    this._applyRuntimeConfig(loaded.config, loaded.meta);
+    this._activeRuntimeUserId = effectiveUserId;
+    this._activeRuntimeSignature = signature;
+  }
+
+  async getConfig(userId) {
+    const loaded = await this._loadUserConfig(userId);
+    return this._maskForClient(loaded.config, loaded.meta);
+  }
+
+  async testSingle(input, userId) {
+    const loaded = await this._loadUserConfig(userId);
     const kind = input?.kind === 'image' ? 'image' : 'text';
     const providerInput = input?.provider && typeof input.provider === 'object' ? input.provider : {};
-    const textKeyMap = this._buildTextKeyMap();
-    const imageKeyMap = this._buildImageKeyMap();
+    const textKeyMap = this._buildTextKeyMap(loaded.config);
+    const imageKeyMap = this._buildImageKeyMap(loaded.config);
     const normalized = kind === 'text'
       ? { textProviders: [this._normalizeTextProvider(providerInput, 0, textKeyMap)], imageProviders: [] }
       : { textProviders: [], imageProviders: [this._normalizeImageProvider(providerInput, 0, imageKeyMap)] };
@@ -488,14 +600,14 @@ class ProviderConfigService {
       throw err;
     }
 
-    const tested = await this._validateConnectivity(normalized);
-    return tested;
+    return await this._validateConnectivity(normalized);
   }
 
   async updateConfig(input, userId = '') {
-    await this.ensureInitialized();
-    const textKeyMap = this._buildTextKeyMap(this._currentConfig);
-    const imageKeyMap = this._buildImageKeyMap(this._currentConfig);
+    const effectiveUserId = this._requireUserId(userId);
+    const loaded = await this._loadUserConfig(effectiveUserId);
+    const textKeyMap = this._buildTextKeyMap(loaded.config);
+    const imageKeyMap = this._buildImageKeyMap(loaded.config);
     const normalized = this._normalizeConfig(input, { textKeyMap, imageKeyMap });
 
     const structureErrors = this._validateStructure(normalized);
@@ -516,17 +628,17 @@ class ProviderConfigService {
       throw err;
     }
 
-    const storageShape = this._storageShape(normalized);
+    const storageShape = this._storageShape(normalized, { encryptKeys: true });
     const now = new Date().toISOString();
     const row = {
-      id: this.rowId,
+      user_id: effectiveUserId,
       text_providers: storageShape.textProviders,
       image_providers: storageShape.imageProviders,
-      updated_by: userId || null,
+      updated_by: effectiveUserId,
       updated_at: now,
     };
 
-    const { error } = await this.supabase.from(this.tableName).upsert(row, { onConflict: 'id' });
+    const { error } = await this.supabase.from(this.tableName).upsert(row, { onConflict: 'user_id' });
     if (error) {
       const err = new Error(`保存配置失败: ${error.message || error}`);
       err.status = this._isMissingTableError(error) ? 500 : 500;
@@ -535,12 +647,14 @@ class ProviderConfigService {
 
     this._applyRuntimeConfig(normalized, {
       source: 'supabase',
-      updatedBy: userId || '',
+      updatedBy: effectiveUserId,
       updatedAt: now,
     });
+    this._activeRuntimeUserId = effectiveUserId;
+    this._activeRuntimeSignature = this._configSignature(normalized);
 
     return {
-      config: this._maskForClient(this._currentConfig, this._currentMeta),
+      config: this._maskForClient(this._runtimeConfig, this._runtimeMeta),
       testResults: tested.results,
     };
   }

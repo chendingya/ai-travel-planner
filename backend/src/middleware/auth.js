@@ -99,6 +99,10 @@ const requireAuth = async (req, res, next) => {
       return res.status(401).json({ message: '无效的认证令牌', error: '无效的认证令牌' });
     }
     req.user = data.user;
+    const providerConfigService = req.app?.locals?.providerConfigService;
+    if (providerConfigService && typeof providerConfigService.activateUserRuntime === 'function') {
+      await providerConfigService.activateUserRuntime(data.user.id);
+    }
     return next();
   } catch (err) {
     return res.status(500).json({ message: '认证验证失败', error: '认证验证失败' });
