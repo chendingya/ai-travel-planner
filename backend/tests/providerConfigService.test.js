@@ -262,3 +262,51 @@ test('updateConfig is user-scoped and triggers runtime reload on success', async
     assert.equal(userB.textProviders.length, 0);
   });
 });
+
+test('user without db row falls back to local env even when another user has row', async () => {
+  await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'env-provider',
+        enabled: true,
+        baseURL: 'https://env.example.com/v1',
+        apiKey: 'sk-env',
+        priority: 1,
+        models: [{ model: 'env-model', priority: 1 }],
+      },
+    ]);
+    process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([]);
+
+    const seedService = new ProviderConfigService({ supabase: createSupabaseMock(), langChainManager: createManagerMock() });
+    const encryptedDbKey = seedService._writeApiKey('sk-db');
+
+    const supabase = createSupabaseMock([
+      {
+        user_id: USER_A,
+        text_providers: [
+          {
+            name: 'db-provider',
+            enabled: true,
+            baseURL: 'https://db.example.com/v1',
+            apiKey: encryptedDbKey,
+            priority: 1,
+            models: [{ model: 'db-model', priority: 1 }],
+          },
+        ],
+        image_providers: [],
+        updated_by: USER_A,
+        updated_at: '',
+      },
+    ]);
+
+    const service = new ProviderConfigService({ supabase, langChainManager: createManagerMock() });
+    await service.bootstrap();
+
+    const configA = await service.getConfig(USER_A);
+    const configB = await service.getConfig(USER_B);
+
+    assert.equal(configA.textProviders[0].name, 'db-provider');
+    assert.equal(configB.textProviders[0].name, 'env-provider');
+  });
+});

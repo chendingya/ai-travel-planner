@@ -86,6 +86,17 @@ class ProviderConfigService {
     this._activeRuntimeSignature = '';
   }
 
+  _debugEnabled() {
+    const raw = String(process.env.PROVIDER_CONFIG_DEBUG || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes';
+  }
+
+  _debug(event, payload = {}) {
+    if (!this._debugEnabled()) return;
+    const safePayload = payload && typeof payload === 'object' ? payload : { value: payload };
+    console.log('[provider-config]', event, JSON.stringify(safePayload));
+  }
+
   _requireUserId(userId) {
     const value = typeof userId === 'string' ? userId.trim() : '';
     if (value) return value;
@@ -538,12 +549,15 @@ class ProviderConfigService {
         if (!this._isMissingTableError(error)) {
           console.warn('[provider-config] failed to load user config from supabase:', error.message || error);
         }
+        this._debug('load_user_config.fallback_env.error', { userId: effectiveUserId, error: String(error?.message || error || '') });
         return { config: this._defaultConfig, meta: this._defaultMeta };
       }
       if (!data) {
+        this._debug('load_user_config.fallback_env.no_row', { userId: effectiveUserId });
         return { config: this._defaultConfig, meta: this._defaultMeta };
       }
       const config = this._extractConfigFromRow(data);
+      this._debug('load_user_config.supabase_hit', { userId: effectiveUserId, updatedBy: data.updated_by || '', updatedAt: data.updated_at || '' });
       return {
         config,
         meta: {
@@ -560,6 +574,7 @@ class ProviderConfigService {
         throw err;
       }
       console.warn('[provider-config] load user config fallback to env:', error?.message || error);
+      this._debug('load_user_config.fallback_env.exception', { userId: effectiveUserId, error: msg });
       return { config: this._defaultConfig, meta: this._defaultMeta };
     }
   }
@@ -569,12 +584,14 @@ class ProviderConfigService {
     const loaded = await this._loadUserConfig(effectiveUserId);
     const signature = this._configSignature(loaded.config);
     if (this._activeRuntimeUserId === effectiveUserId && this._activeRuntimeSignature === signature) {
+      this._debug('activate_user_runtime.skip_same_signature', { userId: effectiveUserId });
       return;
     }
 
     this._applyRuntimeConfig(loaded.config, loaded.meta);
     this._activeRuntimeUserId = effectiveUserId;
     this._activeRuntimeSignature = signature;
+    this._debug('activate_user_runtime.applied', { userId: effectiveUserId, source: loaded.meta?.source || 'env' });
   }
 
   async getConfig(userId) {
