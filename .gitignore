@@ -58,6 +58,9 @@ build/
 *.tmp
 *.temp
 
+# 爬虫输出数据（JSONL 知识库文件）
+backend/data/knowledge/
+
 backend/runtime/
 .codebuddy/
 .shared/

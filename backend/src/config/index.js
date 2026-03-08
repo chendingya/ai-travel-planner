@@ -144,4 +144,39 @@ module.exports = {
   config,
   getEnabledTextProviders,
   getEnabledImageProviders,
+  getEmbeddingConfig,
+  getRerankConfig,
 };
+
+/**
+ * 获取 Qwen Embedding 配置
+ * 返回 null 表示未配置，ragService 将自动降级（跳过 RAG）
+ */
+function getEmbeddingConfig() {
+  const apiKey = process.env.QWEN_EMBEDDING_API_KEY || '';
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    model:     process.env.QWEN_EMBEDDING_MODEL    || 'Qwen/Qwen3-Embedding-8B',
+    dim:       parseInt(process.env.QWEN_EMBEDDING_DIM || '1024', 10),
+    baseURL:   process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+    enabled:   (process.env.RAG_ENABLED || 'true').toLowerCase() !== 'false',
+    topK:      parseInt(process.env.RAG_TOP_K || '5', 10),
+    threshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD || '0.35'),
+  };
+}
+
+/**
+ * 获取 Rerank 服务配置
+ * RERANK_ENABLED=true 且 RERANK_BASE_URL 已填写时方生效
+ */
+function getRerankConfig() {
+  const baseURL = process.env.RERANK_BASE_URL || '';
+  const enabled = (process.env.RERANK_ENABLED || 'false').toLowerCase() === 'true' && !!baseURL;
+  return {
+    enabled,
+    baseURL:         baseURL || 'http://localhost:8001',
+    model:           process.env.RERANK_MODEL            || 'BAAI/bge-reranker-v2-m3',
+    candidateFactor: parseInt(process.env.RERANK_CANDIDATE_FACTOR || '3', 10),
+  };
+}

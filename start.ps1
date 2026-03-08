@@ -1,4 +1,4 @@
-# 拾光绘旅 - 启动脚本
+﻿# 拾光绘旅 - 启动脚本
 # 此脚本将自动启动前端和后端服务
 
 param(
@@ -137,7 +137,7 @@ Write-Host "🚀 正在启动前端服务..." -ForegroundColor Cyan
 Start-Process pwsh -ArgumentList @(
     '-NoExit',
     '-Command',
-    "Set-Location '$projectRoot\frontend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 前端'; `$env:VITE_API_PROXY_TARGET = 'http://127.0.0.1:$backendPort'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; Write-Host ('🔗 前端代理目标: ' + `$env:VITE_API_PROXY_TARGET) -ForegroundColor DarkCyan; npm run dev"
+    "Set-Location '$projectRoot\frontend'; `$Host.UI.RawUI.WindowTitle = '拾光绘旅 - 前端'; `$env:VITE_API_PROXY_TARGET = 'http://127.0.0.1:$backendPort'; Write-Host '🎨 前端服务器启动中...' -ForegroundColor Cyan; Write-Host `"🔗 前端代理目标: `$env:VITE_API_PROXY_TARGET`" -ForegroundColor DarkCyan; npm run dev"
 )
 
 Write-Host ""

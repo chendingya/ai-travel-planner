@@ -35,7 +35,7 @@ const applyLangChainTokenPatch = () => {
 applyLangChainTokenPatch();
 
 // 配置
-const { config, getEnabledTextProviders, getEnabledImageProviders } = require('./config');
+const { config, getEnabledTextProviders, getEnabledImageProviders, getEmbeddingConfig, getRerankConfig } = require('./config');
 
 // 中间件
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -54,6 +54,7 @@ const PostcardService = require('./services/postcardService');
 const ShareService = require('./services/shareService');
 const MCPService = require('./services/mcpService');
 const TTSService = require('./services/ttsService');
+const RagService = require('./services/ragService');
 const ProviderConfigService = require('./services/providerConfigService');
 
 // Controllers
@@ -210,7 +211,21 @@ async function initializeApp() {
     
     const planService = new PlanService(langChainManager, mcpService, supabase);
     const ttsService = new TTSService({ audioDir });
-    const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService });
+
+    // 初始化 RAG 服务（可选，未配置 QWEN_EMBEDDING_API_KEY 时自动跳过）
+    const embeddingConfig = getEmbeddingConfig();
+    const rerankConfig    = getRerankConfig();
+    const ragService = embeddingConfig && embeddingConfig.enabled
+      ? new RagService(supabase, embeddingConfig, rerankConfig)
+      : null;
+    if (ragService) {
+      const rerankInfo = rerankConfig.enabled ? `，Rerank ${rerankConfig.model}` : '，Rerank 未启用';
+      console.log(`RAG 服务: 已启用（${embeddingConfig.model}，维度 ${embeddingConfig.dim}${rerankInfo}）`);
+    } else {
+      console.log('RAG 服务: 未配置（设置 QWEN_EMBEDDING_API_KEY 启用）');
+    }
+
+    const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService, ragService });
     const promptService = new PromptService(langChainManager);
     const imageService = new ImageService(langChainManager, supabase);
     const playlistService = new PlaylistService(langChainManager, supabase);

@@ -8,8 +8,9 @@ class AIChatService {
   constructor(langChainManager, supabase, deps = {}) {
     this.langChainManager = langChainManager;
     this.supabase = supabase;
-    this.mcpService = deps.mcpService || null;
-    this.ttsService = deps.ttsService || null;
+    this.mcpService  = deps.mcpService  || null;
+    this.ttsService  = deps.ttsService  || null;
+    this.ragService  = deps.ragService  || null;  // RAG 检索服务（可选）
     this._toolRateLimitBuckets = new Map();
     this._toolRateLimitBucketsCleanupAt = 0;
     this._modelCooldownUntil = new Map();
@@ -635,7 +636,7 @@ class AIChatService {
       const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
       
       // 1. 准备 System Prompt
-      const systemPrompt = `你是一个专业的旅行助手，擅长解答各类旅行问题。
+      let systemPrompt = `你是一个专业的旅行助手，擅长解答各类旅行问题。
 
 你的职责：
 1. 提供实用的旅行建议和攻略
@@ -645,6 +646,25 @@ class AIChatService {
 5. 使用友好、专业的语气回答
 
 请用中文回答，保持简洁明了。`;
+
+      // 1.5 RAG：检索相关旅游知识，注入 systemPrompt
+      if (this.ragService && this.ragService.isAvailable()) {
+        try {
+          // 从 options 中获取城市提示（前端可传入）
+          const ragCity = typeof options.city === 'string' ? options.city.trim() : undefined;
+          const ragContext = await this.ragService.retrieveContext(message, {
+            city:      ragCity || undefined,
+            topK:      parseInt(process.env.RAG_TOP_K || '5', 10),
+            threshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD || '0.35'),
+          });
+          if (ragContext) {
+            systemPrompt += `\n\n${ragContext}`;
+          }
+        } catch (ragErr) {
+          // RAG 失败不影响正常对话
+          console.warn('[RAG] 检索失败，降级为无 RAG 模式:', ragErr.message);
+        }
+      }
 
       // 2. 准备工具
       let tools = [];
