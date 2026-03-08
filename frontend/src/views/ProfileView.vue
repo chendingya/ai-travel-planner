@@ -106,6 +106,19 @@
               </section>
 
               <section class="profile-section provider-section">
+                <h3 class="section-title">长期记忆管理</h3>
+                <p class="provider-desc">
+                  管理 AI 在跨会话中持续参考的个人旅行偏好，例如预算、节奏、交通方式、饮食禁忌等。
+                </p>
+                <div class="section-actions">
+                  <t-button theme="primary" variant="outline" @click="goMemoryCenter">
+                    <template #icon><t-icon name="bookmark" /></template>
+                    打开长期记忆页
+                  </t-button>
+                </div>
+              </section>
+
+              <section class="profile-section provider-section">
                 <h3 class="section-title">提供商管理</h3>
                 <p class="provider-desc">
                   维护 Text/Pic 生成提供商配置，支持 OpenAI-compatible 格式、连通性校验与热更新。
@@ -307,6 +320,10 @@ const triggerLoginDialog = () => {
 
 const goProviderConfig = () => {
   router.push('/provider-config');
+};
+
+const goMemoryCenter = () => {
+  router.push('/memory-center');
 };
 
 watch(

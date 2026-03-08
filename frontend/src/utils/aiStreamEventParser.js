@@ -346,6 +346,10 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
     if (type === 'meta') {
       return { ...base, tools: Array.isArray(payload?.tools) ? payload.tools : [] };
     }
+    if (type === 'memory_metrics') {
+      const metrics = payload?.metrics && typeof payload.metrics === 'object' ? payload.metrics : {};
+      return { ...base, metrics };
+    }
     if (type === 'tool_call' || type === 'tool_result' || type === 'tool_error') {
       const kind = type === 'tool_call' ? 'call' : type === 'tool_result' ? 'result' : 'error';
       const toolName = normalizeText(resolveToolNameFromPayload(payload), 60);
@@ -388,6 +392,10 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
     const event = buildEvent(payload, type, sessionId);
 
     if (type === 'meta') {
+      return { sessionId, content: null, event };
+    }
+
+    if (type === 'memory_metrics') {
       return { sessionId, content: null, event };
     }
 

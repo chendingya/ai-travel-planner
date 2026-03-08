@@ -2,6 +2,9 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { HumanMessage, AIMessage } = require('@langchain/core/messages');
 const SupabaseMessageHistory = require('./langchain/SupabaseMessageHistory');
 const { buildToolEventFromLangChainEvent } = require('./ai/streamToolEvents');
+const SessionMemoryService = require('./ai/sessionMemoryService');
+const LongTermMemoryService = require('./ai/longTermMemoryService');
+const PlanContextService = require('./ai/planContextService');
 
 
 class AIChatService {
@@ -14,6 +17,24 @@ class AIChatService {
     this._toolRateLimitBucketsCleanupAt = 0;
     this._modelCooldownUntil = new Map();
     this._traceStore = new AsyncLocalStorage();
+    this.sessionMemoryService = new SessionMemoryService({
+      supabase: this.supabase,
+      langChainManager: this.langChainManager,
+      requireUserId: (value) => this._requireUserId(value),
+      normalizeMessageContent: (content) => this._normalizeMessageContent(content),
+      truncateText: (text, maxChars) => this._truncateText(text, maxChars),
+    });
+    this.longTermMemoryService = new LongTermMemoryService({
+      supabase: this.supabase,
+      langChainManager: this.langChainManager,
+      requireUserId: (value) => this._requireUserId(value),
+      truncateText: (text, maxChars) => this._truncateText(text, maxChars),
+    });
+    this.planContextService = new PlanContextService({
+      supabase: this.supabase,
+      requireUserId: (value) => this._requireUserId(value),
+      truncateText: (text, maxChars) => this._truncateText(text, maxChars),
+    });
   }
 
   runWithTrace(trace, runner) {
@@ -450,6 +471,177 @@ class AIChatService {
     console.log(`[${ts}] ai-chat:${event}`, JSON.stringify(merged));
   }
 
+  _coerceUsageNumber(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) return null;
+    return Math.round(num);
+  }
+
+  _normalizeUsagePayload(value) {
+    if (!value || typeof value !== 'object') return null;
+
+    const promptTokens = this._coerceUsageNumber(
+      value.prompt_tokens ?? value.promptTokens ?? value.input_tokens ?? value.inputTokens
+    );
+    const completionTokens = this._coerceUsageNumber(
+      value.completion_tokens ?? value.completionTokens ?? value.output_tokens ?? value.outputTokens
+    );
+    const totalTokens = this._coerceUsageNumber(
+      value.total_tokens ?? value.totalTokens ?? value.total_token_count ?? value.totalTokenCount
+    );
+
+    if (promptTokens == null && completionTokens == null && totalTokens == null) return null;
+
+    const prompt = promptTokens != null
+      ? promptTokens
+      : totalTokens != null && completionTokens != null
+        ? Math.max(0, totalTokens - completionTokens)
+        : null;
+    const completion = completionTokens != null
+      ? completionTokens
+      : totalTokens != null && promptTokens != null
+        ? Math.max(0, totalTokens - promptTokens)
+        : null;
+    const total = totalTokens != null
+      ? totalTokens
+      : prompt != null || completion != null
+        ? (prompt || 0) + (completion || 0)
+        : null;
+
+    return {
+      prompt_tokens_actual: prompt,
+      completion_tokens_actual: completion,
+      total_tokens_actual: total,
+    };
+  }
+
+  _formatUsageSourceLabel(provider, model) {
+    const providerName = typeof provider === 'string' ? provider.trim() : '';
+    const modelName = typeof model === 'string' ? model.trim() : '';
+    if (providerName && modelName) return `${providerName} / ${modelName}`;
+    if (providerName) return providerName;
+    if (modelName) return modelName;
+    return '当前模型';
+  }
+
+  _selectBetterUsageMetrics(current, candidate) {
+    if (!candidate) return current;
+    if (!current) return candidate;
+
+    const currentScore = [
+      current.total_tokens_actual != null ? 1000000 : 0,
+      current.prompt_tokens_actual != null ? 10000 : 0,
+      current.completion_tokens_actual != null ? 10000 : 0,
+      current.total_tokens_actual || 0,
+      current.prompt_tokens_actual || 0,
+      current.completion_tokens_actual || 0,
+    ].reduce((sum, value) => sum + value, 0);
+
+    const candidateScore = [
+      candidate.total_tokens_actual != null ? 1000000 : 0,
+      candidate.prompt_tokens_actual != null ? 10000 : 0,
+      candidate.completion_tokens_actual != null ? 10000 : 0,
+      candidate.total_tokens_actual || 0,
+      candidate.prompt_tokens_actual || 0,
+      candidate.completion_tokens_actual || 0,
+    ].reduce((sum, value) => sum + value, 0);
+
+    return candidateScore >= currentScore ? candidate : current;
+  }
+
+  _extractUsageMetrics(value, source = 'provider') {
+    const queue = [{ value, path: source, depth: 0 }];
+    const visited = new Set();
+    let best = null;
+
+    while (queue.length) {
+      const current = queue.shift();
+      const node = current?.value;
+      const path = current?.path || source;
+      const depth = Number(current?.depth || 0);
+      if (!node || typeof node !== 'object') continue;
+      if (visited.has(node)) continue;
+      visited.add(node);
+
+      best = this._selectBetterUsageMetrics(best, this._normalizeUsagePayload(node));
+      if (depth >= 4) continue;
+
+      const preferredKeys = [
+        'usage_metadata',
+        'usage',
+        'tokenUsage',
+        'token_usage',
+        'response_metadata',
+        'llmOutput',
+        'output_metadata',
+        'metadata',
+        'message',
+        'messages',
+        'generations',
+        'generation',
+        'output',
+        'outputs',
+        'chunk',
+        'data',
+        'kwargs',
+        'additional_kwargs',
+      ];
+
+      for (const key of preferredKeys) {
+        if (!(key in node)) continue;
+        const child = node[key];
+        if (Array.isArray(child)) {
+          child.slice(0, 4).forEach((entry, index) => {
+            if (entry && typeof entry === 'object') queue.push({ value: entry, path: `${path}.${key}[${index}]`, depth: depth + 1 });
+          });
+        } else if (child && typeof child === 'object') {
+          queue.push({ value: child, path: `${path}.${key}`, depth: depth + 1 });
+        }
+      }
+    }
+
+    return best;
+  }
+
+  _buildMemoryMetricsChunk({
+    sessionId,
+    source = 'chat',
+    systemTokensEstimate,
+    historyTokensEstimate,
+    userTokensEstimate,
+    longTermMemories,
+    planContextBlock,
+    shortMemoryMetrics,
+    usageMetrics,
+    usageSourceLabel,
+  }) {
+    const metrics = {
+      prompt_tokens_estimate: systemTokensEstimate + historyTokensEstimate + userTokensEstimate,
+      system_tokens_estimate: systemTokensEstimate,
+      history_tokens_estimate: historyTokensEstimate,
+      user_tokens_estimate: userTokensEstimate,
+      long_term_memory_count: Array.isArray(longTermMemories) ? longTermMemories.length : 0,
+      plan_context_enabled: !!planContextBlock,
+      short_memory: shortMemoryMetrics,
+      short_memory_compressed: !!shortMemoryMetrics?.compressed,
+    };
+
+    if (usageMetrics) {
+      metrics.prompt_tokens_actual = usageMetrics.prompt_tokens_actual;
+      metrics.completion_tokens_actual = usageMetrics.completion_tokens_actual;
+      metrics.total_tokens_actual = usageMetrics.total_tokens_actual;
+      metrics.token_usage_source = usageSourceLabel || source;
+      metrics.token_usage_available = true;
+    }
+
+    return {
+      type: 'memory_metrics',
+      sessionId,
+      source,
+      metrics,
+    };
+  }
+
   async tryTables(tableNames, runner) {
     let lastError = null;
     for (const tableName of tableNames) {
@@ -624,15 +816,57 @@ class AIChatService {
     return true;
   }
 
+  async clearLongTermMemories(userId) {
+    return this.longTermMemoryService.clearLongTermMemories(userId);
+  }
+
+  async getLongTermMemories(userId) {
+    return this.longTermMemoryService.loadLongTermMemories(userId);
+  }
+
+  async saveLongTermMemory({ userId, memoryKey, memoryValue, confidence, sourceSessionId }) {
+    return this.longTermMemoryService.saveLongTermMemory({
+      userId,
+      memoryKey,
+      memoryValue,
+      confidence,
+      sourceSessionId,
+    });
+  }
+
+  async deleteLongTermMemory(userId, memoryKey) {
+    return this.longTermMemoryService.deleteLongTermMemory(userId, memoryKey);
+  }
+
   /**
    * AI 对话
    */
   async chat(message, sessionId, options = {}) {
     try {
+      const chatService = this;
       const userId = this._requireUserId(options?.userId);
       const enableTools = !!(options.enable_tools ?? options.enableTools);
       const includeAudio = !!(options.include_audio ?? options.includeAudio);
       const voice = typeof (options.voice ?? options.voiceId) === 'string' ? (options.voice ?? options.voiceId) : '';
+      const contextPlanId = typeof (options.context_plan_id ?? options.contextPlanId) === 'string'
+        ? (options.context_plan_id ?? options.contextPlanId).trim()
+        : '';
+      const contextPlanEnabledRaw = options.context_plan_enabled ?? options.contextPlanEnabled;
+      const contextPlanEnabled = contextPlanEnabledRaw == null ? true : !!contextPlanEnabledRaw;
+      const sessionState = sessionId
+        ? await this.sessionMemoryService.loadSessionState(sessionId, userId)
+        : { rawMessages: [], messages: [], summary: '' };
+      let longTermMemories = [];
+      try {
+        longTermMemories = await this.longTermMemoryService.loadLongTermMemories(userId);
+      } catch (error) {
+        console.warn('Load long term memories failed:', error?.message || error);
+      }
+      const longTermMemoryBlock = this.longTermMemoryService.formatLongTermMemoryBlock(longTermMemories);
+      let planContextBlock = '';
+      if (contextPlanEnabled && contextPlanId) {
+        planContextBlock = await this.planContextService.loadPlanContextSummary(contextPlanId, userId);
+      }
       
       // 1. 准备 System Prompt
       const systemPrompt = `你是一个专业的旅行助手，擅长解答各类旅行问题。
@@ -702,9 +936,17 @@ class AIChatService {
       const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools });
       const allowedProviders = preferredProvider ? [preferredProvider] : [];
       
+      const systemPromptSections = [
+        systemPrompt,
+        enableTools ? '工具使用规则：\n1. 优先使用工具获取实时信息。\n2. 无法获取时说明原因。' : '',
+        longTermMemoryBlock,
+        planContextBlock,
+      ].filter(Boolean);
+      const systemPromptText = systemPromptSections.join('\n\n');
+
       const agentRunnable = await this.langChainManager.createAgent({
         tools,
-        systemPrompt: enableTools ? `${systemPrompt}\n\n工具使用规则：\n1. 优先使用工具获取实时信息。\n2. 无法获取时说明原因。` : systemPrompt,
+        systemPrompt: systemPromptSections.join('\n\n'),
         provider: preferredProvider,
         allowedProviders,
         modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
@@ -742,6 +984,19 @@ class AIChatService {
             current.aiMeta.providers = providers;
           }
         }
+      };
+
+      const resolveUsageSourceLabel = () => {
+        const trace = currentTrace || this._currentTrace();
+        const providers = Array.isArray(trace?.aiMeta?.providers) ? trace.aiMeta.providers : [];
+        if (providers.length > 0) {
+          const last = providers[providers.length - 1] || {};
+          return this._formatUsageSourceLabel(last.provider, last.model);
+        }
+        const adapter = Array.isArray(this.langChainManager?.textAdapters)
+          ? this.langChainManager.textAdapters.find(a => a && a.name === preferredProvider)
+          : null;
+        return this._formatUsageSourceLabel(preferredProvider, adapter?.model || '');
       };
 
       const metadataCallback = {
@@ -784,7 +1039,22 @@ class AIChatService {
         // LangGraph 状态管理：手动加载和保存历史
         // 因为 LangGraph 会返回完整的会话状态，我们手动计算增量并保存，比 RunnableWithMessageHistory 更可靠
         const history = new SupabaseMessageHistory(sessionId, this.supabase, { userId });
-        const storedMessages = await history.getMessages();
+        const shortMemoryBundle = this.sessionMemoryService.buildShortMemoryWithMetrics(sessionState.messages, sessionState.summary);
+        const storedMessages = shortMemoryBundle.messages;
+        const shortMemoryMetrics = shortMemoryBundle.metrics || {};
+        const systemTokensEstimate = this.sessionMemoryService.estimateTokenCount(systemPromptText);
+        const userTokensEstimate = this.sessionMemoryService.estimateTokenCount(String(message || ''));
+        const historyTokensEstimate = Number(shortMemoryMetrics.selected_tokens_estimate || 0);
+        const memoryMetricsChunk = this._buildMemoryMetricsChunk({
+          sessionId,
+          source: 'chat',
+          systemTokensEstimate,
+          historyTokensEstimate,
+          userTokensEstimate,
+          longTermMemories,
+          planContextBlock,
+          shortMemoryMetrics,
+        });
         
         // 构造输入：历史记录 + 用户新消息
         const inputMessages = [...storedMessages, new HumanMessage(message)];
@@ -799,11 +1069,17 @@ class AIChatService {
         );
         
         let finalResponse = '';
+        let usageMetrics = null;
 
         const streamGenerator = async function* () {
+          yield memoryMetricsChunk;
           for await (const event of eventStream) {
             recordProvider(event?.metadata);
             recordProvider(event?.data?.metadata);
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event, 'event'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data, 'event.data'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data?.chunk, 'event.data.chunk'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data?.output, 'event.data.output'));
             const toolChunk = toToolChunk(event);
             if (toolChunk) {
               yield toolChunk;
@@ -819,9 +1095,46 @@ class AIChatService {
             }
           }
 
+          if (usageMetrics) {
+            yield chatService._buildMemoryMetricsChunk({
+              sessionId,
+              source: 'chat',
+              systemTokensEstimate,
+              historyTokensEstimate,
+              userTokensEstimate,
+              longTermMemories,
+              planContextBlock,
+              shortMemoryMetrics,
+              usageMetrics,
+              usageSourceLabel: resolveUsageSourceLabel(),
+            });
+          }
+
           if (finalResponse) {
             const aiMsg = new AIMessage(finalResponse);
             await history.addMessages([new HumanMessage(message), aiMsg]);
+            const now = new Date().toISOString();
+            const allMessages = [
+              ...(Array.isArray(sessionState.rawMessages) ? sessionState.rawMessages : []),
+              { role: 'user', content: message, created_at: now },
+              { role: 'assistant', content: finalResponse, created_at: now },
+            ];
+            await chatService.sessionMemoryService.maybeRefreshSessionSummary({
+              sessionId,
+              userId,
+              previousSummary: sessionState.summary,
+              allMessages,
+            });
+            try {
+              const candidates = await chatService.longTermMemoryService.extractLongTermMemoryCandidates({
+                userMessage: message,
+                assistantMessage: finalResponse,
+                existingMemories: longTermMemories,
+              });
+              await chatService.longTermMemoryService.upsertLongTermMemories({ userId, sessionId, candidates });
+            } catch (error) {
+              console.warn('Extract long term memory failed:', error?.message || error);
+            }
           }
         };
 
@@ -829,6 +1142,31 @@ class AIChatService {
 
       } else {
         // 无状态模式 (直接调用，不读取/保存历史)
+        const shortCfg = this.sessionMemoryService.shortMemoryConfig();
+        const systemTokensEstimate = this.sessionMemoryService.estimateTokenCount(systemPromptText);
+        const userTokensEstimate = this.sessionMemoryService.estimateTokenCount(String(message || ''));
+        const shortMemoryMetrics = {
+          enabled: !!shortCfg.enabled,
+          summary_included: false,
+          history_messages_total: 0,
+          selected_messages_total: 0,
+          history_tokens_estimate: 0,
+          selected_tokens_estimate: 0,
+          max_messages: shortCfg.maxMessages,
+          token_budget: shortCfg.tokenBudget,
+          compressed: false,
+          compression_reason: '',
+        };
+        const memoryMetricsChunk = this._buildMemoryMetricsChunk({
+          sessionId: '',
+          source: 'chat',
+          systemTokensEstimate,
+          historyTokensEstimate: 0,
+          userTokensEstimate,
+          longTermMemories,
+          planContextBlock,
+          shortMemoryMetrics,
+        });
         const eventStream = await agentRunnable.streamEvents(
           { messages: [new HumanMessage(message)] },
           {
@@ -837,10 +1175,16 @@ class AIChatService {
           }
         );
         
+        let usageMetrics = null;
         const streamGenerator = async function* () {
+          yield memoryMetricsChunk;
           for await (const event of eventStream) {
             recordProvider(event?.metadata);
             recordProvider(event?.data?.metadata);
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event, 'event'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data, 'event.data'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data?.chunk, 'event.data.chunk'));
+            usageMetrics = chatService._selectBetterUsageMetrics(usageMetrics, chatService._extractUsageMetrics(event?.data?.output, 'event.data.output'));
             const toolChunk = toToolChunk(event);
             if (toolChunk) {
               yield toolChunk;
@@ -851,6 +1195,21 @@ class AIChatService {
               const piece = pickChunkText(chunk?.content) || pickChunkText(chunk?.delta?.content);
               if (piece) yield piece;
             }
+          }
+
+          if (usageMetrics) {
+            yield chatService._buildMemoryMetricsChunk({
+              sessionId: '',
+              source: 'chat',
+              systemTokensEstimate,
+              historyTokensEstimate: 0,
+              userTokensEstimate,
+              longTermMemories,
+              planContextBlock,
+              shortMemoryMetrics,
+              usageMetrics,
+              usageSourceLabel: resolveUsageSourceLabel(),
+            });
           }
         };
 

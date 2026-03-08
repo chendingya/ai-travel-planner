@@ -25,6 +25,10 @@ module.exports = (aiChatController) => {
    *                 type: string
    *               sessionId:
    *                 type: string
+   *               context_plan_id:
+   *                 type: string
+   *               context_plan_enabled:
+   *                 type: boolean
    *               enable_tools:
    *                 type: boolean
    *               include_audio:
@@ -264,6 +268,105 @@ module.exports = (aiChatController) => {
    */
   router.patch('/ai-chat/sessions/:id', requireAuth, (req, res) => {
     aiChatController.updateSessionTitle(req, res);
+  });
+
+  /**
+   * @openapi
+   * /api/ai-chat/memory:
+   *   get:
+   *     tags: [AI Chat]
+   *     summary: 获取当前用户长期记忆
+   *     responses:
+   *       200:
+   *         description: 获取成功
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
+  router.get('/ai-chat/memory', requireAuth, (req, res) => {
+    aiChatController.getMemory(req, res);
+  });
+
+  /**
+   * @openapi
+   * /api/ai-chat/memory/{key}:
+   *   put:
+   *     tags: [AI Chat]
+   *     summary: 保存当前用户某个长期记忆
+   *     parameters:
+   *       - in: path
+   *         name: key
+   *         required: true
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               text:
+   *                 type: string
+   *               confidence:
+   *                 type: number
+   *             required:
+   *               - text
+   *     responses:
+   *       200:
+   *         description: 保存成功
+   *       400:
+   *         description: 参数错误
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
+  router.put('/ai-chat/memory/:key', requireAuth, (req, res) => {
+    aiChatController.saveMemory(req, res);
+  });
+
+  /**
+   * @openapi
+   * /api/ai-chat/memory/{key}:
+   *   delete:
+   *     tags: [AI Chat]
+   *     summary: 删除当前用户某个长期记忆
+   *     parameters:
+   *       - in: path
+   *         name: key
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: 删除成功
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
+  router.delete('/ai-chat/memory/:key', requireAuth, (req, res) => {
+    aiChatController.deleteMemory(req, res);
+  });
+
+  /**
+   * @openapi
+   * /api/ai-chat/memory:
+   *   delete:
+   *     tags: [AI Chat]
+   *     summary: 清空当前用户长期记忆
+   *     responses:
+   *       200:
+   *         description: 清空成功
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
+  router.delete('/ai-chat/memory', requireAuth, (req, res) => {
+    aiChatController.clearMemory(req, res);
   });
 
   return router;

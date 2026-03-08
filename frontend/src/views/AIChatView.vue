@@ -37,6 +37,41 @@
                 <span class="toggle-text">{{ enableTools ? '工具模式' : '普通对话' }}</span>
               </div>
             </div>
+
+            <PlanContextPanel
+              v-if="isLoggedIn"
+              :attached-plan-id="attachedPlanId"
+              :attached-plan-label="attachedPlanLabel"
+              :context-plan-options="contextPlanOptions"
+              :is-loading-context-plans="isLoadingContextPlans"
+              :is-loading="isLoading"
+              @refresh="loadContextPlans({ force: true })"
+              @change="handleAttachPlanChange"
+              @clear="clearAttachedPlanForCurrentConversation"
+            />
+            <div v-if="memoryMetrics" class="memory-metrics-card">
+              <div class="memory-metrics-title">Token 用量</div>
+              <div v-if="hasActualUsage(memoryMetrics)" class="memory-metrics-main">
+                Prompt Tokens {{ formatMetricNumber(memoryMetrics.prompt_tokens_actual) }}
+              </div>
+              <div v-if="hasActualUsage(memoryMetrics)" class="memory-metrics-sub">
+                prompt {{ formatMetricNumber(memoryMetrics.prompt_tokens_actual) }} ·
+                completion {{ formatMetricNumber(memoryMetrics.completion_tokens_actual) }} ·
+                total {{ formatMetricNumber(memoryMetrics.total_tokens_actual) }}
+              </div>
+              <div v-if="memoryMetrics.token_usage_source" class="memory-metrics-sub">
+                usage 来源：{{ memoryMetrics.token_usage_source }}
+              </div>
+              <div v-if="!hasActualUsage(memoryMetrics)" class="memory-metrics-sub">
+                正在等待模型返回实际 token 用量...
+              </div>
+              <div class="memory-metrics-sub">
+                压缩：{{ memoryMetrics.short_memory_compressed ? '是' : '否' }}
+                <span v-if="memoryMetrics.short_memory?.compression_reason">
+                  （{{ memoryMetrics.short_memory.compression_reason }}）
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -180,10 +215,13 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { supabase } from '../supabase'
-import { createAIStreamEventParser } from '../utils/aiStreamEventParser'
+import { useConversationPlanContext } from '../composables/useConversationPlanContext'
+import { useAIChatMessageFlow } from '../composables/useAIChatMessageFlow'
+import { useAIChatHistorySidebar } from '../composables/useAIChatHistorySidebar'
+import PlanContextPanel from '../components/chat/PlanContextPanel.vue'
 
 // 登录状态
 const isLoggedIn = ref(false)
@@ -213,211 +251,99 @@ const chatBotRef = ref(null)
 const viewRootRef = ref(null)
 const viewHeight = ref(window.innerHeight)
 
-// 历史会话相关
-const showHistoryPanel = ref(true)
-const sessions = ref([])
-const isLoadingSessions = ref(false)
-const isLoadingMoreSessions = ref(false)
-const hasMoreSessions = ref(true)
-const sessionsPage = ref(0)
-const sessionsPageSize = 20
-const sessionsLoadedOnce = ref(false)
-const isLoadingHistory = ref(false)
-const loadingHistoryId = ref(null)
-const historyListRef = ref(null)
-const historyScrollTop = ref(0)
-const historyListHeight = ref(0)
-const historyItemHeight = 84
-const historyOverscan = 6
-const sessionAppearDelayMap = ref({})
-const sessionAppearDelayStep = 55
-const sessionAppearDelayMax = 500
-const sessionAppearDuration = 380
-const sessionAppearCleanupBuffer = 240
 let authSubscription = null
-let historyResizeObserver = null
-
-// 计算显示的会话列表
-const displayedSessions = computed(() => sessions.value)
-
-const virtualVisibleCount = computed(() => {
-  if (!historyListHeight.value) return 20
-  return Math.ceil(historyListHeight.value / historyItemHeight) + historyOverscan * 2
-})
-
-const virtualStartIndex = computed(() => {
-  const base = Math.floor(historyScrollTop.value / historyItemHeight) - historyOverscan
-  return Math.max(0, base)
-})
-
-const virtualEndIndex = computed(() => {
-  return Math.min(displayedSessions.value.length, virtualStartIndex.value + virtualVisibleCount.value)
-})
-
-const visibleSessions = computed(() => {
-  return displayedSessions.value.slice(virtualStartIndex.value, virtualEndIndex.value)
-})
-
-const virtualPaddingTop = computed(() => virtualStartIndex.value * historyItemHeight)
-const virtualPaddingBottom = computed(() => Math.max(0, (displayedSessions.value.length - virtualEndIndex.value) * historyItemHeight))
 
 // 会话管理
 const conversationId = ref(null)
 const shouldResetHistory = ref(true)
 
+const {
+  isLoadingContextPlans,
+  draftConversationKey,
+  attachedPlanId,
+  attachedPlanLabel,
+  contextPlanOptions,
+  setAttachedPlanForConversation,
+  handleAttachPlanChange,
+  clearAttachedPlanForCurrentConversation,
+  migrateDraftAttachedPlan,
+  clearAttachedPlanForConversation,
+  loadContextPlans,
+  resetPlanContextState,
+} = useConversationPlanContext({
+  isLoggedIn,
+  conversationId,
+  getAuthSession: async (...args) => getAuthSession(...args),
+})
+
 // MCP 工具模式开关
 const enableTools = ref(true)
 
-// 默认问候消息
-const defaultGreeting = `您好！我是您的AI旅行助手，很高兴为您服务！
-
-我可以为您提供杭州旅游的相关建议，包括：
-- **景点推荐**：热门景区、网红打卡地
-- **美食介绍**：特色小吃、地道餐厅
-- **行程规划**：路线设计、时间安排
-- **实用建议**：交通指南、住宿推荐
-
-**提示**：开启"工具模式"，我还可以：
-- **查询火车票**：查询12306列车信息
-- **天气查询**：查询目的地实时天气
-- **地点搜索**：搜索景点、餐厅、酒店
-- **网络搜索**：获取最新旅游资讯
-
-请问有什么可以帮助您的吗？`
-const debugToolRaw = new URLSearchParams(window.location.search).get('debug_tool_raw') === '1'
-const streamEventParser = createAIStreamEventParser({ includeRaw: debugToolRaw })
-
-const toPlainText = (content) => {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map((item) => {
-      if (typeof item === 'string') return item
-      if (item && typeof item === 'object') {
-        if (typeof item.data === 'string') return item.data
-        if (typeof item.text === 'string') return item.text
-        if (typeof item.content === 'string') return item.content
-      }
-      return ''
-    }).join('')
-  }
-  return content ? String(content) : ''
-}
-
-const normalizeMessage = (msg) => {
-  const role = msg?.role || 'assistant'
-  const rawContent = msg?.content
-  if (Array.isArray(rawContent) && rawContent.every((item) => item && typeof item === 'object' && 'type' in item)) {
-    return {
-      ...msg,
-      role,
-      content: rawContent,
-    }
-  }
-  const text = toPlainText(rawContent)
-  if (role === 'user') {
-    return { ...msg, role: 'user', content: [{ type: 'text', data: text }] }
-  }
-  if (role === 'system') {
-    return { ...msg, role: 'system', content: [{ type: 'text', data: text }] }
-  }
-  return { ...msg, role: 'assistant', content: [{ type: 'markdown', data: text }] }
-}
-
-// 消息列表
-const messages = ref([
-  normalizeMessage({
-    role: 'assistant',
-    content: defaultGreeting,
-  }),
-])
-
-const messageProps = (msg) => ({
-  avatar: msg.role === 'user' ? userAvatar : assistantAvatar,
-  name: msg.role === 'user' ? '我' : msg.role === 'assistant' ? 'AI助手' : '系统',
+const {
+  defaultGreeting,
+  streamEventParser,
+  normalizeMessage,
+  messages,
+  messageProps,
+  isLoading,
+  memoryMetrics,
+  currentQuickQuestions,
+  currentPlaceholder,
+  chatServiceConfig,
+  handleMessageChange,
+  handleQuickQuestion: sendQuickQuestion,
+  replaceMessages,
+  resetToGreeting,
+} = useAIChatMessageFlow({
+  conversationId,
+  attachedPlanId,
+  enableTools,
+  shouldResetHistory,
+  migrateDraftAttachedPlan,
+  getAuthSession: async (...args) => getAuthSession(...args),
+  goToLogin: () => goToLogin(),
+  userAvatar,
+  assistantAvatar,
 })
 
-const isLoading = ref(false)
-
-// 普通模式快捷问题
-const normalQuickQuestions = [
-  '推荐一些杭州的热门景点',
-  '杭州有什么特色美食？',
-  '如何规划一次完美的杭州之旅？',
-  '杭州旅游的最佳季节是什么时候？'
-]
-
-// 工具模式快捷问题
-const toolQuickQuestions = [
-  '查一下明天从北京到杭州的高铁',
-  '杭州今天天气怎么样？',
-  '搜索西湖附近的美食餐厅',
-  '帮我搜索乌镇的住宿推荐'
-]
-
-// 根据模式切换快捷问题
-const currentQuickQuestions = computed(() => 
-  enableTools.value ? toolQuickQuestions : normalQuickQuestions
-)
-
-// 根据模式切换占位符
-const currentPlaceholder = computed(() => 
-  enableTools.value 
-    ? '输入问题，可使用火车票查询、网络搜索等工具...' 
-    : '请输入您的问题...'
-)
-
-const updateLoading = (list) => {
-  const last = Array.isArray(list) ? list.at(-1) : null
-  const status = last?.status
-  isLoading.value = status === 'pending' || status === 'streaming'
-}
-
-const handleMessageChange = (e) => {
-  const next = Array.isArray(e?.detail) ? e.detail : []
-  messages.value = next
-  updateLoading(next)
-}
-
-const chatServiceConfig = () => ({
-  endpoint: '/api/ai-chat',
-  stream: true,
-  protocol: 'default',
-  onRequest: async (params) => {
-    streamEventParser.reset()
-    const session = await getAuthSession('请先登录后再进行对话')
-    if (!session) {
-      goToLogin()
-      throw new Error('请先登录后再进行对话')
-    }
-    const urlParams = new URLSearchParams(window.location.search)
-    const debugStream = urlParams.get('debug_stream') === '1'
-    return {
-      ...params,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        message: params?.prompt || '',
-        sessionId: conversationId.value || undefined,
-        enable_tools: enableTools.value,
-        ...(debugStream ? { debug_stream: true } : {}),
-      }),
-    }
-  },
-  onMessage: (chunk) => {
-    const parsed = streamEventParser.parseChunk(chunk)
-    if (!parsed) return null
-    if (parsed.sessionId) conversationId.value = parsed.sessionId
-    return parsed.content || null
-  },
-  onError: () => {
-    MessagePlugin.error('发送消息失败，请稍后重试')
-  },
-  onComplete: () => {
-    shouldResetHistory.value = false
-  },
+const {
+  showHistoryPanel,
+  sessions,
+  isLoadingSessions,
+  isLoadingMoreSessions,
+  hasMoreSessions,
+  sessionsLoadedOnce,
+  historyListRef,
+  displayedSessions,
+  visibleSessions,
+  virtualPaddingTop,
+  virtualPaddingBottom,
+  hasSessionAppearAnimation,
+  sessionAppearStyle,
+  handleHistoryScroll,
+  handleManualRefreshSessions,
+  toggleHistoryPanel,
+  loadSessions,
+  loadSession,
+  confirmDeleteSession,
+  formatDate,
+  updateHistoryListMetrics,
+  cleanupHistoryResources,
+  resetHistoryStateForLogout,
+} = useAIChatHistorySidebar({
+  isLoggedIn,
+  conversationId,
+  shouldResetHistory,
+  getAuthSession: async (...args) => getAuthSession(...args),
+  goToLogin: () => goToLogin(),
+  clearAttachedPlanForConversation,
+  setAttachedPlanForConversation,
+  draftConversationKey,
+  normalizeMessage,
+  defaultGreeting,
+  streamEventParser,
+  chatBotRef,
+  replaceMessages,
 })
 
 const updateViewHeight = () => {
@@ -425,323 +351,21 @@ const updateViewHeight = () => {
   viewHeight.value = Math.max(420, Math.floor(window.innerHeight - top))
 }
 
-const updateHistoryListMetrics = () => {
-  historyListHeight.value = historyListRef.value?.clientHeight || 0
-}
-
-const appendSessionAppearAnimations = (list) => {
-  const ids = Array.isArray(list)
-    ? list
-        .map((s) => (s && typeof s.conversation_id === 'string' ? s.conversation_id : ''))
-        .filter(Boolean)
-    : []
-  if (!ids.length) return
-
-  const next = { ...sessionAppearDelayMap.value }
-  let maxDelay = 0
-  ids.forEach((id, index) => {
-    const delay = Math.min(index * sessionAppearDelayStep, sessionAppearDelayMax)
-    next[id] = delay
-    maxDelay = Math.max(maxDelay, delay)
-  })
-  sessionAppearDelayMap.value = next
-
-  const removeAfterMs = maxDelay + sessionAppearDuration + sessionAppearCleanupBuffer
-  setTimeout(() => {
-    const current = { ...sessionAppearDelayMap.value }
-    ids.forEach((id) => {
-      delete current[id]
-    })
-    sessionAppearDelayMap.value = current
-  }, removeAfterMs)
-}
-
-const clearSessionAppearAnimations = () => {
-  if (!Object.keys(sessionAppearDelayMap.value).length) return
-  sessionAppearDelayMap.value = {}
-}
-
-const hasSessionAppearAnimation = (conversationId) => {
-  return sessionAppearDelayMap.value[conversationId] != null
-}
-
-const sessionAppearStyle = (conversationId) => {
-  const delay = sessionAppearDelayMap.value[conversationId]
-  if (delay == null) return undefined
-  return { '--appear-delay': `${delay}ms` }
-}
-
-const loadMoreSessionsIfNeeded = () => {
-  if (!showHistoryPanel.value) return
-  if (!isLoggedIn.value) return
-  if (isLoadingSessions.value || isLoadingMoreSessions.value) return
-  if (!hasMoreSessions.value) return
-  loadSessions({ append: true })
-}
-
-const handleHistoryScroll = (event) => {
-  const target = event?.target
-  const nextScrollTop = target?.scrollTop || 0
-  const previousScrollTop = historyScrollTop.value
-  historyScrollTop.value = nextScrollTop
-  if (Math.abs(nextScrollTop - previousScrollTop) > 4) {
-    clearSessionAppearAnimations()
-  }
-  if (!target) return
-  const distanceToBottom = target.scrollHeight - (target.scrollTop + target.clientHeight)
-  if (distanceToBottom <= 36) {
-    loadMoreSessionsIfNeeded()
-  }
-}
-
-const resetHistoryVirtualScroll = () => {
-  historyScrollTop.value = 0
-  if (historyListRef.value) {
-    historyListRef.value.scrollTop = 0
-  }
-}
-
-const setupHistoryResizeObserver = () => {
-  if (historyResizeObserver) {
-    historyResizeObserver.disconnect()
-    historyResizeObserver = null
-  }
-  if (!historyListRef.value) return
-  historyResizeObserver = new ResizeObserver(() => {
-    updateHistoryListMetrics()
-  })
-  historyResizeObserver.observe(historyListRef.value)
-  updateHistoryListMetrics()
-}
-
-// 滚动到底部
-const scrollToBottom = () => {
-  nextTick(() => {
-    chatBotRef.value?.scrollList?.({ to: 'bottom', behavior: 'auto' })
-  })
-}
-
 // 清空对话
 const handleClear = () => {
   conversationId.value = null
+  setAttachedPlanForConversation(draftConversationKey, '')
   shouldResetHistory.value = true
-  streamEventParser.reset()
-  messages.value = [
-    normalizeMessage({
-      role: 'assistant',
-      content: defaultGreeting,
-    }),
-  ]
-  chatBotRef.value?.setMessages?.(messages.value, 'replace')
+  resetToGreeting(chatBotRef)
   MessagePlugin.success('已开启新的对话')
-}
-
-// 加载会话列表
-const loadSessions = async ({ append = false, forceRefresh = false } = {}) => {
-  // 未登录时不加载历史记录
-  if (!isLoggedIn.value) {
-    sessions.value = []
-    hasMoreSessions.value = false
-    sessionsPage.value = 0
-    return
-  }
-  if (isLoadingSessions.value) return
-  if (append && !hasMoreSessions.value) return
-  
-  isLoadingSessions.value = true
-  isLoadingMoreSessions.value = append
-  try {
-    const session = await getAuthSession()
-    if (!session) {
-      sessions.value = []
-      hasMoreSessions.value = false
-      sessionsPage.value = 0
-      return
-    }
-    if (forceRefresh) {
-      sessionsPage.value = 0
-      hasMoreSessions.value = true
-      sessionAppearDelayMap.value = {}
-    }
-
-    const nextPage = append ? sessionsPage.value + 1 : 1
-    const response = await fetch(`/api/ai-chat/sessions?page=${nextPage}&page_size=${sessionsPageSize}`, {
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    })
-    if (response.ok) {
-      const data = await response.json()
-      const incoming = Array.isArray(data?.sessions) ? data.sessions : (Array.isArray(data) ? data : [])
-      const hasMore = data?.pagination?.hasMore
-      if (append) {
-        const existing = new Set(sessions.value.map((s) => s?.conversation_id).filter(Boolean))
-        const mergedIncoming = incoming.filter((s) => !existing.has(s?.conversation_id))
-        sessions.value = [...sessions.value, ...mergedIncoming]
-        if (mergedIncoming.length) appendSessionAppearAnimations(mergedIncoming)
-      } else {
-        sessions.value = incoming
-      }
-      sessionsPage.value = nextPage
-      hasMoreSessions.value = typeof hasMore === 'boolean' ? hasMore : incoming.length >= sessionsPageSize
-      sessionsLoadedOnce.value = true
-      await nextTick()
-      setupHistoryResizeObserver()
-    }
-  } catch (error) {
-    console.error('加载会话列表失败:', error)
-  } finally {
-    isLoadingSessions.value = false
-    isLoadingMoreSessions.value = false
-  }
-}
-
-const handleManualRefreshSessions = (e) => {
-  if (e && e.isTrusted === false) return
-  loadSessions({ append: false, forceRefresh: true })
-}
-
-const toggleHistoryPanel = async () => {
-  const next = !showHistoryPanel.value
-  showHistoryPanel.value = next
-  if (!next) {
-    if (historyResizeObserver) {
-      historyResizeObserver.disconnect()
-      historyResizeObserver = null
-    }
-    historyListHeight.value = 0
-    return
-  }
-  await nextTick()
-  setupHistoryResizeObserver()
-  resetHistoryVirtualScroll()
-  if (!isLoggedIn.value) return
-  if (sessionsLoadedOnce.value && sessions.value.length > 0) return
-  await loadSessions({ append: false, forceRefresh: true })
-}
-
-// 加载指定会话的历史记录
-const loadSession = async (sessionId) => {
-  if (isLoadingHistory.value) return
-  if (sessionId === conversationId.value) return
-  
-  isLoadingHistory.value = true
-  loadingHistoryId.value = sessionId
-  try {
-    const session = await getAuthSession('请先登录后再查看历史记录')
-    if (!session) {
-      goToLogin()
-      return
-    }
-    const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    })
-    if (!response.ok) throw new Error('请求失败')
-
-    const data = await response.json()
-    const historyMessages = Array.isArray(data?.messages) ? data.messages : []
-    conversationId.value = sessionId
-    shouldResetHistory.value = false
-    streamEventParser.reset()
-    messages.value = historyMessages.length
-      ? historyMessages.map(normalizeMessage)
-      : [normalizeMessage({ role: 'assistant', content: '该对话暂无消息' })]
-    chatBotRef.value?.setMessages?.(messages.value, 'replace')
-    
-    await nextTick()
-    scrollToBottom()
-  } catch (error) {
-    console.error('加载历史记录失败:', error)
-    MessagePlugin.error('加载历史记录失败')
-  } finally {
-    isLoadingHistory.value = false
-    loadingHistoryId.value = null
-  }
-}
-
-// 确认删除对话
-const confirmDeleteSession = (sessionId) => {
-  const confirmDialog = DialogPlugin.confirm({
-    header: '删除确认',
-    body: '确定要删除这个对话吗？删除后无法恢复。',
-    confirmBtn: '删除',
-    cancelBtn: '取消',
-    theme: 'warning',
-    onConfirm: async () => {
-      await deleteSession(sessionId)
-      confirmDialog.destroy()
-    },
-    onClose: () => {
-      confirmDialog.destroy()
-    },
-  })
-}
-
-// 删除指定会话
-const deleteSession = async (sessionId) => {
-  try {
-    const session = await getAuthSession('请先登录后再删除会话')
-    if (!session) {
-      goToLogin()
-      return
-    }
-    const response = await fetch(`/api/ai-chat/history/${sessionId}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-    })
-    
-    if (response.ok) {
-      // 从列表中移除
-      sessions.value = sessions.value.filter(s => s.conversation_id !== sessionId)
-      
-      // 如果删除的是当前会话，开启新对话（不显示提示）
-      if (sessionId === conversationId.value) {
-        conversationId.value = null
-        shouldResetHistory.value = true
-        messages.value = [normalizeMessage({ role: 'assistant', content: defaultGreeting })]
-      }
-      
-      MessagePlugin.success('对话已删除')
-    } else {
-      MessagePlugin.error('删除失败')
-    }
-  } catch (error) {
-    console.error('删除会话失败:', error)
-    MessagePlugin.error('删除失败')
-  }
-}
-
-// 格式化日期
-const formatDate = (dateStr) => {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  if (!Number.isFinite(date.getTime())) return ''
-  const now = new Date()
-
-  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const diffDays = Math.round((nowOnly - dateOnly) / (1000 * 60 * 60 * 24))
-
-  const hh = date.getHours().toString().padStart(2, '0')
-  const mm = date.getMinutes().toString().padStart(2, '0')
-
-  if (diffDays === 0) return `今天 ${hh}:${mm}`
-  if (diffDays === 1) return `昨天 ${hh}:${mm}`
-  if (diffDays > 1 && diffDays < 7) return `${diffDays}天前`
-  const y = date.getFullYear()
-  const m = (date.getMonth() + 1).toString().padStart(2, '0')
-  const d = date.getDate().toString().padStart(2, '0')
-  if (y === now.getFullYear()) return `${m}/${d}`
-  return `${y}/${m}/${d}`
 }
 
 // 页面加载时检查登录状态并获取会话列表
 onMounted(async () => {
   await checkLoginStatus()
+  if (isLoggedIn.value) {
+    await loadContextPlans({ force: true })
+  }
   await nextTick()
   updateViewHeight()
   window.addEventListener('resize', updateViewHeight)
@@ -751,13 +375,11 @@ onMounted(async () => {
     isLoggedIn.value = !!session
     currentUser.value = session?.user || null
     if (!session) {
-      sessions.value = []
-      hasMoreSessions.value = false
-      sessionsPage.value = 0
-      sessionAppearDelayMap.value = {}
-      sessionsLoadedOnce.value = false
+      resetHistoryStateForLogout()
+      resetPlanContextState()
       return
     }
+    loadContextPlans({ force: true })
   })
 })
 
@@ -766,14 +388,15 @@ onUnmounted(() => {
   const sub = authSubscription?.data?.subscription
   if (sub && typeof sub.unsubscribe === 'function') sub.unsubscribe()
   authSubscription = null
-  if (historyResizeObserver) {
-    historyResizeObserver.disconnect()
-    historyResizeObserver = null
-  }
+  cleanupHistoryResources()
 })
 
 watch(isLoggedIn, async (loggedIn) => {
-  if (!loggedIn) return
+  if (!loggedIn) {
+    resetPlanContextState()
+    return
+  }
+  await loadContextPlans({ force: true })
   if (!showHistoryPanel.value) return
   if (sessionsLoadedOnce.value && sessions.value.length > 0) return
   await loadSessions({ append: false, forceRefresh: true })
@@ -787,11 +410,19 @@ watch(
   }
 )
 
-// 快捷问题
 const handleQuickQuestion = (question) => {
-  if (!isLoading.value) {
-    chatBotRef.value?.sendUserMessage?.({ prompt: question })
-  }
+  sendQuickQuestion(question, chatBotRef)
+}
+
+const formatMetricNumber = (value) => {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return Math.round(num).toLocaleString()
+}
+
+const hasActualUsage = (metrics) => {
+  if (!metrics || typeof metrics !== 'object') return false
+  return [metrics.prompt_tokens_actual, metrics.completion_tokens_actual, metrics.total_tokens_actual].some((value) => Number.isFinite(Number(value)))
 }
 
 // 跳转到登录页面
@@ -898,6 +529,34 @@ const getAuthSession = async (tip = '') => {
 
 .sidebar-tool-toggle {
   width: 100%;
+}
+
+.memory-metrics-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.memory-metrics-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.memory-metrics-main {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.memory-metrics-sub {
+  font-size: 12px;
+  line-height: 1.3;
+  color: #64748b;
 }
 
 .history-header {

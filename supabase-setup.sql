@@ -75,9 +75,14 @@ CREATE TABLE IF NOT EXISTS public.ai_chat_sessions (
   conversation_id TEXT NOT NULL UNIQUE,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  summary TEXT NOT NULL DEFAULT '',
+  summary_updated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.ai_chat_sessions ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.ai_chat_sessions ADD COLUMN IF NOT EXISTS summary_updated_at TIMESTAMPTZ;
 
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_conversation_id ON public.ai_chat_sessions(conversation_id);
@@ -93,26 +98,77 @@ CREATE TRIGGER set_ai_chat_sessions_updated_at
 -- 启用行级安全策略（RLS）
 ALTER TABLE public.ai_chat_sessions ENABLE ROW LEVEL SECURITY;
 
--- 允许匿名用户（未登录）通过 conversation_id 访问自己的会话
-CREATE POLICY "Anyone can view sessions by conversation_id"
+DROP POLICY IF EXISTS "Anyone can view sessions by conversation_id" ON public.ai_chat_sessions;
+DROP POLICY IF EXISTS "Anyone can create sessions" ON public.ai_chat_sessions;
+DROP POLICY IF EXISTS "Anyone can update sessions" ON public.ai_chat_sessions;
+DROP POLICY IF EXISTS "Anyone can delete sessions" ON public.ai_chat_sessions;
+
+CREATE POLICY "Users can view own ai chat sessions"
   ON public.ai_chat_sessions
   FOR SELECT
-  USING (true);
+  USING (auth.uid() = user_id);
 
-CREATE POLICY "Anyone can create sessions"
+CREATE POLICY "Users can create own ai chat sessions"
   ON public.ai_chat_sessions
   FOR INSERT
-  WITH CHECK (true);
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Anyone can update sessions"
+CREATE POLICY "Users can update own ai chat sessions"
   ON public.ai_chat_sessions
   FOR UPDATE
-  USING (true);
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Anyone can delete sessions"
+CREATE POLICY "Users can delete own ai chat sessions"
   ON public.ai_chat_sessions
   FOR DELETE
-  USING (true);
+  USING (auth.uid() = user_id);
+
+-- =============================================
+-- 创建 ai_user_memories 表（用户长期记忆）
+-- =============================================
+CREATE TABLE IF NOT EXISTS public.ai_user_memories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  memory_key TEXT NOT NULL,
+  memory_value JSONB NOT NULL,
+  confidence NUMERIC(3, 2) NOT NULL DEFAULT 0.80,
+  source_session_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ai_user_memories_user_key_unique UNIQUE (user_id, memory_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_user_memories_user_updated_at
+  ON public.ai_user_memories(user_id, updated_at DESC);
+
+CREATE TRIGGER set_ai_user_memories_updated_at
+  BEFORE UPDATE ON public.ai_user_memories
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+ALTER TABLE public.ai_user_memories ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own ai memories"
+  ON public.ai_user_memories
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create own ai memories"
+  ON public.ai_user_memories
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own ai memories"
+  ON public.ai_user_memories
+  FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own ai memories"
+  ON public.ai_user_memories
+  FOR DELETE
+  USING (auth.uid() = user_id);
 
 -- =============================================
 -- 创建 ai_provider_configs 表（用户级 AI 提供商配置）
@@ -158,3 +214,4 @@ CREATE POLICY "Authenticated users can update provider configs"
 -- SELECT * FROM public.plans LIMIT 1;
 -- SELECT * FROM public.ai_chat_sessions LIMIT 1;
 -- SELECT * FROM public.ai_provider_configs LIMIT 1;
+-- SELECT * FROM public.ai_user_memories LIMIT 1;

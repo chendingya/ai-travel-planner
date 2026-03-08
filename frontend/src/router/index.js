@@ -10,6 +10,7 @@ import ShareContentView from '../views/ShareContentView.vue';
 import AIChatView from '../views/AIChatView.vue';
 import ProfileView from '../views/ProfileView.vue';
 import ProviderConfigView from '../views/ProviderConfigView.vue';
+import MemoryCenterView from '../views/MemoryCenterView.vue';
 
 const routes = [
   {
@@ -77,6 +78,12 @@ const routes = [
     name: 'ProviderConfig',
     component: ProviderConfigView,
     meta: { title: '提供商管理 - 拾光绘旅' }
+  },
+  {
+    path: '/memory-center',
+    name: 'MemoryCenter',
+    component: MemoryCenterView,
+    meta: { title: '长期记忆管理 - 拾光绘旅' }
   },
   {
     path: '/:pathMatch(.*)*',

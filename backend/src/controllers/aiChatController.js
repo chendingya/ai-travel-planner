@@ -58,6 +58,10 @@ class AIChatController {
         includeAudio,
         voice,
         language_type,
+        context_plan_id,
+        contextPlanId,
+        context_plan_enabled,
+        contextPlanEnabled,
       } = req.body;
 
       if (!message) {
@@ -139,6 +143,8 @@ class AIChatController {
           include_audio: include_audio ?? includeAudio,
           voice,
           language_type,
+          context_plan_id: context_plan_id ?? contextPlanId,
+          context_plan_enabled: context_plan_enabled ?? contextPlanEnabled,
           client_ip,
           userId,
         });
@@ -325,6 +331,67 @@ class AIChatController {
       res.status(ok ? 200 : 500).json(status);
     } catch (error) {
       console.error('MCP status error:', error);
+      const msg = this.errorMessage(error);
+      res.status(500).json({ message: msg, error: msg });
+    }
+  }
+
+  async getMemory(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const memories = await this.aiChatService.getLongTermMemories(userId);
+      res.json({ memories });
+    } catch (error) {
+      console.error('Get memory error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async saveMemory(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const memoryKey = req.params?.key || req.body?.memory_key || req.body?.memoryKey;
+      const memoryValue = req.body?.text ?? req.body?.memory_value ?? req.body?.memoryValue;
+      const confidence = req.body?.confidence;
+      const memory = await this.aiChatService.saveLongTermMemory({
+        userId,
+        memoryKey,
+        memoryValue,
+        confidence,
+        sourceSessionId: 'manual',
+      });
+      res.json({ success: true, memory });
+    } catch (error) {
+      console.error('Save memory error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async deleteMemory(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const memoryKey = req.params?.key || '';
+      await this.aiChatService.deleteLongTermMemory(userId, memoryKey);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete memory error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
+  async clearMemory(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      await this.aiChatService.clearLongTermMemories(userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Clear memory error:', error);
       const msg = this.errorMessage(error);
       res.status(500).json({ message: msg, error: msg });
     }
