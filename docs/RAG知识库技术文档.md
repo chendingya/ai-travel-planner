@@ -41,8 +41,11 @@
   [向量库] Supabase PostgreSQL + pgvector
   travel_knowledge 表（IVFFlat 索引，余弦距离）
        ↓
-  [检索层] ragService.js
+  [检索层] ragService.js（线上当前）
   embed(用户问题) → match_travel_knowledge RPC → Top-K 片段
+       ↓
+  [评测层] test_rag_local_qwen.py（本地测试）
+  query 解析 → city/type 级联过滤 → BM25 → Dense → RRF → Qwen3-Reranker-4B
        ↓
   [生成层] aiChatService.js
   片段注入 systemPrompt → LLM（DeepSeek / Qwen 等）
@@ -387,6 +390,8 @@ CREATE POLICY "service_write" ON travel_knowledge FOR ALL
 
 ### 7.1 检索流程
 
+**线上当前实现**：
+
 ```
 用户消息
   │
@@ -405,6 +410,39 @@ buildContext()            ← 格式化为结构化文本
   ▼
 注入 systemPrompt
 ```
+
+**本地评测脚本流程**（`backend/scripts/test_rag_local_qwen.py`）：
+
+```
+用户问题
+  │
+  ▼
+query 解析              ← 抽取 city / type / poi
+  │
+  ▼
+级联过滤                ← city+type → city → type → global
+  │
+  ├──────────────┐
+  ▼              ▼
+BM25 稀疏召回      Dense 向量召回
+Top-20           Top-20
+  │              │
+  └──────┬───────┘
+         ▼
+RRF 融合 Top-30
+         │
+         ▼
+Qwen3-Reranker-4B 精排
+         │
+         ▼
+最终 Top-5
+```
+
+说明：
+
+- `ragService.js` 当前生产链路仍以纯向量召回为主
+- `test_rag_local_qwen.py` 用于离线评测和调参，验证 hybrid 检索方案在真实数据上的收益
+- 之所以先在测试脚本落地，是为了先把召回质量和参数摸清，再决定是否迁移到线上服务
 
 ### 7.2 检索参数
 
@@ -451,6 +489,54 @@ try {
   logger.warn('RAG 检索失败，降级为无知识库模式', ragErr.message);
   // 不 rethrow，对话正常继续
 }
+```
+
+### 7.6 Hybrid 检索测试脚本
+
+新增测试脚本：`backend/scripts/test_rag_local_qwen.py`
+
+职责：
+
+1. 校验 `JSONL -> Supabase` 的入库完整性
+2. 对本地知识库执行 BM25 稀疏召回
+3. 对 Supabase 执行 Dense 向量召回
+4. 用 RRF 融合稀疏 / 稠密候选
+5. 用本地 `Qwen3-Reranker-4B` 对融合结果精排
+
+脚本默认参数：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `dense_top_k` | 20 | Dense 召回候选数 |
+| `sparse_top_k` | 20 | BM25 召回候选数 |
+| `rrf_top_k` | 30 | 融合后进入 rerank 的候选数 |
+| `top_k` | 5 | 最终输出条数 |
+| `threshold` | 0.15 | Dense 初检阈值，低于线上默认值，用于放大候选池 |
+| `rrf_k` | 60 | RRF 融合常数 |
+
+本地 reranker：
+
+- 模型：`/home/wushiwei/projects_z/cdy/Qwen/Qwen3-Reranker-4B`
+- 推理方式：`AutoModelForCausalLM` + `yes/no` 二分类打分
+- 输入格式：`Instruct + Query + Document`
+
+推荐运行方式：
+
+```bash
+cd /home/wushiwei/projects_z/cdy/RAG/ai-travel-planner
+
+/home/wushiwei/anaconda3/bin/conda run -n llm python backend/scripts/test_rag_local_qwen.py \
+  --supabase-url 'YOUR_SUPABASE_URL' \
+  --supabase-key 'YOUR_SERVICE_ROLE_KEY'
+```
+
+显存不足时可降级：
+
+```bash
+/home/wushiwei/anaconda3/bin/conda run -n llm python backend/scripts/test_rag_local_qwen.py \
+  --supabase-url 'YOUR_SUPABASE_URL' \
+  --supabase-key 'YOUR_SERVICE_ROLE_KEY' \
+  --reranker-batch-size 1
 ```
 
 ---
@@ -505,12 +591,21 @@ try {
 
 ### 9.1 当前状态
 
-**本项目目前未实现 Rerank**，检索结果直接按向量相似度（cosine similarity）排序后注入上下文。
+**线上服务当前仍未默认启用 Rerank**，检索结果直接按向量相似度（cosine similarity）排序后注入上下文。
 
 原因：
 - 项目当前处于 MVP 阶段，Baseline 效果已足够演示
 - Qwen3-Embedding-8B 的 Embedding 质量较高，Top-5 召回准确率在测试中表现良好
 - Rerank 会增加额外的 API 延迟（通常 200–500ms）和成本
+
+**但本地评测脚本已实现 Rerank 与 Hybrid 检索实验链路**：
+
+- 稀疏召回：本地 BM25
+- 稠密召回：Supabase `match_travel_knowledge`
+- 融合：RRF
+- 精排：`Qwen3-Reranker-4B`
+
+这样可以先在离线测试中验证收益，再决定是否迁移到 `ragService.js`。
 
 ### 9.2 Rerank 的价值
 
@@ -557,6 +652,19 @@ while selected.length < K:
 RRF（Reciprocal Rank Fusion）公式：$score(d) = \sum_{r \in R} \frac{1}{k + r(d)}$ ，$k=60$ 为经验常数。
 
 Supabase 支持通过 `pg_bm25`（Paradedb 插件）实现混合检索，但需要额外安装。
+
+当前测试脚本的实际落地与该方案接近，但有两个额外步骤：
+
+1. 检索前先做 `query 解析`
+   提取 `city / type / poi`，优先缩小候选范围
+2. 采用级联过滤
+   `city+type -> city -> type -> global`
+
+这样做的直接收益是：
+
+- 避免“义乌美食”问题被杭州美食误召回
+- 在长尾城市数据稀疏时，优先判断“该城市该类型是否有数据”
+- 把 rerank 预算花在更干净的候选集上
 
 ---
 

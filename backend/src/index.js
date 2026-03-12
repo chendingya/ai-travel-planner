@@ -55,6 +55,7 @@ const ShareService = require('./services/shareService');
 const MCPService = require('./services/mcpService');
 const TTSService = require('./services/ttsService');
 const RagService = require('./services/ragService');
+const RagMcpServer = require('./services/ragMcpServer');
 const ProviderConfigService = require('./services/providerConfigService');
 
 // Controllers
@@ -93,6 +94,40 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);
+
+app.post('/mcp', async (req, res) => {
+  const ragMcpServer = app.locals.ragMcpServer;
+  if (!ragMcpServer) {
+    res.status(503).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: 'RAG MCP service is unavailable',
+      },
+      id: null,
+    });
+    return;
+  }
+  await ragMcpServer.handlePost(req, res);
+});
+
+app.get('/mcp', (req, res) => {
+  const ragMcpServer = app.locals.ragMcpServer;
+  if (!ragMcpServer) {
+    res.status(405).set('Allow', 'POST').send('Method Not Allowed');
+    return;
+  }
+  ragMcpServer.handleMethodNotAllowed(req, res);
+});
+
+app.delete('/mcp', (req, res) => {
+  const ragMcpServer = app.locals.ragMcpServer;
+  if (!ragMcpServer) {
+    res.status(405).set('Allow', 'POST').send('Method Not Allowed');
+    return;
+  }
+  ragMcpServer.handleMethodNotAllowed(req, res);
+});
 
 const audioDir = path.join(process.cwd(), 'runtime', 'audio');
 app.use('/audio', express.static(audioDir));
@@ -218,11 +253,15 @@ async function initializeApp() {
     const ragService = embeddingConfig && embeddingConfig.enabled
       ? new RagService(supabase, embeddingConfig, rerankConfig)
       : null;
+    const ragMcpServer = ragService ? new RagMcpServer(ragService) : null;
+    app.locals.ragMcpServer = ragMcpServer;
     if (ragService) {
       const rerankInfo = rerankConfig.enabled ? `，Rerank ${rerankConfig.model}` : '，Rerank 未启用';
-      console.log(`RAG 服务: 已启用（${embeddingConfig.model}，维度 ${embeddingConfig.dim}${rerankInfo}）`);
+      console.log(`RAG 服务: 已启用（${embeddingConfig.model}，维度 ${embeddingConfig.dim}，Hybrid: sparse=${embeddingConfig.sparseTopK}/dense=${embeddingConfig.denseTopK}/rrf=${embeddingConfig.rrfTopK}${rerankInfo}）`);
+      console.log(`RAG MCP 服务: 已启用（POST /mcp）`);
     } else {
       console.log('RAG 服务: 未配置（设置 QWEN_EMBEDDING_API_KEY 启用）');
+      console.log('RAG MCP 服务: 未启用（依赖 RAG 服务）');
     }
 
     const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService, ragService });

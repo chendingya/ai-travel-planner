@@ -5,14 +5,16 @@
  * 将 knowledge_*_filtered.jsonl 的每条 chunk 向量化后写入 Supabase travel_knowledge 表
  *
  * 用法：
- *   node ingest.js [--file <path_to_filtered.jsonl>] [--batch 25] [--dry-run]
+ *   node ingest.js [--file <path_to_filtered.jsonl>] [--batch 25] [--kb <kb_slug>] [--dataset-version <version>] [--dry-run]
  *
  * 环境变量（优先级：命令行参数 > .env）：
  *   SUPABASE_URL            Supabase 项目 URL
  *   SUPABASE_SERVICE_ROLE_KEY  Service Role Key（写权限）
  *   QWEN_EMBEDDING_API_KEY  通义千问 DashScope API Key
- *   QWEN_EMBEDDING_MODEL    默认 text-embedding-v3
+ *   QWEN_EMBEDDING_MODEL    默认 Qwen/Qwen3-Embedding-8B
  *   QWEN_EMBEDDING_DIM      默认 1024
+ *   RAG_KB_SLUG            默认 travel-cn-public
+ *   RAG_DATASET_VERSION    默认从文件名提取 knowledge_xxx_filtered.jsonl 中的 xxx
  */
 
 process.stdout.setDefaultEncoding('utf8');
@@ -38,6 +40,11 @@ const defaultJsonl = path.resolve(
   '../data/knowledge/knowledge_20260306_004228_filtered.jsonl',
 );
 const jsonlFile = getArg('--file', defaultJsonl);
+const inferDatasetVersion = (filePath) => {
+  const base = path.basename(filePath);
+  const match = base.match(/^knowledge_(.+?)_filtered\.jsonl$/);
+  return match ? match[1] : 'manual';
+};
 
 // ─── 配置校验 ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL      = process.env.SUPABASE_URL || '';
@@ -46,6 +53,8 @@ const EMBED_API_KEY     = process.env.QWEN_EMBEDDING_API_KEY || '';
 const EMBED_MODEL       = process.env.QWEN_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-8B';
 const EMBED_DIM         = parseInt(process.env.QWEN_EMBEDDING_DIM || '1024', 10);
 const EMBED_BASE_URL    = process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1';
+const KB_SLUG           = getArg('--kb', process.env.RAG_KB_SLUG || 'travel-cn-public');
+const DATASET_VERSION   = getArg('--dataset-version', process.env.RAG_DATASET_VERSION || inferDatasetVersion(jsonlFile));
 
 if (!isDryRun) {
   if (!SUPABASE_URL)  { console.error('缺少环境变量: SUPABASE_URL');              process.exit(1); }
@@ -126,7 +135,7 @@ async function embedBatch(texts) {
 async function upsertBatch(rows) {
   const { error } = await supabase
     .from('travel_knowledge')
-    .upsert(rows, { onConflict: 'content_hash', ignoreDuplicates: true });
+    .upsert(rows, { onConflict: 'kb_slug,content_hash', ignoreDuplicates: true });
   if (error) throw new Error(`Supabase upsert error: ${JSON.stringify(error)}`);
 }
 
@@ -134,6 +143,8 @@ async function upsertBatch(rows) {
 async function main() {
   console.log('=== RAG 向量入库脚本 ===');
   console.log(`输入文件: ${jsonlFile}`);
+  console.log(`知识库标识: ${KB_SLUG}`);
+  console.log(`数据集版本: ${DATASET_VERSION}`);
   console.log(`Embedding 模型: ${EMBED_MODEL}（维度 ${EMBED_DIM}）`);
   console.log(`批次大小: ${batchSize}`);
   console.log(`试运行: ${isDryRun ? '是（不调用 API，不写库）' : '否'}`);
@@ -179,17 +190,31 @@ async function main() {
       const embeddings = await embedBatch(texts);
 
       const rows = batch.map((c, i) => ({
+        kb_slug:       KB_SLUG,
+        dataset_version: DATASET_VERSION,
+        external_id:   c.id || null,
         city:          c.city         || '',
         type:          c.type         || 'guide',
         title:         c.title        || '',
         section_title: c.sectionTitle || null,
+        sub_section_title: c.subSectionTitle || null,
+        poi_name:      c.poiName      || null,
         content:       c.content      || '',
         tags:          Array.isArray(c.tags) ? c.tags : [],
         source:        c.source       || 'wikivoyage',
         source_url:    c.sourceUrl    || null,
+        license:       c.license      || null,
         lang:          c.lang         || 'zh',
         content_hash:  md5(c.content  || ''),
         embedding:     embeddings[i],
+        metadata: {
+          title: c.title || '',
+          sectionTitle: c.sectionTitle || null,
+          subSectionTitle: c.subSectionTitle || null,
+          poiName: c.poiName || null,
+          createdAt: c.createdAt || null,
+          rawType: c.type || 'guide',
+        },
       }));
 
       await upsertBatch(rows);

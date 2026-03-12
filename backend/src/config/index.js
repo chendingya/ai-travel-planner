@@ -160,9 +160,18 @@ function getEmbeddingConfig() {
     model:     process.env.QWEN_EMBEDDING_MODEL    || 'Qwen/Qwen3-Embedding-8B',
     dim:       parseInt(process.env.QWEN_EMBEDDING_DIM || '1024', 10),
     baseURL:   process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+    kbSlug:    process.env.RAG_KB_SLUG             || 'travel-cn-public',
+    datasetVersion: process.env.RAG_DATASET_VERSION || '',
     enabled:   (process.env.RAG_ENABLED || 'true').toLowerCase() !== 'false',
     topK:      parseInt(process.env.RAG_TOP_K || '5', 10),
     threshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD || '0.35'),
+    denseTopK: parseInt(process.env.RAG_DENSE_TOP_K || '20', 10),
+    sparseTopK: parseInt(process.env.RAG_SPARSE_TOP_K || '20', 10),
+    rrfTopK: parseInt(process.env.RAG_RRF_TOP_K || '30', 10),
+    rrfK: parseInt(process.env.RAG_RRF_K || '60', 10),
+    sparseThreshold: parseFloat(process.env.RAG_SPARSE_THRESHOLD || '0.05'),
+    intentCatalogPageSize: parseInt(process.env.RAG_INTENT_CATALOG_PAGE_SIZE || '1000', 10),
+    intentCatalogTtlMs: parseInt(process.env.RAG_INTENT_CATALOG_TTL_MS || String(10 * 60 * 1000), 10),
   };
 }
 
@@ -176,7 +185,10 @@ function getRerankConfig() {
   return {
     enabled,
     baseURL:         baseURL || 'http://localhost:8001',
+    path:            process.env.RERANK_PATH || '/rerank',
     model:           process.env.RERANK_MODEL            || 'BAAI/bge-reranker-v2-m3',
+    apiKey:          process.env.RERANK_API_KEY          || '',
     candidateFactor: parseInt(process.env.RERANK_CANDIDATE_FACTOR || '3', 10),
+    timeoutMs:       parseInt(process.env.RERANK_TIMEOUT_MS || '10000', 10),
   };
 }
