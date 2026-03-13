@@ -6,7 +6,7 @@
           <t-icon name="setting-1" />
           提供商管理
         </h1>
-        <p class="page-subtitle">手动维护 Text/Pic 生成提供商（OpenAI-compatible）</p>
+        <p class="page-subtitle">手动维护 Text、Pic、RAG Embedding 与 RAG Rerank 提供商</p>
       </div>
       <div class="header-actions">
         <GlassButton icon="arrow-left" theme="dark" size="sm" @click="goBack">
@@ -198,6 +198,142 @@
               </div>
             </div>
           </t-tab-panel>
+
+          <t-tab-panel value="embedding" label="RAG Embedding">
+            <div class="tab-tools">
+              <t-button theme="primary" variant="outline" @click="addRagEmbeddingProvider">
+                <template #icon><t-icon name="add" /></template>
+                新增 Embedding 提供商
+              </t-button>
+            </div>
+            <div v-if="state.ragEmbeddingProviders.length === 0" class="empty-card">暂无 RAG Embedding 提供商</div>
+            <div v-for="(provider, index) in state.ragEmbeddingProviders" :key="provider.id || `embedding-${index}`" class="provider-card">
+              <div class="provider-card-header">
+                <h3>Embedding 提供商 #{{ index + 1 }}</h3>
+                <div class="provider-card-actions">
+                  <t-button size="small" variant="outline" :loading="isTesting('embedding', index)" @click="testProvider('embedding', index)">
+                    测试连接
+                  </t-button>
+                  <t-button size="small" theme="danger" variant="text" @click="removeRagEmbeddingProvider(index)">
+                    删除
+                  </t-button>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <t-input v-model="provider.name" placeholder="name，例如: qwen-embedding" clearable />
+                <t-input v-model="provider.baseURL" placeholder="baseURL，例如: https://api-inference.modelscope.cn/v1" clearable />
+                <t-input v-model="provider.model" placeholder="model，例如: Qwen/Qwen3-Embedding-8B" clearable />
+                <t-input-number v-model="provider.dimensions" :min="1" theme="normal" placeholder="dimensions" />
+                <t-input-number v-model="provider.priority" :min="1" theme="normal" placeholder="priority" />
+                <div class="switch-field">
+                  <span>启用</span>
+                  <t-switch v-model="provider.enabled" />
+                </div>
+              </div>
+
+              <div class="secret-block">
+                <div class="secret-head">
+                  <span>API Key</span>
+                  <div v-if="provider.hasApiKey" class="secret-toggle">
+                    <span>替换密钥</span>
+                    <t-switch
+                      :model-value="provider.replaceApiKey"
+                      @update:model-value="(value) => onReplaceApiKeyToggle(provider, value)"
+                    />
+                  </div>
+                </div>
+                <div v-if="provider.hasApiKey && !provider.replaceApiKey" class="secret-mask">
+                  <t-icon name="lock-on" />
+                  <span>{{ provider.apiKeyMasked || '已配置（脱敏）' }}</span>
+                </div>
+                <t-input
+                  v-else
+                  :model-value="provider.apiKey"
+                  @update:model-value="(value) => onApiKeyInput(provider, value)"
+                  type="password"
+                  placeholder="输入 API Key"
+                  clearable
+                />
+                <div v-if="hasPendingApiKey(provider)" class="secret-hint">
+                  已输入新的 API Key，需要点击页面底部的“校验并保存”才会真正替换旧密钥。
+                </div>
+              </div>
+
+              <div class="result-line" :class="{ ok: provider._test?.ok, fail: provider._test && !provider._test.ok }" v-if="provider._test">
+                {{ provider._test.message }}
+              </div>
+            </div>
+          </t-tab-panel>
+
+          <t-tab-panel value="rerank" label="RAG Rerank">
+            <div class="tab-tools">
+              <t-button theme="primary" variant="outline" @click="addRagRerankProvider">
+                <template #icon><t-icon name="add" /></template>
+                新增 Rerank 提供商
+              </t-button>
+            </div>
+            <div v-if="state.ragRerankProviders.length === 0" class="empty-card">暂无 RAG Rerank 提供商</div>
+            <div v-for="(provider, index) in state.ragRerankProviders" :key="provider.id || `rerank-${index}`" class="provider-card">
+              <div class="provider-card-header">
+                <h3>Rerank 提供商 #{{ index + 1 }}</h3>
+                <div class="provider-card-actions">
+                  <t-button size="small" variant="outline" :loading="isTesting('rerank', index)" @click="testProvider('rerank', index)">
+                    测试连接
+                  </t-button>
+                  <t-button size="small" theme="danger" variant="text" @click="removeRagRerankProvider(index)">
+                    删除
+                  </t-button>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <t-input v-model="provider.name" placeholder="name，例如: rag-rerank" clearable />
+                <t-input v-model="provider.baseURL" placeholder="baseURL，例如: https://api.example.com" clearable />
+                <t-input v-model="provider.path" placeholder="path，例如: /rerank" clearable />
+                <t-input v-model="provider.model" placeholder="model，例如: BAAI/bge-reranker-v2-m3" clearable />
+                <t-input-number v-model="provider.timeoutMs" :min="1" theme="normal" placeholder="timeoutMs" />
+                <t-input-number v-model="provider.candidateFactor" :min="1" theme="normal" placeholder="candidateFactor" />
+                <t-input-number v-model="provider.priority" :min="1" theme="normal" placeholder="priority" />
+                <div class="switch-field">
+                  <span>启用</span>
+                  <t-switch v-model="provider.enabled" />
+                </div>
+              </div>
+
+              <div class="secret-block">
+                <div class="secret-head">
+                  <span>API Key</span>
+                  <div v-if="provider.hasApiKey" class="secret-toggle">
+                    <span>替换密钥</span>
+                    <t-switch
+                      :model-value="provider.replaceApiKey"
+                      @update:model-value="(value) => onReplaceApiKeyToggle(provider, value)"
+                    />
+                  </div>
+                </div>
+                <div v-if="provider.hasApiKey && !provider.replaceApiKey" class="secret-mask">
+                  <t-icon name="lock-on" />
+                  <span>{{ provider.apiKeyMasked || '已配置（脱敏）' }}</span>
+                </div>
+                <t-input
+                  v-else
+                  :model-value="provider.apiKey"
+                  @update:model-value="(value) => onApiKeyInput(provider, value)"
+                  type="password"
+                  placeholder="输入 API Key"
+                  clearable
+                />
+                <div v-if="hasPendingApiKey(provider)" class="secret-hint">
+                  已输入新的 API Key，需要点击页面底部的“校验并保存”才会真正替换旧密钥。
+                </div>
+              </div>
+
+              <div class="result-line" :class="{ ok: provider._test?.ok, fail: provider._test && !provider._test.ok }" v-if="provider._test">
+                {{ provider._test.message }}
+              </div>
+            </div>
+          </t-tab-panel>
         </t-tabs>
 
         <div class="save-actions" :class="{ dirty: hasUnsavedChanges }">
@@ -235,6 +371,8 @@ const state = reactive({
   updatedAt: '',
   textProviders: [],
   imageProviders: [],
+  ragEmbeddingProviders: [],
+  ragRerankProviders: [],
 });
 
 const sourceLabel = computed(() => (state.source === 'supabase' ? 'Supabase' : '环境变量'));
@@ -242,6 +380,8 @@ const sourceLabel = computed(() => (state.source === 'supabase' ? 'Supabase' : '
 const buildPayload = () => ({
   textProviders: state.textProviders.map(toTextPayload),
   imageProviders: state.imageProviders.map(toImagePayload),
+  ragEmbeddingProviders: state.ragEmbeddingProviders.map(toRagEmbeddingPayload),
+  ragRerankProviders: state.ragRerankProviders.map(toRagRerankPayload),
 });
 
 const createSnapshot = () => JSON.stringify(buildPayload());
@@ -273,6 +413,40 @@ const createImageProvider = () => ({
   baseURL: '',
   model: '',
   priority: state.imageProviders.length + 1,
+  apiKey: '',
+  hasApiKey: false,
+  apiKeyMasked: '',
+  keepApiKey: false,
+  replaceApiKey: true,
+  _test: null,
+});
+
+const createRagEmbeddingProvider = () => ({
+  id: '',
+  name: '',
+  enabled: true,
+  baseURL: '',
+  model: '',
+  dimensions: 1024,
+  priority: state.ragEmbeddingProviders.length + 1,
+  apiKey: '',
+  hasApiKey: false,
+  apiKeyMasked: '',
+  keepApiKey: false,
+  replaceApiKey: true,
+  _test: null,
+});
+
+const createRagRerankProvider = () => ({
+  id: '',
+  name: '',
+  enabled: true,
+  baseURL: '',
+  model: '',
+  path: '/rerank',
+  timeoutMs: 10000,
+  candidateFactor: 3,
+  priority: state.ragRerankProviders.length + 1,
   apiKey: '',
   hasApiKey: false,
   apiKeyMasked: '',
@@ -315,6 +489,40 @@ const normalizeImageProvider = (provider) => ({
   _test: null,
 });
 
+const normalizeRagEmbeddingProvider = (provider) => ({
+  id: provider.id || '',
+  name: provider.name || '',
+  enabled: provider.enabled !== false,
+  baseURL: provider.baseURL || '',
+  model: provider.model || '',
+  dimensions: Number(provider.dimensions) > 0 ? Number(provider.dimensions) : 1024,
+  priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
+  apiKey: provider.apiKey || '',
+  hasApiKey: provider.hasApiKey === true,
+  apiKeyMasked: provider.apiKeyMasked || '',
+  keepApiKey: provider.keepApiKey === true,
+  replaceApiKey: provider.hasApiKey === true ? provider.keepApiKey !== true : true,
+  _test: null,
+});
+
+const normalizeRagRerankProvider = (provider) => ({
+  id: provider.id || '',
+  name: provider.name || '',
+  enabled: provider.enabled !== false,
+  baseURL: provider.baseURL || '',
+  model: provider.model || '',
+  path: provider.path || '/rerank',
+  timeoutMs: Number(provider.timeoutMs) > 0 ? Number(provider.timeoutMs) : 10000,
+  candidateFactor: Number(provider.candidateFactor) > 0 ? Number(provider.candidateFactor) : 3,
+  priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
+  apiKey: provider.apiKey || '',
+  hasApiKey: provider.hasApiKey === true,
+  apiKeyMasked: provider.apiKeyMasked || '',
+  keepApiKey: provider.keepApiKey === true,
+  replaceApiKey: provider.hasApiKey === true ? provider.keepApiKey !== true : true,
+  _test: null,
+});
+
 const formatTime = (value) => {
   if (!value) return '未记录';
   const date = new Date(value);
@@ -331,6 +539,8 @@ const setProviders = (payload) => {
   state.updatedAt = payload?.updatedAt || '';
   state.textProviders = (Array.isArray(payload?.textProviders) ? payload.textProviders : []).map(normalizeTextProvider);
   state.imageProviders = (Array.isArray(payload?.imageProviders) ? payload.imageProviders : []).map(normalizeImageProvider);
+  state.ragEmbeddingProviders = (Array.isArray(payload?.ragEmbeddingProviders) ? payload.ragEmbeddingProviders : []).map(normalizeRagEmbeddingProvider);
+  state.ragRerankProviders = (Array.isArray(payload?.ragRerankProviders) ? payload.ragRerankProviders : []).map(normalizeRagRerankProvider);
   lastSavedSnapshot.value = createSnapshot();
 };
 
@@ -403,6 +613,34 @@ const toImagePayload = (provider) => ({
   keepApiKey: provider.hasApiKey === true ? provider.replaceApiKey !== true : false,
 });
 
+const toRagEmbeddingPayload = (provider) => ({
+  id: provider.id || '',
+  name: (provider.name || '').trim(),
+  enabled: !!provider.enabled,
+  baseURL: (provider.baseURL || '').trim(),
+  model: (provider.model || '').trim(),
+  dimensions: Number(provider.dimensions) > 0 ? Number(provider.dimensions) : 1024,
+  priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
+  apiKey: provider.apiKey || '',
+  hasApiKey: provider.hasApiKey === true,
+  keepApiKey: provider.hasApiKey === true ? provider.replaceApiKey !== true : false,
+});
+
+const toRagRerankPayload = (provider) => ({
+  id: provider.id || '',
+  name: (provider.name || '').trim(),
+  enabled: !!provider.enabled,
+  baseURL: (provider.baseURL || '').trim(),
+  model: (provider.model || '').trim(),
+  path: (provider.path || '/rerank').trim() || '/rerank',
+  timeoutMs: Number(provider.timeoutMs) > 0 ? Number(provider.timeoutMs) : 10000,
+  candidateFactor: Number(provider.candidateFactor) > 0 ? Number(provider.candidateFactor) : 3,
+  priority: Number(provider.priority) > 0 ? Number(provider.priority) : 1,
+  apiKey: provider.apiKey || '',
+  hasApiKey: provider.hasApiKey === true,
+  keepApiKey: provider.hasApiKey === true ? provider.replaceApiKey !== true : false,
+});
+
 const summarizeResults = (results = []) => {
   if (!Array.isArray(results) || results.length === 0) {
     return { ok: true, message: '已通过测试' };
@@ -422,6 +660,12 @@ const applyServerValidation = (details = [], results = []) => {
   state.imageProviders.forEach((provider) => {
     provider._test = null;
   });
+  state.ragEmbeddingProviders.forEach((provider) => {
+    provider._test = null;
+  });
+  state.ragRerankProviders.forEach((provider) => {
+    provider._test = null;
+  });
 
   const merged = [
     ...(Array.isArray(details) ? details : []),
@@ -429,14 +673,20 @@ const applyServerValidation = (details = [], results = []) => {
   ];
 
   merged.forEach((item) => {
-    const kind = item?.kind === 'image' ? 'image' : 'text';
+    const kind = ['image', 'embedding', 'rerank'].includes(item?.kind) ? item.kind : 'text';
     const providerName = String(item?.provider || '').trim();
     const message = String(item?.message || '校验失败').trim();
     if (kind === 'text') {
       const hit = state.textProviders.find((provider) => (provider.name || '').trim() === providerName);
       if (hit) hit._test = { ok: false, message };
-    } else {
+    } else if (kind === 'image') {
       const hit = state.imageProviders.find((provider) => (provider.name || '').trim() === providerName);
+      if (hit) hit._test = { ok: false, message };
+    } else if (kind === 'embedding') {
+      const hit = state.ragEmbeddingProviders.find((provider) => (provider.name || '').trim() === providerName);
+      if (hit) hit._test = { ok: false, message };
+    } else {
+      const hit = state.ragRerankProviders.find((provider) => (provider.name || '').trim() === providerName);
       if (hit) hit._test = { ok: false, message };
     }
   });
@@ -446,8 +696,20 @@ const testProvider = async (kind, index) => {
   const key = testingKey(kind, index);
   testingKeys.value.add(key);
   try {
-    const provider = kind === 'text' ? state.textProviders[index] : state.imageProviders[index];
-    const payload = kind === 'text' ? toTextPayload(provider) : toImagePayload(provider);
+    const provider = kind === 'text'
+      ? state.textProviders[index]
+      : kind === 'image'
+        ? state.imageProviders[index]
+        : kind === 'embedding'
+          ? state.ragEmbeddingProviders[index]
+          : state.ragRerankProviders[index];
+    const payload = kind === 'text'
+      ? toTextPayload(provider)
+      : kind === 'image'
+        ? toImagePayload(provider)
+        : kind === 'embedding'
+          ? toRagEmbeddingPayload(provider)
+          : toRagRerankPayload(provider);
     const data = await fetchJson('/api/provider-config/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -457,7 +719,13 @@ const testProvider = async (kind, index) => {
     if (provider._test.ok) MessagePlugin.success('测试通过');
     else MessagePlugin.error(provider._test.message || '测试失败');
   } catch (error) {
-    const provider = kind === 'text' ? state.textProviders[index] : state.imageProviders[index];
+    const provider = kind === 'text'
+      ? state.textProviders[index]
+      : kind === 'image'
+        ? state.imageProviders[index]
+        : kind === 'embedding'
+          ? state.ragEmbeddingProviders[index]
+          : state.ragRerankProviders[index];
     provider._test = { ok: false, message: error.message || '测试失败' };
     MessagePlugin.error(provider._test.message);
   } finally {
@@ -554,6 +822,22 @@ const addImageProvider = () => {
 
 const removeImageProvider = (index) => {
   state.imageProviders.splice(index, 1);
+};
+
+const addRagEmbeddingProvider = () => {
+  state.ragEmbeddingProviders.push(createRagEmbeddingProvider());
+};
+
+const removeRagEmbeddingProvider = (index) => {
+  state.ragEmbeddingProviders.splice(index, 1);
+};
+
+const addRagRerankProvider = () => {
+  state.ragRerankProviders.push(createRagRerankProvider());
+};
+
+const removeRagRerankProvider = (index) => {
+  state.ragRerankProviders.splice(index, 1);
 };
 
 const goBack = () => {

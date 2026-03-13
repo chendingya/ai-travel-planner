@@ -204,12 +204,28 @@ async function initializeApp() {
     const textProviders = getEnabledTextProviders();
     const imageProviders = getEnabledImageProviders();
 
+    const embeddingConfig = getEmbeddingConfig();
+    const rerankConfig = getRerankConfig();
+
     // 初始化 LangChain Manager
     const langChainManager = new LangChainManager(textProviders, imageProviders);
     app.locals.langChainManager = langChainManager;
 
+    const ragService = new RagService(supabase, embeddingConfig || {}, rerankConfig || {});
+    const ragMcpServer = new RagMcpServer(ragService);
+    app.locals.ragService = ragService;
+    app.locals.ragMcpServer = ragMcpServer;
+
     // 初始化 Provider 配置服务（支持 Supabase 持久化 + 热更新）
-    const providerConfigService = new ProviderConfigService({ supabase, langChainManager });
+    const providerConfigService = new ProviderConfigService({
+      supabase,
+      langChainManager,
+      onRuntimeConfigApplied: () => {
+        const nextEmbeddingConfig = getEmbeddingConfig();
+        const nextRerankConfig = getRerankConfig();
+        ragService.reloadConfig(nextEmbeddingConfig || {}, nextRerankConfig || {});
+      },
+    });
     await providerConfigService.bootstrap();
     app.locals.providerConfigService = providerConfigService;
 
@@ -247,20 +263,13 @@ async function initializeApp() {
     const planService = new PlanService(langChainManager, mcpService, supabase);
     const ttsService = new TTSService({ audioDir });
 
-    // 初始化 RAG 服务（可选，未配置 QWEN_EMBEDDING_API_KEY 时自动跳过）
-    const embeddingConfig = getEmbeddingConfig();
-    const rerankConfig    = getRerankConfig();
-    const ragService = embeddingConfig && embeddingConfig.enabled
-      ? new RagService(supabase, embeddingConfig, rerankConfig)
-      : null;
-    const ragMcpServer = ragService ? new RagMcpServer(ragService) : null;
-    app.locals.ragMcpServer = ragMcpServer;
-    if (ragService) {
-      const rerankInfo = rerankConfig.enabled ? `，Rerank ${rerankConfig.model}` : '，Rerank 未启用';
-      console.log(`RAG 服务: 已启用（${embeddingConfig.model}，维度 ${embeddingConfig.dim}，Hybrid: sparse=${embeddingConfig.sparseTopK}/dense=${embeddingConfig.denseTopK}/rrf=${embeddingConfig.rrfTopK}${rerankInfo}）`);
+    const ragStatus = ragService.getStatus();
+    if (ragStatus.enabled) {
+      const rerankInfo = ragStatus.rerankEnabled ? `，Rerank ${ragStatus.rerankModel}` : '，Rerank 未启用';
+      console.log(`RAG 服务: 已启用（${ragStatus.embeddingModel}，维度 ${ragStatus.dim}，Hybrid: sparse=${ragStatus.sparseTopK}/dense=${ragStatus.denseTopK}/rrf=${ragStatus.rrfTopK}${rerankInfo}）`);
       console.log(`RAG MCP 服务: 已启用（POST /mcp）`);
     } else {
-      console.log('RAG 服务: 未配置（设置 QWEN_EMBEDDING_API_KEY 启用）');
+      console.log('RAG 服务: 未配置（可在 Provider 配置页或环境变量中启用 Embedding Provider）');
       console.log('RAG MCP 服务: 未启用（依赖 RAG 服务）');
     }
 

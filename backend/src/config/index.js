@@ -33,6 +33,21 @@ function parsePriority(value, fallback) {
   return Number.isFinite(fb) && fb > 0 ? Math.floor(fb) : 1;
 }
 
+function parsePositiveInt(value, fallback) {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  const fb = Number(fallback);
+  return Number.isFinite(fb) && fb > 0 ? Math.floor(fb) : 0;
+}
+
+function normalizeBool(value, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  if (value == null) return fallback;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
 function parseProvidersJson(raw) {
   const value = raw == null ? '' : String(raw).trim();
   if (!value) return null;
@@ -61,6 +76,32 @@ function normalizeProviderEntry(entry, index, defaults = {}) {
   const model = modelRaw == null ? '' : String(modelRaw);
   const priority = parsePriority(src.priority ?? defaults.priority, index + 1);
   return { name, enabled, baseURL, apiKey, model, priority };
+}
+
+function normalizeRagEmbeddingProviderEntry(entry, index, defaults = {}) {
+  const normalized = normalizeProviderEntry(entry, index, defaults);
+  const src = entry && typeof entry === 'object' ? entry : {};
+  return {
+    ...normalized,
+    dimensions: parsePositiveInt(src.dimensions ?? src.dimension ?? defaults.dimensions, 1024) || 1024,
+  };
+}
+
+function normalizeRagRerankProviderEntry(entry, index, defaults = {}) {
+  const normalized = normalizeProviderEntry(entry, index, defaults);
+  const src = entry && typeof entry === 'object' ? entry : {};
+  const rawPath = src.path ?? defaults.path ?? '/rerank';
+  const path = (() => {
+    const value = rawPath == null ? '' : String(rawPath).trim();
+    if (!value) return '/rerank';
+    return value.startsWith('/') ? value : `/${value}`;
+  })();
+  return {
+    ...normalized,
+    path,
+    timeoutMs: parsePositiveInt(src.timeoutMs ?? defaults.timeoutMs, 10000) || 10000,
+    candidateFactor: parsePositiveInt(src.candidateFactor ?? defaults.candidateFactor, 3) || 3,
+  };
 }
 
 function expandTextProviders(entries) {
@@ -140,10 +181,60 @@ function getEnabledImageProviders() {
   return [];
 }
 
+function getEnabledRagEmbeddingProviders() {
+  const jsonProviders = parseProvidersJson(process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON);
+  if (Array.isArray(jsonProviders) && jsonProviders.length) {
+    return jsonProviders
+      .map((entry, index) => normalizeRagEmbeddingProviderEntry(entry, index))
+      .filter((provider) => provider.enabled && provider.apiKey)
+      .sort((a, b) => a.priority - b.priority);
+  }
+
+  const apiKey = process.env.QWEN_EMBEDDING_API_KEY || '';
+  if (!apiKey) return [];
+  return [normalizeRagEmbeddingProviderEntry({
+    name: 'qwen-embedding',
+    enabled: (process.env.RAG_ENABLED || 'true').toLowerCase() !== 'false',
+    baseURL: process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+    apiKey,
+    model: process.env.QWEN_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-8B',
+    dimensions: process.env.QWEN_EMBEDDING_DIM || '1024',
+    priority: 1,
+  }, 0)];
+}
+
+function getEnabledRagRerankProviders() {
+  const jsonProviders = parseProvidersJson(process.env.AI_RAG_RERANK_PROVIDERS_JSON);
+  if (Array.isArray(jsonProviders) && jsonProviders.length) {
+    return jsonProviders
+      .map((entry, index) => normalizeRagRerankProviderEntry(entry, index))
+      .filter((provider) => provider.enabled && provider.baseURL)
+      .sort((a, b) => a.priority - b.priority);
+  }
+
+  const baseURL = process.env.RERANK_BASE_URL || '';
+  const apiKey = process.env.RERANK_API_KEY || '';
+  const enabled = normalizeBool(process.env.RERANK_ENABLED || 'false', false);
+  if (!enabled || !baseURL) return [];
+  return [normalizeRagRerankProviderEntry({
+    name: 'rag-rerank',
+    enabled,
+    baseURL,
+    apiKey,
+    model: process.env.RERANK_MODEL || 'BAAI/bge-reranker-v2-m3',
+    path: process.env.RERANK_PATH || '/rerank',
+    timeoutMs: process.env.RERANK_TIMEOUT_MS || '10000',
+    candidateFactor: process.env.RERANK_CANDIDATE_FACTOR || '3',
+    priority: 1,
+  }, 0)];
+}
+
 module.exports = {
   config,
   getEnabledTextProviders,
   getEnabledImageProviders,
+  getEnabledRagEmbeddingProviders,
+  getEnabledRagRerankProviders,
   getEmbeddingConfig,
   getRerankConfig,
 };
@@ -153,16 +244,17 @@ module.exports = {
  * 返回 null 表示未配置，ragService 将自动降级（跳过 RAG）
  */
 function getEmbeddingConfig() {
-  const apiKey = process.env.QWEN_EMBEDDING_API_KEY || '';
-  if (!apiKey) return null;
+  const provider = getEnabledRagEmbeddingProviders()[0] || null;
+  if (!provider) return null;
   return {
-    apiKey,
-    model:     process.env.QWEN_EMBEDDING_MODEL    || 'Qwen/Qwen3-Embedding-8B',
-    dim:       parseInt(process.env.QWEN_EMBEDDING_DIM || '1024', 10),
-    baseURL:   process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+    apiKey: provider.apiKey,
+    provider: provider.name,
+    model: provider.model || 'Qwen/Qwen3-Embedding-8B',
+    dim: provider.dimensions || 1024,
+    baseURL: provider.baseURL || 'https://api-inference.modelscope.cn/v1',
     kbSlug:    process.env.RAG_KB_SLUG             || 'travel-cn-public',
     datasetVersion: process.env.RAG_DATASET_VERSION || '',
-    enabled:   (process.env.RAG_ENABLED || 'true').toLowerCase() !== 'false',
+    enabled: normalizeBool(process.env.RAG_ENABLED, true) && provider.enabled !== false,
     topK:      parseInt(process.env.RAG_TOP_K || '5', 10),
     threshold: parseFloat(process.env.RAG_SIMILARITY_THRESHOLD || '0.35'),
     denseTopK: parseInt(process.env.RAG_DENSE_TOP_K || '20', 10),
@@ -180,15 +272,17 @@ function getEmbeddingConfig() {
  * RERANK_ENABLED=true 且 RERANK_BASE_URL 已填写时方生效
  */
 function getRerankConfig() {
-  const baseURL = process.env.RERANK_BASE_URL || '';
-  const enabled = (process.env.RERANK_ENABLED || 'false').toLowerCase() === 'true' && !!baseURL;
+  const provider = getEnabledRagRerankProviders()[0] || null;
+  const baseURL = provider?.baseURL || process.env.RERANK_BASE_URL || '';
+  const enabled = normalizeBool(process.env.RERANK_ENABLED || 'false', false) && !!provider && !!baseURL;
   return {
     enabled,
+    provider: provider?.name || '',
     baseURL:         baseURL || 'http://localhost:8001',
-    path:            process.env.RERANK_PATH || '/rerank',
-    model:           process.env.RERANK_MODEL            || 'BAAI/bge-reranker-v2-m3',
-    apiKey:          process.env.RERANK_API_KEY          || '',
-    candidateFactor: parseInt(process.env.RERANK_CANDIDATE_FACTOR || '3', 10),
-    timeoutMs:       parseInt(process.env.RERANK_TIMEOUT_MS || '10000', 10),
+    path:            provider?.path || process.env.RERANK_PATH || '/rerank',
+    model:           provider?.model || process.env.RERANK_MODEL || 'BAAI/bge-reranker-v2-m3',
+    apiKey:          provider?.apiKey || process.env.RERANK_API_KEY || '',
+    candidateFactor: parsePositiveInt(provider?.candidateFactor, process.env.RERANK_CANDIDATE_FACTOR || '3') || 3,
+    timeoutMs:       parsePositiveInt(provider?.timeoutMs, process.env.RERANK_TIMEOUT_MS || '10000') || 10000,
   };
 }

@@ -78,12 +78,21 @@ function describeIntent(intent) {
 class RagService {
   constructor(supabase, embeddingConfig = {}, rerankConfig = {}) {
     this.supabase = supabase;
+    this._cache = new Map();
+    this._cacheMaxSize = 200;
+    this._intentCatalog = null;
+    this.reloadConfig(embeddingConfig, rerankConfig);
+  }
+
+  reloadConfig(embeddingConfig = {}, rerankConfig = {}) {
+    this.embeddingProvider = embeddingConfig.provider || '';
     this.apiKey = embeddingConfig.apiKey || '';
     this.model = embeddingConfig.model || 'Qwen/Qwen3-Embedding-8B';
     this.dim = embeddingConfig.dim || 1024;
     this.baseURL = embeddingConfig.baseURL || 'https://api-inference.modelscope.cn/v1';
     this.kbSlug = embeddingConfig.kbSlug || 'travel-cn-public';
     this.datasetVersion = embeddingConfig.datasetVersion || '';
+    this.embeddingEnabled = embeddingConfig.enabled !== false;
     this.defaultTopK = embeddingConfig.topK || 5;
     this.defaultDenseTopK = embeddingConfig.denseTopK || Math.max(this.defaultTopK * 3, 15);
     this.defaultSparseTopK = embeddingConfig.sparseTopK || Math.max(this.defaultTopK * 3, 15);
@@ -94,6 +103,7 @@ class RagService {
     this.intentCatalogPageSize = embeddingConfig.intentCatalogPageSize || 1000;
     this.intentCatalogTtlMs = embeddingConfig.intentCatalogTtlMs || 10 * 60 * 1000;
 
+    this.rerankProvider = rerankConfig.provider || '';
     this.rerankEnabled = !!rerankConfig.enabled;
     this.rerankBaseURL = (rerankConfig.baseURL || 'http://localhost:8001').replace(/\/$/, '');
     this.rerankPath = rerankConfig.path || '/rerank';
@@ -102,13 +112,28 @@ class RagService {
     this.rerankCandidateFactor = rerankConfig.candidateFactor || 3;
     this.rerankTimeoutMs = rerankConfig.timeoutMs || 10000;
 
-    this._cache = new Map();
-    this._cacheMaxSize = 200;
+    this._cache.clear();
     this._intentCatalog = null;
+    return this.getStatus();
+  }
+
+  getStatus() {
+    return {
+      enabled: this.isAvailable(),
+      embeddingProvider: this.embeddingProvider || '',
+      embeddingModel: this.model || '',
+      dim: this.dim,
+      rerankEnabled: !!this.rerankEnabled,
+      rerankProvider: this.rerankProvider || '',
+      rerankModel: this.rerankModel || '',
+      denseTopK: this.defaultDenseTopK,
+      sparseTopK: this.defaultSparseTopK,
+      rrfTopK: this.defaultRrfTopK,
+    };
   }
 
   isAvailable() {
-    return !!(this.apiKey && this.supabase);
+    return !!(this.embeddingEnabled && this.apiKey && this.supabase);
   }
 
   async embedText(text) {

@@ -71,16 +71,17 @@ function loadEncryptionKey() {
 }
 
 class ProviderConfigService {
-  constructor({ supabase, langChainManager } = {}) {
+  constructor({ supabase, langChainManager, onRuntimeConfigApplied } = {}) {
     this.supabase = supabase;
     this.langChainManager = langChainManager;
+    this.onRuntimeConfigApplied = typeof onRuntimeConfigApplied === 'function' ? onRuntimeConfigApplied : null;
     this.tableName = TABLE_NAME;
     this.encryptionKey = loadEncryptionKey();
     this._initialized = false;
 
-    this._defaultConfig = { textProviders: [], imageProviders: [] };
+    this._defaultConfig = { textProviders: [], imageProviders: [], ragEmbeddingProviders: [], ragRerankProviders: [] };
     this._defaultMeta = { source: 'env', updatedBy: '', updatedAt: '' };
-    this._runtimeConfig = { textProviders: [], imageProviders: [] };
+    this._runtimeConfig = { textProviders: [], imageProviders: [], ragEmbeddingProviders: [], ragRerankProviders: [] };
     this._runtimeMeta = { source: 'runtime', updatedBy: '', updatedAt: '' };
     this._activeRuntimeUserId = '';
     this._activeRuntimeSignature = '';
@@ -115,6 +116,14 @@ class ProviderConfigService {
 
   _imageProviderId(index) {
     return `image:${index}`;
+  }
+
+  _ragEmbeddingProviderId(index) {
+    return `rag-embedding:${index}`;
+  }
+
+  _ragRerankProviderId(index) {
+    return `rag-rerank:${index}`;
   }
 
   _normalizeTextModel(entry, index) {
@@ -168,12 +177,60 @@ class ProviderConfigService {
     };
   }
 
+  _normalizeRagEmbeddingProvider(entry, index, keyMap = new Map()) {
+    const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
+    const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const directApiKey = this._readApiKey(src.apiKey);
+    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
+    const keptApiKey = id && keyMap.has(id) ? keyMap.get(id) : '';
+    const apiKey = keepApiKey ? keptApiKey : directApiKey;
+    const dimensions = Number(src.dimensions ?? src.dimension);
+    return {
+      id,
+      name: src.name == null ? '' : String(src.name).trim(),
+      enabled: normalizeBool(src.enabled, true),
+      baseURL: sanitizeUrlEnv(src.baseURL ?? src.baseUrl ?? ''),
+      apiKey,
+      model: src.model == null ? '' : String(src.model).trim(),
+      dimensions: Number.isFinite(dimensions) && dimensions > 0 ? Math.floor(dimensions) : 1024,
+      priority: parsePriority(src.priority, index + 1),
+    };
+  }
+
+  _normalizeRagRerankProvider(entry, index, keyMap = new Map()) {
+    const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
+    const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const directApiKey = this._readApiKey(src.apiKey);
+    const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
+    const keptApiKey = id && keyMap.has(id) ? keyMap.get(id) : '';
+    const apiKey = keepApiKey ? keptApiKey : directApiKey;
+    const rawPath = src.path == null ? '/rerank' : String(src.path).trim();
+    const timeoutMs = Number(src.timeoutMs);
+    const candidateFactor = Number(src.candidateFactor);
+    return {
+      id,
+      name: src.name == null ? '' : String(src.name).trim(),
+      enabled: normalizeBool(src.enabled, true),
+      baseURL: sanitizeUrlEnv(src.baseURL ?? src.baseUrl ?? ''),
+      apiKey,
+      model: src.model == null ? '' : String(src.model).trim(),
+      path: rawPath ? (rawPath.startsWith('/') ? rawPath : `/${rawPath}`) : '/rerank',
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : 10000,
+      candidateFactor: Number.isFinite(candidateFactor) && candidateFactor > 0 ? Math.floor(candidateFactor) : 3,
+      priority: parsePriority(src.priority, index + 1),
+    };
+  }
+
   _normalizeConfig(input, keyMaps = {}) {
     const src = input && typeof input === 'object' ? input : {};
     const textRaw = Array.isArray(src.textProviders) ? src.textProviders : [];
     const imageRaw = Array.isArray(src.imageProviders) ? src.imageProviders : [];
+    const ragEmbeddingRaw = Array.isArray(src.ragEmbeddingProviders) ? src.ragEmbeddingProviders : [];
+    const ragRerankRaw = Array.isArray(src.ragRerankProviders) ? src.ragRerankProviders : [];
     const textKeyMap = keyMaps.textKeyMap instanceof Map ? keyMaps.textKeyMap : new Map();
     const imageKeyMap = keyMaps.imageKeyMap instanceof Map ? keyMaps.imageKeyMap : new Map();
+    const ragEmbeddingKeyMap = keyMaps.ragEmbeddingKeyMap instanceof Map ? keyMaps.ragEmbeddingKeyMap : new Map();
+    const ragRerankKeyMap = keyMaps.ragRerankKeyMap instanceof Map ? keyMaps.ragRerankKeyMap : new Map();
 
     const textProviders = textRaw
       .map((entry, index) => this._normalizeTextProvider(entry, index, textKeyMap))
@@ -181,8 +238,14 @@ class ProviderConfigService {
     const imageProviders = imageRaw
       .map((entry, index) => this._normalizeImageProvider(entry, index, imageKeyMap))
       .sort((a, b) => a.priority - b.priority);
+    const ragEmbeddingProviders = ragEmbeddingRaw
+      .map((entry, index) => this._normalizeRagEmbeddingProvider(entry, index, ragEmbeddingKeyMap))
+      .sort((a, b) => a.priority - b.priority);
+    const ragRerankProviders = ragRerankRaw
+      .map((entry, index) => this._normalizeRagRerankProvider(entry, index, ragRerankKeyMap))
+      .sort((a, b) => a.priority - b.priority);
 
-    return { textProviders, imageProviders };
+    return { textProviders, imageProviders, ragEmbeddingProviders, ragRerankProviders };
   }
 
   _storageShape(config, { encryptKeys = false } = {}) {
@@ -205,6 +268,26 @@ class ProviderConfigService {
         baseURL: provider.baseURL,
         apiKey: encryptKeys ? this._writeApiKey(provider.apiKey) : provider.apiKey,
         model: provider.model,
+        priority: provider.priority,
+      })),
+      ragEmbeddingProviders: (Array.isArray(src.ragEmbeddingProviders) ? src.ragEmbeddingProviders : []).map((provider) => ({
+        name: provider.name,
+        enabled: provider.enabled,
+        baseURL: provider.baseURL,
+        apiKey: encryptKeys ? this._writeApiKey(provider.apiKey) : provider.apiKey,
+        model: provider.model,
+        dimensions: provider.dimensions,
+        priority: provider.priority,
+      })),
+      ragRerankProviders: (Array.isArray(src.ragRerankProviders) ? src.ragRerankProviders : []).map((provider) => ({
+        name: provider.name,
+        enabled: provider.enabled,
+        baseURL: provider.baseURL,
+        apiKey: encryptKeys ? this._writeApiKey(provider.apiKey) : provider.apiKey,
+        model: provider.model,
+        path: provider.path,
+        timeoutMs: provider.timeoutMs,
+        candidateFactor: provider.candidateFactor,
         priority: provider.priority,
       })),
     };
@@ -276,6 +359,30 @@ class ProviderConfigService {
     return map;
   }
 
+  _buildRagEmbeddingKeyMap(config) {
+    const map = new Map();
+    const providers = Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders : [];
+    providers.forEach((provider, index) => {
+      const key = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
+      if (!key) return;
+      const id = typeof provider?.id === 'string' && provider.id.trim() ? provider.id.trim() : this._ragEmbeddingProviderId(index);
+      map.set(id, key);
+    });
+    return map;
+  }
+
+  _buildRagRerankKeyMap(config) {
+    const map = new Map();
+    const providers = Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders : [];
+    providers.forEach((provider, index) => {
+      const key = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
+      if (!key) return;
+      const id = typeof provider?.id === 'string' && provider.id.trim() ? provider.id.trim() : this._ragRerankProviderId(index);
+      map.set(id, key);
+    });
+    return map;
+  }
+
   _maskForClient(config, meta) {
     const textProviders = (Array.isArray(config?.textProviders) ? config.textProviders : []).map((provider, providerIndex) => {
       const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
@@ -313,21 +420,91 @@ class ProviderConfigService {
       };
     });
 
+    const ragEmbeddingProviders = (Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders : []).map((provider, providerIndex) => {
+      const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
+      return {
+        id: this._ragEmbeddingProviderId(providerIndex),
+        name: provider?.name || '',
+        enabled: !!provider?.enabled,
+        baseURL: provider?.baseURL || '',
+        model: provider?.model || '',
+        dimensions: Number(provider?.dimensions) > 0 ? Number(provider.dimensions) : 1024,
+        priority: parsePriority(provider?.priority, providerIndex + 1),
+        apiKey: '',
+        hasApiKey: !!apiKey,
+        apiKeyMasked: maskApiKey(apiKey),
+        keepApiKey: !!apiKey,
+      };
+    });
+
+    const ragRerankProviders = (Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders : []).map((provider, providerIndex) => {
+      const apiKey = typeof provider?.apiKey === 'string' ? provider.apiKey.trim() : '';
+      return {
+        id: this._ragRerankProviderId(providerIndex),
+        name: provider?.name || '',
+        enabled: !!provider?.enabled,
+        baseURL: provider?.baseURL || '',
+        model: provider?.model || '',
+        path: provider?.path || '/rerank',
+        timeoutMs: Number(provider?.timeoutMs) > 0 ? Number(provider.timeoutMs) : 10000,
+        candidateFactor: Number(provider?.candidateFactor) > 0 ? Number(provider.candidateFactor) : 3,
+        priority: parsePriority(provider?.priority, providerIndex + 1),
+        apiKey: '',
+        hasApiKey: !!apiKey,
+        apiKeyMasked: maskApiKey(apiKey),
+        keepApiKey: !!apiKey,
+      };
+    });
+
     return {
       source: meta?.source || 'env',
       updatedBy: meta?.updatedBy || '',
       updatedAt: meta?.updatedAt || '',
       textProviders,
       imageProviders,
+      ragEmbeddingProviders,
+      ragRerankProviders,
     };
   }
 
   _loadFromEnv() {
     const textRaw = parseProvidersJson(process.env.AI_TEXT_PROVIDERS_JSON);
     const imageRaw = parseProvidersJson(process.env.AI_IMAGE_PROVIDERS_JSON);
+    const ragEmbeddingRaw = parseProvidersJson(process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON);
+    const ragRerankRaw = parseProvidersJson(process.env.AI_RAG_RERANK_PROVIDERS_JSON);
+    const ragEmbeddingProviders = Array.isArray(ragEmbeddingRaw) && ragEmbeddingRaw.length
+      ? ragEmbeddingRaw
+      : (process.env.QWEN_EMBEDDING_API_KEY
+        ? [{
+            name: 'qwen-embedding',
+            enabled: (process.env.RAG_ENABLED || 'true').toLowerCase() !== 'false',
+            baseURL: process.env.QWEN_EMBEDDING_BASE_URL || 'https://api-inference.modelscope.cn/v1',
+            apiKey: process.env.QWEN_EMBEDDING_API_KEY || '',
+            model: process.env.QWEN_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-8B',
+            dimensions: process.env.QWEN_EMBEDDING_DIM || '1024',
+            priority: 1,
+          }]
+        : []);
+    const ragRerankProviders = Array.isArray(ragRerankRaw) && ragRerankRaw.length
+      ? ragRerankRaw
+      : ((process.env.RERANK_ENABLED || 'false').toLowerCase() === 'true' && process.env.RERANK_BASE_URL
+        ? [{
+            name: 'rag-rerank',
+            enabled: true,
+            baseURL: process.env.RERANK_BASE_URL || '',
+            apiKey: process.env.RERANK_API_KEY || '',
+            model: process.env.RERANK_MODEL || 'BAAI/bge-reranker-v2-m3',
+            path: process.env.RERANK_PATH || '/rerank',
+            timeoutMs: process.env.RERANK_TIMEOUT_MS || '10000',
+            candidateFactor: process.env.RERANK_CANDIDATE_FACTOR || '3',
+            priority: 1,
+          }]
+        : []);
     const normalized = this._normalizeConfig({
       textProviders: textRaw,
       imageProviders: imageRaw,
+      ragEmbeddingProviders,
+      ragRerankProviders,
     });
     return {
       config: normalized,
@@ -368,7 +545,37 @@ class ProviderConfigService {
       ...(provider && typeof provider === 'object' ? provider : {}),
       apiKey: this._readApiKey(provider?.apiKey),
     }));
-    return this._normalizeConfig({ textProviders, imageProviders });
+    const ragEmbeddingProviders = (Array.isArray(row?.rag_embedding_providers) ? row.rag_embedding_providers : []).map((provider) => ({
+      ...(provider && typeof provider === 'object' ? provider : {}),
+      apiKey: this._readApiKey(provider?.apiKey),
+    }));
+    const ragRerankProviders = (Array.isArray(row?.rag_rerank_providers) ? row.rag_rerank_providers : []).map((provider) => ({
+      ...(provider && typeof provider === 'object' ? provider : {}),
+      apiKey: this._readApiKey(provider?.apiKey),
+    }));
+    return this._normalizeConfig({ textProviders, imageProviders, ragEmbeddingProviders, ragRerankProviders });
+  }
+
+  _syncRagRuntimeEnv(storageShape) {
+    const ragEmbeddingProviders = Array.isArray(storageShape?.ragEmbeddingProviders) ? storageShape.ragEmbeddingProviders : [];
+    const ragRerankProviders = Array.isArray(storageShape?.ragRerankProviders) ? storageShape.ragRerankProviders : [];
+    process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON = JSON.stringify(ragEmbeddingProviders);
+    process.env.AI_RAG_RERANK_PROVIDERS_JSON = JSON.stringify(ragRerankProviders);
+
+    const embeddingProvider = ragEmbeddingProviders.find((provider) => provider && provider.enabled && provider.apiKey) || null;
+    process.env.QWEN_EMBEDDING_API_KEY = embeddingProvider?.apiKey || '';
+    process.env.QWEN_EMBEDDING_BASE_URL = embeddingProvider?.baseURL || '';
+    process.env.QWEN_EMBEDDING_MODEL = embeddingProvider?.model || '';
+    process.env.QWEN_EMBEDDING_DIM = String(embeddingProvider?.dimensions || '');
+
+    const rerankProvider = ragRerankProviders.find((provider) => provider && provider.enabled && provider.baseURL) || null;
+    process.env.RERANK_ENABLED = rerankProvider ? 'true' : 'false';
+    process.env.RERANK_BASE_URL = rerankProvider?.baseURL || '';
+    process.env.RERANK_PATH = rerankProvider?.path || '/rerank';
+    process.env.RERANK_MODEL = rerankProvider?.model || '';
+    process.env.RERANK_API_KEY = rerankProvider?.apiKey || '';
+    process.env.RERANK_TIMEOUT_MS = String(rerankProvider?.timeoutMs || '');
+    process.env.RERANK_CANDIDATE_FACTOR = String(rerankProvider?.candidateFactor || '');
   }
 
   _applyRuntimeConfig(config, meta = {}) {
@@ -376,6 +583,7 @@ class ProviderConfigService {
     const storageShape = this._storageShape(normalized, { encryptKeys: false });
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify(storageShape.textProviders);
     process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify(storageShape.imageProviders);
+    this._syncRagRuntimeEnv(storageShape);
 
     if (this.langChainManager && typeof this.langChainManager.reload === 'function') {
       this.langChainManager.reload(storageShape.textProviders, storageShape.imageProviders);
@@ -387,12 +595,26 @@ class ProviderConfigService {
       updatedBy: meta.updatedBy || '',
       updatedAt: meta.updatedAt || '',
     };
+
+    if (this.onRuntimeConfigApplied) {
+      try {
+        this.onRuntimeConfigApplied({
+          config: normalized,
+          meta: this._runtimeMeta,
+          storageShape,
+        });
+      } catch (error) {
+        console.warn('[provider-config] onRuntimeConfigApplied failed:', error?.message || error);
+      }
+    }
   }
 
   _validateStructure(config) {
     const errors = [];
     const textProviders = Array.isArray(config?.textProviders) ? config.textProviders : [];
     const imageProviders = Array.isArray(config?.imageProviders) ? config.imageProviders : [];
+    const ragEmbeddingProviders = Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders : [];
+    const ragRerankProviders = Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders : [];
 
     textProviders.forEach((provider, index) => {
       const providerName = provider?.name || `text_${index + 1}`;
@@ -433,7 +655,133 @@ class ProviderConfigService {
       }
     });
 
+    ragEmbeddingProviders.forEach((provider, index) => {
+      const providerName = provider?.name || `rag_embedding_${index + 1}`;
+      if (!provider?.name) {
+        errors.push({ kind: 'embedding', provider: providerName, message: 'Embedding 提供商名称不能为空' });
+      }
+      if (provider?.enabled && !provider?.baseURL) {
+        errors.push({ kind: 'embedding', provider: providerName, message: '启用的 Embedding 提供商必须填写 baseURL' });
+      }
+      if (provider?.enabled && !provider?.model) {
+        errors.push({ kind: 'embedding', provider: providerName, message: '启用的 Embedding 提供商必须填写 model' });
+      }
+      if (provider?.enabled && !(Number(provider?.dimensions) > 0)) {
+        errors.push({ kind: 'embedding', provider: providerName, message: 'Embedding 维度必须为正整数' });
+      }
+    });
+
+    ragRerankProviders.forEach((provider, index) => {
+      const providerName = provider?.name || `rag_rerank_${index + 1}`;
+      if (!provider?.name) {
+        errors.push({ kind: 'rerank', provider: providerName, message: 'Rerank 提供商名称不能为空' });
+      }
+      if (provider?.enabled && !provider?.baseURL) {
+        errors.push({ kind: 'rerank', provider: providerName, message: '启用的 Rerank 提供商必须填写 baseURL' });
+      }
+      if (provider?.enabled && !provider?.path) {
+        errors.push({ kind: 'rerank', provider: providerName, message: '启用的 Rerank 提供商必须填写 path' });
+      }
+    });
+
     return errors;
+  }
+
+  async _probeEmbeddingProvider(provider) {
+    const body = JSON.stringify({
+      model: provider.model,
+      input: ['ping'],
+      dimensions: provider.dimensions,
+      encoding_format: 'float',
+    });
+    const url = new URL(`${provider.baseURL}/embeddings`);
+    const lib = url.protocol === 'https:' ? require('https') : require('http');
+    return await new Promise((resolve) => {
+      const req = lib.request({
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? '443' : '80'),
+        path: `${url.pathname}${url.search || ''}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${provider.apiKey}`,
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let raw = '';
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(raw);
+            if (json?.error) {
+              resolve({ ok: false, message: String(json.error?.message || 'Embedding 连接测试失败') });
+              return;
+            }
+            const embedding = json?.data?.[0]?.embedding;
+            if (!Array.isArray(embedding)) {
+              resolve({ ok: false, message: 'Embedding 接口返回格式异常' });
+              return;
+            }
+            resolve({ ok: true, message: 'ok' });
+          } catch (_) {
+            resolve({ ok: false, message: 'Embedding 接口返回了无效 JSON' });
+          }
+        });
+      });
+      req.on('error', (error) => resolve({ ok: false, message: String(error?.message || error || 'Embedding 连接测试失败') }));
+      req.write(body);
+      req.end();
+    });
+  }
+
+  async _probeRerankProvider(provider) {
+    const body = JSON.stringify({
+      query: 'ping',
+      documents: ['ping'],
+      model: provider.model,
+      return_documents: false,
+    });
+    const url = new URL(`${provider.baseURL}${provider.path.startsWith('/') ? provider.path : `/${provider.path}`}`);
+    const lib = url.protocol === 'https:' ? require('https') : require('http');
+    return await new Promise((resolve) => {
+      const req = lib.request({
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? '443' : '80'),
+        path: `${url.pathname}${url.search || ''}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let raw = '';
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(raw);
+            if (Array.isArray(json) || Array.isArray(json?.results) || Array.isArray(json?.scores) || Array.isArray(json?.data)) {
+              resolve({ ok: true, message: 'ok' });
+              return;
+            }
+            if (json?.error) {
+              resolve({ ok: false, message: String(json.error?.message || 'Rerank 连接测试失败') });
+              return;
+            }
+            resolve({ ok: false, message: 'Rerank 接口返回格式异常' });
+          } catch (_) {
+            resolve({ ok: false, message: 'Rerank 接口返回了无效 JSON' });
+          }
+        });
+      });
+      req.setTimeout(Number(provider.timeoutMs) > 0 ? Number(provider.timeoutMs) : 10000, () => {
+        req.destroy();
+        resolve({ ok: false, message: 'Rerank 连接测试超时' });
+      });
+      req.on('error', (error) => resolve({ ok: false, message: String(error?.message || error || 'Rerank 连接测试失败') }));
+      req.write(body);
+      req.end();
+    });
   }
 
   async _probeTextModel(provider, modelName) {
@@ -476,6 +824,8 @@ class ProviderConfigService {
     const results = [];
     const textProviders = Array.isArray(config?.textProviders) ? config.textProviders : [];
     const imageProviders = Array.isArray(config?.imageProviders) ? config.imageProviders : [];
+    const ragEmbeddingProviders = Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders : [];
+    const ragRerankProviders = Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders : [];
 
     for (const provider of textProviders) {
       if (!provider?.enabled) continue;
@@ -517,6 +867,37 @@ class ProviderConfigService {
         model: provider?.model || '',
         ok: !!tested.ok,
         message: tested.message || (tested.ok ? 'ok' : '图片连通性测试失败'),
+      });
+    }
+
+    for (const provider of ragEmbeddingProviders) {
+      if (!provider?.enabled) continue;
+      const providerName = provider.name || 'rag_embedding_provider';
+      const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+      if (!apiKey) {
+        results.push({ kind: 'embedding', provider: providerName, model: provider?.model || '', ok: false, message: '启用的 Embedding 提供商缺少 API Key' });
+        continue;
+      }
+      const tested = await this._probeEmbeddingProvider(provider);
+      results.push({
+        kind: 'embedding',
+        provider: providerName,
+        model: provider?.model || '',
+        ok: !!tested.ok,
+        message: tested.message || (tested.ok ? 'ok' : 'Embedding 连通性测试失败'),
+      });
+    }
+
+    for (const provider of ragRerankProviders) {
+      if (!provider?.enabled) continue;
+      const providerName = provider.name || 'rag_rerank_provider';
+      const tested = await this._probeRerankProvider(provider);
+      results.push({
+        kind: 'rerank',
+        provider: providerName,
+        model: provider?.model || '',
+        ok: !!tested.ok,
+        message: tested.message || (tested.ok ? 'ok' : 'Rerank 连通性测试失败'),
       });
     }
 
@@ -603,13 +984,20 @@ class ProviderConfigService {
 
   async testSingle(input, userId) {
     const loaded = await this._loadUserConfig(userId);
-    const kind = input?.kind === 'image' ? 'image' : 'text';
+    const requestedKind = typeof input?.kind === 'string' ? input.kind.trim().toLowerCase() : 'text';
+    const kind = ['text', 'image', 'embedding', 'rerank'].includes(requestedKind) ? requestedKind : 'text';
     const providerInput = input?.provider && typeof input.provider === 'object' ? input.provider : {};
     const textKeyMap = this._buildTextKeyMap(loaded.config);
     const imageKeyMap = this._buildImageKeyMap(loaded.config);
+    const ragEmbeddingKeyMap = this._buildRagEmbeddingKeyMap(loaded.config);
+    const ragRerankKeyMap = this._buildRagRerankKeyMap(loaded.config);
     const normalized = kind === 'text'
-      ? { textProviders: [this._normalizeTextProvider(providerInput, 0, textKeyMap)], imageProviders: [] }
-      : { textProviders: [], imageProviders: [this._normalizeImageProvider(providerInput, 0, imageKeyMap)] };
+      ? { textProviders: [this._normalizeTextProvider(providerInput, 0, textKeyMap)], imageProviders: [], ragEmbeddingProviders: [], ragRerankProviders: [] }
+      : kind === 'image'
+        ? { textProviders: [], imageProviders: [this._normalizeImageProvider(providerInput, 0, imageKeyMap)], ragEmbeddingProviders: [], ragRerankProviders: [] }
+        : kind === 'embedding'
+          ? { textProviders: [], imageProviders: [], ragEmbeddingProviders: [this._normalizeRagEmbeddingProvider(providerInput, 0, ragEmbeddingKeyMap)], ragRerankProviders: [] }
+          : { textProviders: [], imageProviders: [], ragEmbeddingProviders: [], ragRerankProviders: [this._normalizeRagRerankProvider(providerInput, 0, ragRerankKeyMap)] };
 
     const structureErrors = this._validateStructure(normalized);
     if (structureErrors.length) {
@@ -627,7 +1015,9 @@ class ProviderConfigService {
     const loaded = await this._loadUserConfig(effectiveUserId);
     const textKeyMap = this._buildTextKeyMap(loaded.config);
     const imageKeyMap = this._buildImageKeyMap(loaded.config);
-    const normalized = this._normalizeConfig(input, { textKeyMap, imageKeyMap });
+    const ragEmbeddingKeyMap = this._buildRagEmbeddingKeyMap(loaded.config);
+    const ragRerankKeyMap = this._buildRagRerankKeyMap(loaded.config);
+    const normalized = this._normalizeConfig(input, { textKeyMap, imageKeyMap, ragEmbeddingKeyMap, ragRerankKeyMap });
 
     const structureErrors = this._validateStructure(normalized);
     if (structureErrors.length) {
@@ -653,6 +1043,8 @@ class ProviderConfigService {
       user_id: effectiveUserId,
       text_providers: storageShape.textProviders,
       image_providers: storageShape.imageProviders,
+      rag_embedding_providers: storageShape.ragEmbeddingProviders,
+      rag_rerank_providers: storageShape.ragRerankProviders,
       updated_by: effectiveUserId,
       updated_at: now,
     };

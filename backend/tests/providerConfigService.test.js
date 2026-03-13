@@ -67,7 +67,20 @@ const withEnvBackup = async (fn) => {
   const snapshot = {
     AI_TEXT_PROVIDERS_JSON: process.env.AI_TEXT_PROVIDERS_JSON,
     AI_IMAGE_PROVIDERS_JSON: process.env.AI_IMAGE_PROVIDERS_JSON,
+    AI_RAG_EMBEDDING_PROVIDERS_JSON: process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON,
+    AI_RAG_RERANK_PROVIDERS_JSON: process.env.AI_RAG_RERANK_PROVIDERS_JSON,
     PROVIDER_CONFIG_ENCRYPTION_KEY: process.env.PROVIDER_CONFIG_ENCRYPTION_KEY,
+    QWEN_EMBEDDING_API_KEY: process.env.QWEN_EMBEDDING_API_KEY,
+    QWEN_EMBEDDING_BASE_URL: process.env.QWEN_EMBEDDING_BASE_URL,
+    QWEN_EMBEDDING_MODEL: process.env.QWEN_EMBEDDING_MODEL,
+    QWEN_EMBEDDING_DIM: process.env.QWEN_EMBEDDING_DIM,
+    RERANK_ENABLED: process.env.RERANK_ENABLED,
+    RERANK_BASE_URL: process.env.RERANK_BASE_URL,
+    RERANK_PATH: process.env.RERANK_PATH,
+    RERANK_MODEL: process.env.RERANK_MODEL,
+    RERANK_API_KEY: process.env.RERANK_API_KEY,
+    RERANK_TIMEOUT_MS: process.env.RERANK_TIMEOUT_MS,
+    RERANK_CANDIDATE_FACTOR: process.env.RERANK_CANDIDATE_FACTOR,
   };
   try {
     await fn();
@@ -78,8 +91,47 @@ const withEnvBackup = async (fn) => {
     if (snapshot.AI_IMAGE_PROVIDERS_JSON == null) delete process.env.AI_IMAGE_PROVIDERS_JSON;
     else process.env.AI_IMAGE_PROVIDERS_JSON = snapshot.AI_IMAGE_PROVIDERS_JSON;
 
+    if (snapshot.AI_RAG_EMBEDDING_PROVIDERS_JSON == null) delete process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON;
+    else process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON = snapshot.AI_RAG_EMBEDDING_PROVIDERS_JSON;
+
+    if (snapshot.AI_RAG_RERANK_PROVIDERS_JSON == null) delete process.env.AI_RAG_RERANK_PROVIDERS_JSON;
+    else process.env.AI_RAG_RERANK_PROVIDERS_JSON = snapshot.AI_RAG_RERANK_PROVIDERS_JSON;
+
     if (snapshot.PROVIDER_CONFIG_ENCRYPTION_KEY == null) delete process.env.PROVIDER_CONFIG_ENCRYPTION_KEY;
     else process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = snapshot.PROVIDER_CONFIG_ENCRYPTION_KEY;
+
+    if (snapshot.QWEN_EMBEDDING_API_KEY == null) delete process.env.QWEN_EMBEDDING_API_KEY;
+    else process.env.QWEN_EMBEDDING_API_KEY = snapshot.QWEN_EMBEDDING_API_KEY;
+
+    if (snapshot.QWEN_EMBEDDING_BASE_URL == null) delete process.env.QWEN_EMBEDDING_BASE_URL;
+    else process.env.QWEN_EMBEDDING_BASE_URL = snapshot.QWEN_EMBEDDING_BASE_URL;
+
+    if (snapshot.QWEN_EMBEDDING_MODEL == null) delete process.env.QWEN_EMBEDDING_MODEL;
+    else process.env.QWEN_EMBEDDING_MODEL = snapshot.QWEN_EMBEDDING_MODEL;
+
+    if (snapshot.QWEN_EMBEDDING_DIM == null) delete process.env.QWEN_EMBEDDING_DIM;
+    else process.env.QWEN_EMBEDDING_DIM = snapshot.QWEN_EMBEDDING_DIM;
+
+    if (snapshot.RERANK_ENABLED == null) delete process.env.RERANK_ENABLED;
+    else process.env.RERANK_ENABLED = snapshot.RERANK_ENABLED;
+
+    if (snapshot.RERANK_BASE_URL == null) delete process.env.RERANK_BASE_URL;
+    else process.env.RERANK_BASE_URL = snapshot.RERANK_BASE_URL;
+
+    if (snapshot.RERANK_PATH == null) delete process.env.RERANK_PATH;
+    else process.env.RERANK_PATH = snapshot.RERANK_PATH;
+
+    if (snapshot.RERANK_MODEL == null) delete process.env.RERANK_MODEL;
+    else process.env.RERANK_MODEL = snapshot.RERANK_MODEL;
+
+    if (snapshot.RERANK_API_KEY == null) delete process.env.RERANK_API_KEY;
+    else process.env.RERANK_API_KEY = snapshot.RERANK_API_KEY;
+
+    if (snapshot.RERANK_TIMEOUT_MS == null) delete process.env.RERANK_TIMEOUT_MS;
+    else process.env.RERANK_TIMEOUT_MS = snapshot.RERANK_TIMEOUT_MS;
+
+    if (snapshot.RERANK_CANDIDATE_FACTOR == null) delete process.env.RERANK_CANDIDATE_FACTOR;
+    else process.env.RERANK_CANDIDATE_FACTOR = snapshot.RERANK_CANDIDATE_FACTOR;
   }
 };
 
@@ -178,6 +230,86 @@ test('updateConfig stores encrypted key and keepApiKey works', async () => {
     assert.equal(typeof stored.text_providers[0].apiKey, 'string');
     assert.equal(stored.text_providers[0].apiKey.startsWith('enc:v1:'), true);
     assert.equal(service._readApiKey(stored.text_providers[0].apiKey), 'sk-old-text');
+  });
+});
+
+test('updateConfig persists rag embedding and rerank providers and applies runtime env', async () => {
+  await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
+    process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([]);
+    process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON = JSON.stringify([]);
+    process.env.AI_RAG_RERANK_PROVIDERS_JSON = JSON.stringify([]);
+    process.env.QWEN_EMBEDDING_API_KEY = '';
+    process.env.RERANK_ENABLED = 'false';
+    process.env.RERANK_BASE_URL = '';
+    process.env.RERANK_API_KEY = '';
+
+    const supabase = createSupabaseMock();
+    const manager = createManagerMock();
+    const applied = [];
+    const service = new ProviderConfigService({
+      supabase,
+      langChainManager: manager,
+      onRuntimeConfigApplied: () => {
+        applied.push({
+          embeddingApiKey: process.env.QWEN_EMBEDDING_API_KEY,
+          embeddingModel: process.env.QWEN_EMBEDDING_MODEL,
+          rerankEnabled: process.env.RERANK_ENABLED,
+          rerankBaseURL: process.env.RERANK_BASE_URL,
+          rerankPath: process.env.RERANK_PATH,
+        });
+      },
+    });
+    service._probeEmbeddingProvider = async () => ({ ok: true, message: 'ok' });
+    service._probeRerankProvider = async () => ({ ok: true, message: 'ok' });
+
+    await service.bootstrap();
+
+    const saved = await service.updateConfig(
+      {
+        textProviders: [],
+        imageProviders: [],
+        ragEmbeddingProviders: [
+          {
+            name: 'embed-a',
+            enabled: true,
+            baseURL: 'https://embed.example.com/v1',
+            apiKey: 'sk-embed',
+            model: 'embed-model',
+            dimensions: 768,
+            priority: 1,
+          },
+        ],
+        ragRerankProviders: [
+          {
+            name: 'rerank-a',
+            enabled: true,
+            baseURL: 'https://rerank.example.com',
+            apiKey: 'sk-rerank',
+            model: 'rerank-model',
+            path: '/rerank',
+            timeoutMs: 8000,
+            candidateFactor: 4,
+            priority: 1,
+          },
+        ],
+      },
+      USER_A
+    );
+
+    assert.equal(saved.config.ragEmbeddingProviders.length, 1);
+    assert.equal(saved.config.ragRerankProviders.length, 1);
+
+    const stored = supabase.state.rows.get(USER_A);
+    assert.equal(service._readApiKey(stored.rag_embedding_providers[0].apiKey), 'sk-embed');
+    assert.equal(service._readApiKey(stored.rag_rerank_providers[0].apiKey), 'sk-rerank');
+    assert.equal(process.env.QWEN_EMBEDDING_API_KEY, 'sk-embed');
+    assert.equal(process.env.QWEN_EMBEDDING_MODEL, 'embed-model');
+    assert.equal(process.env.RERANK_ENABLED, 'true');
+    assert.equal(process.env.RERANK_BASE_URL, 'https://rerank.example.com');
+    assert.equal(process.env.RERANK_PATH, '/rerank');
+    assert.equal(applied.length >= 2, true);
   });
 });
 
