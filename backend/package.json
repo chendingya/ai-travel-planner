@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test \"tests/**/*.test.js\""
+    "test": "node --test \"tests/**/*.test.js\"",
+    "backfill:semantic-memory": "node scripts/backfillSemanticMemories.js"
   },
   "keywords": [],
   "author": "",

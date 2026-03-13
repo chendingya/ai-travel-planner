@@ -4,6 +4,7 @@ const SupabaseMessageHistory = require('./langchain/SupabaseMessageHistory');
 const { buildToolEventFromLangChainEvent } = require('./ai/streamToolEvents');
 const SessionMemoryService = require('./ai/sessionMemoryService');
 const LongTermMemoryService = require('./ai/longTermMemoryService');
+const SemanticMemoryService = require('./ai/semanticMemoryService');
 const PlanContextService = require('./ai/planContextService');
 
 
@@ -25,6 +26,12 @@ class AIChatService {
       truncateText: (text, maxChars) => this._truncateText(text, maxChars),
     });
     this.longTermMemoryService = new LongTermMemoryService({
+      supabase: this.supabase,
+      langChainManager: this.langChainManager,
+      requireUserId: (value) => this._requireUserId(value),
+      truncateText: (text, maxChars) => this._truncateText(text, maxChars),
+    });
+    this.semanticMemoryService = new SemanticMemoryService({
       supabase: this.supabase,
       langChainManager: this.langChainManager,
       requireUserId: (value) => this._requireUserId(value),
@@ -610,17 +617,29 @@ class AIChatService {
     historyTokensEstimate,
     userTokensEstimate,
     longTermMemories,
+    semanticMemorySearch,
+    semanticMemoryTokensEstimate = 0,
     planContextBlock,
     shortMemoryMetrics,
     usageMetrics,
     usageSourceLabel,
   }) {
+    const semanticSearch = semanticMemorySearch && typeof semanticMemorySearch === 'object' ? semanticMemorySearch : {};
     const metrics = {
       prompt_tokens_estimate: systemTokensEstimate + historyTokensEstimate + userTokensEstimate,
       system_tokens_estimate: systemTokensEstimate,
       history_tokens_estimate: historyTokensEstimate,
       user_tokens_estimate: userTokensEstimate,
       long_term_memory_count: Array.isArray(longTermMemories) ? longTermMemories.length : 0,
+      semantic_memory_count: Number.isFinite(Number(semanticSearch.totalCount))
+        ? Number(semanticSearch.totalCount)
+        : Array.isArray(semanticSearch.memories)
+          ? semanticSearch.memories.length
+          : 0,
+      semantic_memory_retrieved: Array.isArray(semanticSearch.memories) ? semanticSearch.memories.length : 0,
+      semantic_memory_tokens_estimate: Number.isFinite(Number(semanticMemoryTokensEstimate))
+        ? Number(semanticMemoryTokensEstimate)
+        : 0,
       plan_context_enabled: !!planContextBlock,
       short_memory: shortMemoryMetrics,
       short_memory_compressed: !!shortMemoryMetrics?.compressed,
@@ -824,6 +843,48 @@ class AIChatService {
     return this.longTermMemoryService.loadLongTermMemories(userId);
   }
 
+  async getMemoryProfile(userId) {
+    const structuredMemories = await this.longTermMemoryService.loadLongTermMemories(userId);
+    const semanticProfile = await this.semanticMemoryService
+      .getSemanticProfile(userId, structuredMemories)
+      .catch((error) => {
+        console.warn('Load semantic memory profile failed:', error?.message || error);
+        return {
+          summary: '暂未形成语义画像记忆。',
+          tags: [],
+          highlights: [],
+          recent_memories: [],
+          stats: {
+            total_memories: 0,
+            active_tags: 0,
+            recalled_last_30d: 0,
+          },
+        };
+      });
+
+    if (!semanticProfile || typeof semanticProfile !== 'object') {
+      return {
+        structured_memories: structuredMemories,
+        semantic_profile: {
+          summary: '暂未形成语义画像记忆。',
+          tags: [],
+          highlights: [],
+          recent_memories: [],
+          stats: { total_memories: 0, active_tags: 0, recalled_last_30d: 0 },
+        },
+      };
+    }
+
+    if (!semanticProfile.summary || semanticProfile.summary === '暂未形成语义画像记忆。') {
+      semanticProfile.summary = this.semanticMemoryService.buildProfileSummary(structuredMemories, semanticProfile.highlights);
+    }
+
+    return {
+      structured_memories: structuredMemories,
+      semantic_profile: semanticProfile,
+    };
+  }
+
   async saveLongTermMemory({ userId, memoryKey, memoryValue, confidence, sourceSessionId }) {
     return this.longTermMemoryService.saveLongTermMemory({
       userId,
@@ -863,6 +924,16 @@ class AIChatService {
         console.warn('Load long term memories failed:', error?.message || error);
       }
       const longTermMemoryBlock = this.longTermMemoryService.formatLongTermMemoryBlock(longTermMemories);
+      let semanticMemorySearch = { memories: [], totalCount: 0, available: false };
+      try {
+        semanticMemorySearch = await this.semanticMemoryService.searchRelevantMemories({
+          userId,
+          queryText: message,
+        });
+      } catch (error) {
+        console.warn('Load semantic memories failed:', error?.message || error);
+      }
+      const semanticMemoryBlock = this.semanticMemoryService.formatSemanticMemoryBlock(semanticMemorySearch.memories);
       let planContextBlock = '';
       if (contextPlanEnabled && contextPlanId) {
         planContextBlock = await this.planContextService.loadPlanContextSummary(contextPlanId, userId);
@@ -940,9 +1011,11 @@ class AIChatService {
         systemPrompt,
         enableTools ? '工具使用规则：\n1. 优先使用工具获取实时信息。\n2. 无法获取时说明原因。' : '',
         longTermMemoryBlock,
+        semanticMemoryBlock,
         planContextBlock,
       ].filter(Boolean);
       const systemPromptText = systemPromptSections.join('\n\n');
+      const semanticMemoryTokensEstimate = this.sessionMemoryService.estimateTokenCount(semanticMemoryBlock);
 
       const agentRunnable = await this.langChainManager.createAgent({
         tools,
@@ -1052,6 +1125,8 @@ class AIChatService {
           historyTokensEstimate,
           userTokensEstimate,
           longTermMemories,
+          semanticMemorySearch,
+          semanticMemoryTokensEstimate,
           planContextBlock,
           shortMemoryMetrics,
         });
@@ -1103,6 +1178,8 @@ class AIChatService {
               historyTokensEstimate,
               userTokensEstimate,
               longTermMemories,
+              semanticMemorySearch,
+              semanticMemoryTokensEstimate,
               planContextBlock,
               shortMemoryMetrics,
               usageMetrics,
@@ -1135,6 +1212,20 @@ class AIChatService {
             } catch (error) {
               console.warn('Extract long term memory failed:', error?.message || error);
             }
+            try {
+              const semanticCandidates = await chatService.semanticMemoryService.extractSemanticMemoryCandidates({
+                userMessage: message,
+                assistantMessage: finalResponse,
+                structuredMemories: longTermMemories,
+              });
+              await chatService.semanticMemoryService.upsertSemanticMemories({
+                userId,
+                sessionId,
+                candidates: semanticCandidates,
+              });
+            } catch (error) {
+              console.warn('Extract semantic memory failed:', error?.message || error);
+            }
           }
         };
 
@@ -1164,6 +1255,8 @@ class AIChatService {
           historyTokensEstimate: 0,
           userTokensEstimate,
           longTermMemories,
+          semanticMemorySearch,
+          semanticMemoryTokensEstimate,
           planContextBlock,
           shortMemoryMetrics,
         });
@@ -1176,6 +1269,7 @@ class AIChatService {
         );
         
         let usageMetrics = null;
+        let finalResponse = '';
         const streamGenerator = async function* () {
           yield memoryMetricsChunk;
           for await (const event of eventStream) {
@@ -1193,7 +1287,10 @@ class AIChatService {
             if (event.event === 'on_chat_model_stream') {
               const chunk = event.data.chunk;
               const piece = pickChunkText(chunk?.content) || pickChunkText(chunk?.delta?.content);
-              if (piece) yield piece;
+              if (piece) {
+                finalResponse += piece;
+                yield piece;
+              }
             }
           }
 
@@ -1205,11 +1302,40 @@ class AIChatService {
               historyTokensEstimate: 0,
               userTokensEstimate,
               longTermMemories,
+              semanticMemorySearch,
+              semanticMemoryTokensEstimate,
               planContextBlock,
               shortMemoryMetrics,
               usageMetrics,
               usageSourceLabel: resolveUsageSourceLabel(),
             });
+          }
+
+          if (finalResponse) {
+            try {
+              const candidates = await chatService.longTermMemoryService.extractLongTermMemoryCandidates({
+                userMessage: message,
+                assistantMessage: finalResponse,
+                existingMemories: longTermMemories,
+              });
+              await chatService.longTermMemoryService.upsertLongTermMemories({ userId, sessionId: '', candidates });
+            } catch (error) {
+              console.warn('Extract long term memory failed:', error?.message || error);
+            }
+            try {
+              const semanticCandidates = await chatService.semanticMemoryService.extractSemanticMemoryCandidates({
+                userMessage: message,
+                assistantMessage: finalResponse,
+                structuredMemories: longTermMemories,
+              });
+              await chatService.semanticMemoryService.upsertSemanticMemories({
+                userId,
+                sessionId: '',
+                candidates: semanticCandidates,
+              });
+            } catch (error) {
+              console.warn('Extract semantic memory failed:', error?.message || error);
+            }
           }
         };
 

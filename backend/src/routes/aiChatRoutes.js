@@ -290,6 +290,24 @@ module.exports = (aiChatController) => {
 
   /**
    * @openapi
+   * /api/ai-chat/memory/profile:
+   *   get:
+   *     tags: [AI Chat]
+   *     summary: 获取当前用户长期记忆画像
+   *     responses:
+   *       200:
+   *         description: 获取成功
+   *       401:
+   *         description: 未授权
+   *       500:
+   *         description: 服务错误
+   */
+  router.get('/ai-chat/memory/profile', requireAuth, (req, res) => {
+    aiChatController.getMemoryProfile(req, res);
+  });
+
+  /**
+   * @openapi
    * /api/ai-chat/memory/{key}:
    *   put:
    *     tags: [AI Chat]

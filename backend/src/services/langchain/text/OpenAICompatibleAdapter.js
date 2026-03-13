@@ -52,7 +52,7 @@ class OpenAICompatibleAdapter extends BaseLLMAdapter {
       configuration: this.baseURL ? { baseURL: this.baseURL } : undefined,
       modelName: this.model,
       temperature: 0.7,
-      maxTokens: 4000,
+      maxTokens: 10000,
       timeout: this.requestTimeoutMs(),
       maxRetries: this.maxRetries(),
       streaming: true,
@@ -81,7 +81,7 @@ class OpenAICompatibleAdapter extends BaseLLMAdapter {
       model: this.model,
       messages,
       temperature: 0.7,
-      max_tokens: 4000,
+      max_tokens: 10000,
     });
     const choice = Array.isArray(resp?.choices) ? resp.choices[0] : null;
     const normalizeContent = (value) => {
@@ -121,7 +121,7 @@ class OpenAICompatibleAdapter extends BaseLLMAdapter {
       model: this.model,
       messages,
       temperature: 0.7,
-      max_tokens: 4000,
+      max_tokens: 10000,
       stream: true,
     });
     let text = '';

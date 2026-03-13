@@ -6,6 +6,7 @@
 > - backend/src/services/aiChatService.js
 > - backend/src/services/ai/sessionMemoryService.js
 > - backend/src/services/ai/longTermMemoryService.js
+> - backend/src/services/ai/semanticMemoryService.js
 > - backend/src/services/ai/planContextService.js
 > - backend/src/services/langchain/SupabaseMessageHistory.js
 > - frontend/src/views/AIChatView.vue
@@ -37,8 +38,8 @@
   - 采用“会话摘要 + 最近窗口消息 + token 预算裁剪”的策略
 
 2. 长期记忆
-  - 面向当前用户的跨会话稳定偏好
-  - 采用“白名单结构化抽取 + upsert 持久化 + 用户可管理”的策略
+  - 面向当前用户的跨会话稳定偏好与语义画像
+  - 采用“结构化白名单偏好 + 语义向量检索记忆 + 用户可管理”的策略
 
 3. 计划上下文
   - 面向用户主动挂载的旅行计划
@@ -109,6 +110,7 @@ flowchart TD
 
 #### 长期记忆层
 - LongTermMemoryService 负责用户偏好型记忆的结构化提取、格式化、保存与删除。
+- SemanticMemoryService 负责语义画像记忆的抽取、embedding、向量检索与画像聚合。
 
 #### 业务上下文层
 - PlanContextService 负责把用户选择的旅行计划转成稳定可注入的上下文块。
@@ -116,6 +118,7 @@ flowchart TD
 #### 存储层
 - ai_chat_sessions 存储消息历史与会话摘要。
 - ai_user_memories 存储长期偏好。
+- ai_user_semantic_memories 存储可向量检索的语义画像记忆。
 - plans 提供可挂载的计划上下文源数据。
 
 #### 执行层
@@ -219,6 +222,16 @@ AI_CHAT_SESSION_SUMMARY_TRIGGER_MESSAGES=24
 
 它的本质不是“长聊天记录”，而是“结构化用户偏好画像”。
 
+当前实现中，长期记忆已经拆成两层：
+
+1. 结构化长期记忆
+  - 仍然使用固定白名单 `memory_key`
+  - 适合预算、节奏、交通、住宿等强字段偏好
+
+2. 语义长期记忆
+  - 使用 `pgvector` + embeddings 做向量检索
+  - 适合经验、约束、兴趣、主题倾向等弱结构化画像
+
 ### 5.2.2 负责模块
 
 - backend/src/services/ai/longTermMemoryService.js
@@ -319,7 +332,40 @@ flowchart LR
 ```env
 AI_CHAT_LONG_MEMORY_ENABLED=true
 AI_CHAT_LONG_MEMORY_MIN_CONFIDENCE=0.75
+AI_CHAT_SEMANTIC_MEMORY_ENABLED=true
+AI_CHAT_SEMANTIC_MEMORY_TOP_K=4
+AI_CHAT_SEMANTIC_MEMORY_MIN_SIMILARITY=0.65
+AI_CHAT_SEMANTIC_MEMORY_MAX_ITEMS_PER_TURN=3
+AI_EMBEDDING_BASE_URL=https://api-inference.modelscope.cn/v1
+AI_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+AI_EMBEDDING_API_KEY=
 ```
+
+### 5.2.8 语义画像记忆层
+
+语义画像记忆由 `SemanticMemoryService` 负责，核心能力包括：
+
+1. 对每轮对话做语义长期记忆抽取
+  - 只允许 `preference / constraint / experience / interest`
+  - 过滤低置信度、一次性任务和临时安排
+
+2. 调用 ModelScope OpenAI-compatible embeddings
+  - 默认 `https://api-inference.modelscope.cn/v1`
+  - 默认模型 `Qwen/Qwen3-Embedding-8B`
+  - 默认复用当前激活的 ModelScope 文本 provider token
+
+3. 写入 `ai_user_semantic_memories`
+  - 以 `user_id + memory_fingerprint` 做 upsert
+  - 每条记录包含 `memory_text`、`memory_type`、`tags`、`salience`、`embedding`
+
+4. 聊天前做向量召回
+  - 只基于当前用户消息生成 query embedding
+  - 通过 Supabase RPC `match_ai_user_semantic_memories(...)` 召回 Top-K 相关语义记忆
+  - 把结果格式化成 `semantic_memory_block` 注入 system prompt
+
+5. 聚合只读画像
+  - 对外提供 `summary`、`tags`、`highlights`、`recent_memories`、`stats`
+  - 供长期记忆中心页面展示“AI 语义画像”
 
 ---
 
@@ -416,7 +462,47 @@ UNIQUE(user_id, memory_key)
 
 这意味着长期记忆按“类别”覆盖更新，而不是堆叠追加。
 
-## 6.3 plans
+## 6.3 ai_user_semantic_memories
+
+作用：
+
+1. 存储用户弱结构化长期画像
+2. 支持向量检索召回
+3. 支持只读画像聚合展示
+
+关键字段：
+
+- id
+- user_id
+- memory_text
+- memory_type
+- tags
+- confidence
+- salience
+- source_session_id
+- memory_fingerprint
+- recall_count
+- last_recalled_at
+- metadata
+- embedding
+- created_at
+- updated_at
+
+其中 `embedding` 实际使用 `halfvec(4000)`，并且 embeddings 接口显式请求 `dimensions=4000`。原因是当前采用的 `Qwen/Qwen3-Embedding-8B` 原始输出为 4096 维，而 `pgvector` 的 `ivfflat` 对普通 `vector` 索引上限为 2000 维，对 `halfvec` 索引上限为 4000 维。
+
+关键约束：
+
+```text
+UNIQUE(user_id, memory_fingerprint)
+```
+
+关键 RPC：
+
+```sql
+match_ai_user_semantic_memories(query_embedding, query_user_id, match_count, min_similarity)
+```
+
+## 6.4 plans
 
 作用：
 
@@ -433,14 +519,16 @@ UNIQUE(user_id, memory_key)
 
 1. 读取当前会话状态
 2. 读取当前用户长期记忆
-3. 如果有挂载计划，则读取计划上下文
-4. 组装 system prompt
-5. 构造短期记忆消息
-6. 调用 LangGraph Agent
-7. 流式返回回答
-8. 回写新消息到 ai_chat_sessions
-9. 按阈值刷新会话摘要
-10. 抽取并更新长期记忆
+3. 基于当前用户消息召回语义长期记忆
+4. 如果有挂载计划，则读取计划上下文
+5. 组装 system prompt
+6. 构造短期记忆消息
+7. 调用 LangGraph Agent
+8. 流式返回回答
+9. 回写新消息到 ai_chat_sessions
+10. 按阈值刷新会话摘要
+11. 抽取并更新结构化长期记忆
+12. 抽取并更新语义长期记忆
 
 ## 7.2 时序图
 
@@ -451,6 +539,7 @@ sequenceDiagram
    participant AS as AIChatService
    participant SM as SessionMemoryService
    participant LM as LongTermMemoryService
+   participant SME as SemanticMemoryService
    participant PM as PlanContextService
    participant DB as Supabase
    participant AG as LangGraph Agent
@@ -467,6 +556,11 @@ sequenceDiagram
    LM->>DB: 查询 ai_user_memories
    DB-->>LM: longTermMemories
    LM-->>AS: longTermMemories
+
+   AS->>SME: searchRelevantMemories(userId, userMessage)
+   SME->>DB: RPC match_ai_user_semantic_memories
+   DB-->>SME: semantic memories
+   SME-->>AS: semanticMemoryBlock
 
    alt 挂载了计划
       AS->>PM: loadPlanContextSummary(planId, userId)
@@ -493,6 +587,11 @@ sequenceDiagram
    AS->>LM: extractLongTermMemoryCandidates(userMessage, assistantMessage, existingMemories)
    LM->>AG: 调模型抽取 JSON
    LM->>DB: upsert ai_user_memories
+
+   AS->>SME: extractSemanticMemoryCandidates(userMessage, assistantMessage)
+   SME->>AG: 调模型抽取 JSON
+   SME->>AG: 调 embeddings.create
+   SME->>DB: upsert ai_user_semantic_memories
 ```
 
 ---
@@ -506,6 +605,7 @@ systemPromptSections = [
   base_system_prompt,
   tool_rules_if_enabled,
   long_term_memory_block,
+  semantic_memory_block,
   plan_context_block,
 ]
 ```
@@ -549,6 +649,9 @@ system_prompt = systemPromptSections.join("\n\n")
 5. long_term_memory_count
 6. short_memory_compressed
 7. short_memory 细项指标
+8. semantic_memory_count
+9. semantic_memory_retrieved
+10. semantic_memory_tokens_estimate
 
 ## 9.2 MemoryCenterView
 
@@ -581,6 +684,9 @@ system_prompt = systemPromptSections.join("\n\n")
 
 ### GET /api/ai-chat/memory
 - 获取当前用户全部长期记忆
+
+### GET /api/ai-chat/memory/profile
+- 获取当前用户的结构化长期记忆 + 语义画像摘要
 
 ### PUT /api/ai-chat/memory/:key
 - 保存当前用户某一类长期记忆
@@ -760,25 +866,18 @@ flowchart TD
 
 1. 长期记忆仍然是白名单键值模型，表达力有限
 2. 短期记忆摘要依赖模型生成，存在摘要偏差风险
-3. 长期记忆没有做向量检索，只是结构化拼接
+3. 语义画像记忆依赖 embeddings 接口，若 ModelScope token 不可用会自动降级关闭
 4. 计划上下文刷新后不会自动版本对齐到历史会话快照
 5. 当前主要是文本级偏好，没有更细粒度的偏好权重系统
 
 ## 15.2 后续建议
 
-### 方向一：长期记忆分层
-可以把长期记忆拆成：
+### 方向一：语义记忆质量治理
+可以继续增强：
 
-1. 强结构化偏好
-2. 弱结构化事实
-3. 可检索语义记忆
-
-### 方向二：引入向量检索层
-适合存放：
-
-1. 大段历史偏好描述
-2. 多轮累计形成的主题画像
-3. 不适合强字段建模的经验类记忆
+1. 语义记忆压缩与合并
+2. 相似记忆冲突检测
+3. 召回质量评估
 
 ### 方向三：摘要质量治理
 可以增加：

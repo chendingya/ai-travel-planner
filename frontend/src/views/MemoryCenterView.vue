@@ -53,7 +53,7 @@
               <div class="toolbar-desc">建议用完整句描述真实偏好，例如预算边界、出行节奏和忌口。</div>
             </div>
             <div class="toolbar-actions">
-              <t-button variant="outline" :disabled="loading || clearingAll" @click="loadMemories">
+              <t-button variant="outline" :disabled="loading || clearingAll || profileLoading" @click="refreshMemoryCenter">
                 <template #icon><t-icon name="refresh" /></template>
                 刷新
               </t-button>
@@ -69,6 +69,92 @@
               </t-button>
             </div>
           </div>
+
+          <section class="semantic-shell">
+            <div class="semantic-hero">
+              <div>
+                <div class="semantic-kicker">Semantic Profile</div>
+                <h2 class="semantic-title">AI 语义画像</h2>
+                <p class="semantic-desc">系统会从跨会话对话里提取难以结构化建模的偏好、经验和约束，并在相关问题中做语义召回。</p>
+              </div>
+              <div class="semantic-stats">
+                <div class="semantic-stat">
+                  <span>语义记忆</span>
+                  <strong>{{ semanticProfile.stats.total_memories }}</strong>
+                </div>
+                <div class="semantic-stat">
+                  <span>活跃标签</span>
+                  <strong>{{ semanticProfile.stats.active_tags }}</strong>
+                </div>
+                <div class="semantic-stat">
+                  <span>30天召回</span>
+                  <strong>{{ semanticProfile.stats.recalled_last_30d }}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="semantic-grid">
+              <section class="semantic-card semantic-card-summary">
+                <div class="semantic-card-title">画像摘要</div>
+                <div v-if="profileLoading" class="semantic-loading">
+                  <t-loading size="small" text="正在分析画像..." />
+                </div>
+                <p v-else class="semantic-summary">{{ semanticProfile.summary }}</p>
+              </section>
+
+              <section class="semantic-card">
+                <div class="semantic-card-title">高频标签</div>
+                <div v-if="profileLoading" class="semantic-loading">
+                  <t-loading size="small" text="正在加载标签..." />
+                </div>
+                <div v-else class="semantic-tags">
+                  <t-tag v-for="tag in semanticProfile.tags" :key="tag" theme="primary" variant="light">
+                    {{ tag }}
+                  </t-tag>
+                  <span v-if="semanticProfile.tags.length === 0" class="semantic-empty">暂无语义标签</span>
+                </div>
+              </section>
+
+              <section class="semantic-card">
+                <div class="semantic-card-title">高价值语义记忆</div>
+                <div v-if="profileLoading" class="semantic-loading">
+                  <t-loading size="small" text="正在加载画像..." />
+                </div>
+                <div v-else class="semantic-list">
+                  <article v-for="item in semanticProfile.highlights" :key="item.id" class="semantic-item">
+                    <div class="semantic-item-head">
+                      <t-tag theme="primary" variant="outline">{{ memoryTypeLabel(item.memory_type) }}</t-tag>
+                      <span class="semantic-item-meta">权重 {{ formatConfidence(item.salience) }}</span>
+                    </div>
+                    <p class="semantic-item-text">{{ item.memory_text }}</p>
+                    <div class="semantic-item-tags">
+                      <t-tag v-for="tag in item.tags" :key="`${item.id}-${tag}`" size="small" variant="light">
+                        {{ tag }}
+                      </t-tag>
+                    </div>
+                  </article>
+                  <span v-if="semanticProfile.highlights.length === 0" class="semantic-empty">暂无高价值语义记忆</span>
+                </div>
+              </section>
+
+              <section class="semantic-card">
+                <div class="semantic-card-title">最近被召回</div>
+                <div v-if="profileLoading" class="semantic-loading">
+                  <t-loading size="small" text="正在读取召回记录..." />
+                </div>
+                <div v-else class="semantic-list">
+                  <article v-for="item in semanticProfile.recentMemories" :key="item.id" class="semantic-item">
+                    <div class="semantic-item-head">
+                      <span class="semantic-item-meta">{{ item.recall_count }} 次召回</span>
+                      <span class="semantic-item-meta">{{ formatTime(item.last_recalled_at) }}</span>
+                    </div>
+                    <p class="semantic-item-text">{{ item.memory_text }}</p>
+                  </article>
+                  <span v-if="semanticProfile.recentMemories.length === 0" class="semantic-empty">暂无召回记录</span>
+                </div>
+              </section>
+            </div>
+          </section>
 
           <div class="memory-layout">
             <div class="memory-grid">
@@ -175,11 +261,24 @@ const { user: sessionUser, authReady, refreshAuthState } = useAuthState();
 
 const isLoggedIn = computed(() => Boolean(sessionUser.value));
 const loading = ref(true);
+const profileLoading = ref(true);
 const savingKey = ref('');
 const deletingKey = ref('');
 const clearingAll = ref(false);
 const memoryMap = ref({});
 const draftMap = ref({});
+const createEmptySemanticProfile = () => ({
+  summary: '暂未形成语义画像记忆。',
+  tags: [],
+  highlights: [],
+  recentMemories: [],
+  stats: {
+    total_memories: 0,
+    active_tags: 0,
+    recalled_last_30d: 0,
+  },
+});
+const semanticProfile = ref(createEmptySemanticProfile());
 
 const memoryDefinitions = [
   {
@@ -319,6 +418,59 @@ const fillDrafts = (rows) => {
   draftMap.value = nextDrafts;
 };
 
+const normalizeSemanticProfile = (payload) => {
+  const raw = payload && typeof payload === 'object' ? payload : {};
+  const stats = raw.stats && typeof raw.stats === 'object' ? raw.stats : {};
+  return {
+    summary: typeof raw.summary === 'string' && raw.summary.trim() ? raw.summary.trim() : '暂未形成语义画像记忆。',
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((item) => typeof item === 'string' && item.trim()) : [],
+    highlights: Array.isArray(raw.highlights)
+      ? raw.highlights.map((item) => ({
+          id: item?.id || `${item?.memory_text || ''}-${item?.updated_at || ''}`,
+          memory_text: extractMemoryText({ memory_value: { text: item?.memory_text || '' } }) || '',
+          memory_type: typeof item?.memory_type === 'string' ? item.memory_type : 'preference',
+          tags: Array.isArray(item?.tags) ? item.tags.filter((tag) => typeof tag === 'string' && tag.trim()) : [],
+          salience: Number(item?.salience || 0),
+          updated_at: item?.updated_at || '',
+        }))
+      : [],
+    recentMemories: Array.isArray(raw.recent_memories)
+      ? raw.recent_memories.map((item) => ({
+          id: item?.id || `${item?.memory_text || ''}-${item?.last_recalled_at || ''}`,
+          memory_text: extractMemoryText({ memory_value: { text: item?.memory_text || '' } }) || '',
+          last_recalled_at: item?.last_recalled_at || '',
+          recall_count: Number(item?.recall_count || 0),
+        }))
+      : [],
+    stats: {
+      total_memories: Number(stats.total_memories || 0),
+      active_tags: Number(stats.active_tags || 0),
+      recalled_last_30d: Number(stats.recalled_last_30d || 0),
+    },
+  };
+};
+
+const loadMemoryProfile = async () => {
+  profileLoading.value = true;
+  try {
+    const response = await fetch('/api/ai-chat/memory/profile');
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || result.message || '加载语义画像失败');
+    }
+    semanticProfile.value = normalizeSemanticProfile(result.semantic_profile);
+  } catch (error) {
+    semanticProfile.value = createEmptySemanticProfile();
+    MessagePlugin.error(error.message || '加载语义画像失败');
+  } finally {
+    profileLoading.value = false;
+  }
+};
+
+const refreshMemoryCenter = async () => {
+  await Promise.all([loadMemories(), loadMemoryProfile()]);
+};
+
 const loadMemories = async () => {
   loading.value = true;
   try {
@@ -371,6 +523,7 @@ const handleSave = async (item) => {
       ...draftMap.value,
       [item.key]: extractMemoryText(result.memory),
     };
+    await loadMemoryProfile();
     MessagePlugin.success(item.exists ? '长期记忆已更新' : '长期记忆已添加');
   } catch (error) {
     MessagePlugin.error(error.message || '保存失败');
@@ -396,6 +549,7 @@ const deleteMemory = async (item) => {
       ...draftMap.value,
       [item.key]: '',
     };
+    await loadMemoryProfile();
     MessagePlugin.success('长期记忆已删除');
   } catch (error) {
     MessagePlugin.error(error.message || '删除失败');
@@ -448,6 +602,7 @@ const confirmClearAll = () => {
           throw new Error(result.error || result.message || '清空失败');
         }
         fillDrafts([]);
+        await loadMemoryProfile();
         MessagePlugin.success('长期记忆已清空');
       } catch (error) {
         MessagePlugin.error(error.message || '清空失败');
@@ -478,12 +633,21 @@ const formatConfidence = (value) => {
   return num.toFixed(2);
 };
 
+const memoryTypeLabel = (value) => {
+  const type = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (type === 'constraint') return '约束';
+  if (type === 'experience') return '经验';
+  if (type === 'interest') return '兴趣';
+  return '偏好';
+};
+
 onMounted(async () => {
   await refreshAuthState({ refreshSession: true });
   if (isLoggedIn.value) {
-    await loadMemories();
+    await refreshMemoryCenter();
   } else {
     loading.value = false;
+    profileLoading.value = false;
   }
 });
 
@@ -492,9 +656,11 @@ watch(isLoggedIn, async (loggedIn) => {
   if (!loggedIn) {
     fillDrafts([]);
     loading.value = false;
+    semanticProfile.value = createEmptySemanticProfile();
+    profileLoading.value = false;
     return;
   }
-  await loadMemories();
+  await refreshMemoryCenter();
 });
 </script>
 
@@ -686,6 +852,161 @@ watch(isLoggedIn, async (loggedIn) => {
   align-items: start;
 }
 
+.semantic-shell {
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.semantic-hero,
+.semantic-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.semantic-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-radius: 24px;
+  padding: 22px 24px;
+  background: linear-gradient(140deg, rgba(21, 101, 192, 0.12), rgba(255, 255, 255, 0.86) 55%, rgba(14, 165, 233, 0.08));
+}
+
+.semantic-kicker {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #43658f;
+}
+
+.semantic-title {
+  margin: 10px 0 8px;
+  font-size: 28px;
+  color: var(--text-primary);
+}
+
+.semantic-desc {
+  margin: 0;
+  max-width: 760px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+.semantic-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  gap: 12px;
+  min-width: 320px;
+}
+
+.semantic-stat {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(160, 193, 225, 0.4);
+}
+
+.semantic-stat span {
+  display: block;
+  font-size: 12px;
+  color: #5d6b82;
+}
+
+.semantic-stat strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  color: #0f172a;
+}
+
+.semantic-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr 1fr;
+  gap: 16px;
+}
+
+.semantic-card {
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.semantic-card-summary {
+  grid-column: span 1;
+}
+
+.semantic-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.semantic-summary {
+  margin: 14px 0 0;
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--text-secondary);
+}
+
+.semantic-tags,
+.semantic-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.semantic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.semantic-item {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(205, 220, 234, 0.6);
+}
+
+.semantic-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.semantic-item-meta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.semantic-item-text {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+.semantic-empty {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.semantic-loading {
+  margin-top: 16px;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+}
+
 .memory-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -810,6 +1131,7 @@ watch(isLoggedIn, async (loggedIn) => {
 
 @media (max-width: 1100px) {
   .overview-grid,
+  .semantic-grid,
   .memory-grid,
   .memory-layout {
     grid-template-columns: 1fr;
@@ -817,6 +1139,15 @@ watch(isLoggedIn, async (loggedIn) => {
 
   .memory-aside {
     position: static;
+  }
+
+  .semantic-hero {
+    flex-direction: column;
+  }
+
+  .semantic-stats {
+    width: 100%;
+    min-width: 0;
   }
 }
 
@@ -827,6 +1158,7 @@ watch(isLoggedIn, async (loggedIn) => {
 
   .page-header,
   .toolbar-card,
+  .semantic-hero,
   .memory-card-actions {
     flex-direction: column;
     align-items: stretch;
@@ -842,6 +1174,10 @@ watch(isLoggedIn, async (loggedIn) => {
 
   .overview-value-sm {
     font-size: 20px;
+  }
+
+  .semantic-stats {
+    grid-template-columns: 1fr;
   }
 }
 </style>

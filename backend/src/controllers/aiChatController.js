@@ -349,6 +349,19 @@ class AIChatController {
     }
   }
 
+  async getMemoryProfile(req, res) {
+    try {
+      const userId = typeof req.user?.id === 'string' ? req.user.id : '';
+      const profile = await this.aiChatService.getMemoryProfile(userId);
+      res.json(profile);
+    } catch (error) {
+      console.error('Get memory profile error:', error);
+      const msg = this.errorMessage(error);
+      const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500;
+      res.status(status).json({ message: msg, error: msg });
+    }
+  }
+
   async saveMemory(req, res) {
     try {
       const userId = typeof req.user?.id === 'string' ? req.user.id : '';

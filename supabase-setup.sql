@@ -7,6 +7,8 @@
 -- 3. 将本文件内容粘贴并执行
 -- =============================================
 
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- 创建 plans 表（旅行计划）
 CREATE TABLE IF NOT EXISTS public.plans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -171,6 +173,111 @@ CREATE POLICY "Users can delete own ai memories"
   USING (auth.uid() = user_id);
 
 -- =============================================
+-- 创建 ai_user_semantic_memories 表（用户语义长期记忆）
+-- =============================================
+CREATE TABLE IF NOT EXISTS public.ai_user_semantic_memories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  memory_text TEXT NOT NULL,
+  memory_type TEXT NOT NULL,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confidence NUMERIC(3, 2) NOT NULL DEFAULT 0.80,
+  salience NUMERIC(3, 2) NOT NULL DEFAULT 0.80,
+  source_session_id TEXT,
+  memory_fingerprint TEXT NOT NULL,
+  recall_count INTEGER NOT NULL DEFAULT 0,
+  last_recalled_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  embedding halfvec(4000) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT ai_user_semantic_memories_user_fp_unique UNIQUE (user_id, memory_fingerprint)
+);
+
+ALTER TABLE public.ai_user_semantic_memories
+  ALTER COLUMN embedding TYPE halfvec(4000)
+  USING embedding::halfvec(4000);
+
+CREATE INDEX IF NOT EXISTS idx_ai_user_semantic_memories_user_updated_at
+  ON public.ai_user_semantic_memories(user_id, updated_at DESC);
+
+DROP INDEX IF EXISTS idx_ai_user_semantic_memories_embedding;
+
+CREATE INDEX IF NOT EXISTS idx_ai_user_semantic_memories_embedding
+  ON public.ai_user_semantic_memories
+  USING ivfflat (embedding halfvec_cosine_ops)
+  WITH (lists = 100);
+
+CREATE TRIGGER set_ai_user_semantic_memories_updated_at
+  BEFORE UPDATE ON public.ai_user_semantic_memories
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_updated_at();
+
+ALTER TABLE public.ai_user_semantic_memories ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own semantic memories"
+  ON public.ai_user_semantic_memories
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create own semantic memories"
+  ON public.ai_user_semantic_memories
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own semantic memories"
+  ON public.ai_user_semantic_memories
+  FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own semantic memories"
+  ON public.ai_user_semantic_memories
+  FOR DELETE
+  USING (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION public.match_ai_user_semantic_memories(
+  query_embedding vector(4000),
+  query_user_id uuid,
+  match_count int DEFAULT 4,
+  min_similarity float DEFAULT 0.65
+)
+RETURNS TABLE (
+  id uuid,
+  memory_text text,
+  memory_type text,
+  tags jsonb,
+  confidence numeric,
+  salience numeric,
+  recall_count integer,
+  last_recalled_at timestamptz,
+  updated_at timestamptz,
+  similarity float
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    m.id,
+    m.memory_text,
+    m.memory_type,
+    m.tags,
+    m.confidence,
+    m.salience,
+    m.recall_count,
+    m.last_recalled_at,
+    m.updated_at,
+    1 - (m.embedding <=> query_embedding::halfvec(4000)) AS similarity
+  FROM public.ai_user_semantic_memories m
+  WHERE m.user_id = query_user_id
+    AND 1 - (m.embedding <=> query_embedding::halfvec(4000)) >= min_similarity
+  ORDER BY similarity DESC, m.salience DESC, m.updated_at DESC
+  LIMIT GREATEST(match_count, 1);
+END;
+$$;
+
+-- =============================================
 -- 创建 ai_provider_configs 表（用户级 AI 提供商配置）
 -- =============================================
 DROP TABLE IF EXISTS public.ai_provider_configs;
@@ -215,3 +322,4 @@ CREATE POLICY "Authenticated users can update provider configs"
 -- SELECT * FROM public.ai_chat_sessions LIMIT 1;
 -- SELECT * FROM public.ai_provider_configs LIMIT 1;
 -- SELECT * FROM public.ai_user_memories LIMIT 1;
+-- SELECT * FROM public.ai_user_semantic_memories LIMIT 1;
