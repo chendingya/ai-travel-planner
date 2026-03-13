@@ -344,6 +344,56 @@ class AIChatService {
     return `${raw.slice(0, limit)}\n\n(内容过长，已截断；原始长度 ${raw.length})`;
   }
 
+  _dedupeToolsByName(tools) {
+    const seen = new Set();
+    return (Array.isArray(tools) ? tools : []).filter((tool) => {
+      const name = typeof tool?.name === 'string' ? tool.name.trim() : '';
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+  }
+
+  _createTravelKnowledgeTool() {
+    if (!this.ragService || !this.ragService.isAvailable()) return null;
+
+    const { z } = require('zod');
+    const { DynamicStructuredTool } = require('@langchain/core/tools');
+
+    return new DynamicStructuredTool({
+      name: 'search_travel_knowledge',
+      description:
+        '检索项目内旅游知识库，适合查询景点、美食、交通方式、玩法攻略、注意事项等相对稳定的信息。不适合天气、票价、余票、营业状态等实时信息。',
+      schema: z.object({
+        query: z.string().describe('用户问题，例如“杭州西湖附近有什么好吃的”'),
+        city: z.string().optional().describe('可选，手动指定城市，优先于自动解析'),
+        type: z.string().optional().describe('可选，手动指定类型，如 food/attraction/guide/transport'),
+        topK: z.number().int().min(1).max(10).optional().describe('最终返回条数，默认使用后端配置'),
+        threshold: z.number().min(0).max(1).optional().describe('Dense 召回阈值'),
+        sparseThreshold: z.number().min(0).optional().describe('Sparse 召回阈值'),
+        includeContent: z.boolean().optional().describe('是否附带片段内容，默认 true'),
+        previewChars: z.number().int().min(50).max(1000).optional().describe('每条内容预览字符数，默认 220'),
+      }).passthrough(),
+      func: async (input) => {
+        const query = typeof input?.query === 'string' ? input.query.trim() : '';
+        if (!query) throw new Error('缺少 query，无法执行知识库检索');
+
+        const result = await this.ragService.search(query, {
+          city: typeof input?.city === 'string' ? input.city.trim() : undefined,
+          type: typeof input?.type === 'string' ? input.type.trim() : undefined,
+          topK: Number.isFinite(input?.topK) ? input.topK : undefined,
+          threshold: Number.isFinite(input?.threshold) ? input.threshold : undefined,
+          sparseThreshold: Number.isFinite(input?.sparseThreshold) ? input.sparseThreshold : undefined,
+        });
+        const summary = this.ragService.buildSearchSummary(result, {
+          includeContent: input?.includeContent !== false,
+          previewChars: Number.isFinite(input?.previewChars) ? input.previewChars : 220,
+        });
+        return summary.text;
+      },
+    });
+  }
+
   _consumeToolQuota(key, cost = 1) {
     const normalizedKey = typeof key === 'string' && key.trim() ? key.trim() : 'global';
     const cfg = this._toolRateLimitConfig();
@@ -647,8 +697,8 @@ class AIChatService {
 
 请用中文回答，保持简洁明了。`;
 
-      // 1.5 RAG：检索相关旅游知识，注入 systemPrompt
-      if (this.ragService && this.ragService.isAvailable()) {
+      // 1.5 RAG：不开工具时走上下文注入；开工具时改为内部 LangChain tool
+      if (!enableTools && this.ragService && this.ragService.isAvailable()) {
         try {
           // 从 options 中获取城市提示（前端可传入）
           const ragCity = typeof options.city === 'string' ? options.city.trim() : undefined;
@@ -668,6 +718,7 @@ class AIChatService {
 
       // 2. 准备工具
       let tools = [];
+      let hasTravelKnowledgeTool = false;
       if (enableTools) {
         // 2.1 火车票查询工具
         const { z } = require('zod');
@@ -714,7 +765,13 @@ class AIChatService {
             console.warn('Failed to load MCP tools:', e);
           }
         }
-        tools = [...mcpTools, trainTicketsTool];
+        const travelKnowledgeTool = this._createTravelKnowledgeTool();
+        hasTravelKnowledgeTool = !!travelKnowledgeTool;
+        tools = this._dedupeToolsByName([
+          ...(travelKnowledgeTool ? [travelKnowledgeTool] : []),
+          ...mcpTools,
+          trainTicketsTool,
+        ]);
       }
 
       // 3. 创建 Agent Runnable
@@ -724,7 +781,13 @@ class AIChatService {
       
       const agentRunnable = await this.langChainManager.createAgent({
         tools,
-        systemPrompt: enableTools ? `${systemPrompt}\n\n工具使用规则：\n1. 优先使用工具获取实时信息。\n2. 无法获取时说明原因。` : systemPrompt,
+        systemPrompt: enableTools
+          ? `${systemPrompt}\n\n工具使用规则：\n1. 优先使用工具获取信息；实时信息优先使用外部工具。\n2. ${
+            hasTravelKnowledgeTool
+              ? '涉及景点攻略、美食推荐、交通经验、避坑提醒等项目内知识时，优先使用 search_travel_knowledge。'
+              : '如工具无法获取，可基于已有上下文和通用知识回答。'
+          }\n3. 无法获取时说明原因。`
+          : systemPrompt,
         provider: preferredProvider,
         allowedProviders,
         modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')

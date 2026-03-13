@@ -2,6 +2,8 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
 const OpenAICompatibleImageAdapter = require('./image/OpenAICompatibleImageAdapter');
+const { createEmbeddingAdapter } = require('./embedding');
+const { createRerankAdapter } = require('./rerank');
 const sensitiveFilter = require('../../utils/sensitiveFilter');
 
 /**
@@ -9,12 +11,12 @@ const sensitiveFilter = require('../../utils/sensitiveFilter');
  * 统一管理所有 AI 调用，提供商选择和降级
  */
 class LangChainManager {
-  constructor(textProviders, imageProviders) {
+  constructor(textProviders, imageProviders, embeddingProviders = [], rerankProviders = []) {
     this._probeCache = new Set();
     this._traceStore = new AsyncLocalStorage();
 
-    this.reload(textProviders, imageProviders, { silent: true });
-    console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
+    this.reload(textProviders, imageProviders, embeddingProviders, rerankProviders, { silent: true });
+    console.log(`Initialized ${this.textAdapters.length} text providers, ${this.imageAdapters.length} image providers, ${this.embeddingAdapters.length} embedding providers and ${this.rerankAdapters.length} rerank providers`);
   }
 
   _buildTextAdapters(textProviders = []) {
@@ -66,16 +68,65 @@ class LangChainManager {
       .filter((adapter) => adapter !== null && adapter.isAvailable());
   }
 
-  reload(textProviders = [], imageProviders = [], options = {}) {
+  _buildRerankAdapters(rerankProviders = []) {
+    return (Array.isArray(rerankProviders) ? rerankProviders : [])
+      .map((provider) => createRerankAdapter(provider))
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  _buildEmbeddingAdapters(embeddingProviders = []) {
+    return (Array.isArray(embeddingProviders) ? embeddingProviders : [])
+      .map((provider) => createEmbeddingAdapter(provider))
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  reload(textProviders = [], imageProviders = [], embeddingProvidersOrOptions = [], rerankProvidersOrOptions = [], maybeOptions = {}) {
+    const hasEmbeddingProviders = Array.isArray(embeddingProvidersOrOptions);
+    const hasRerankProviders = Array.isArray(rerankProvidersOrOptions);
+
+    const embeddingProviders = hasEmbeddingProviders ? embeddingProvidersOrOptions : [];
+    const rerankProviders = hasRerankProviders ? rerankProvidersOrOptions : [];
+    const options = hasEmbeddingProviders
+      ? (hasRerankProviders ? maybeOptions : (rerankProvidersOrOptions || {}))
+      : (embeddingProvidersOrOptions || {});
+
     this.textAdapters = this._buildTextAdapters(textProviders);
     this.imageAdapters = this._buildImageAdapters(imageProviders);
+    this.embeddingAdapters = this._buildEmbeddingAdapters(embeddingProviders);
+    this.rerankAdapters = this._buildRerankAdapters(rerankProviders);
     if (!options || options.silent !== true) {
-      console.log(`Reloaded providers: text=${this.textAdapters.length}, image=${this.imageAdapters.length}`);
+      console.log(`Reloaded providers: text=${this.textAdapters.length}, image=${this.imageAdapters.length}, embedding=${this.embeddingAdapters.length}, rerank=${this.rerankAdapters.length}`);
     }
     return {
       text: this.textAdapters.length,
       image: this.imageAdapters.length,
+      embedding: this.embeddingAdapters.length,
+      rerank: this.rerankAdapters.length,
     };
+  }
+
+  selectEmbeddingProviderByName(name) {
+    const adapters = Array.isArray(this.embeddingAdapters) ? this.embeddingAdapters : [];
+    if (!adapters.length) return null;
+    const preferred = typeof name === 'string' ? name.trim() : '';
+    if (!preferred) return adapters[0];
+    return adapters.find((adapter) => adapter && adapter.name === preferred) || adapters[0];
+  }
+
+  getAvailableEmbeddingProviders() {
+    return Array.isArray(this.embeddingAdapters) ? this.embeddingAdapters : [];
+  }
+
+  selectRerankProviderByName(name) {
+    const adapters = Array.isArray(this.rerankAdapters) ? this.rerankAdapters : [];
+    if (!adapters.length) return null;
+    const preferred = typeof name === 'string' ? name.trim() : '';
+    if (!preferred) return adapters[0];
+    return adapters.find((adapter) => adapter && adapter.name === preferred) || adapters[0];
+  }
+
+  getAvailableRerankProviders() {
+    return Array.isArray(this.rerankAdapters) ? this.rerankAdapters : [];
   }
 
   runWithTrace(trace, runner) {

@@ -35,7 +35,7 @@ const applyLangChainTokenPatch = () => {
 applyLangChainTokenPatch();
 
 // 配置
-const { config, getEnabledTextProviders, getEnabledImageProviders, getEmbeddingConfig, getRerankConfig } = require('./config');
+const { config, getEnabledTextProviders, getEnabledImageProviders, getEnabledRagEmbeddingProviders, getEnabledRagRerankProviders, getEmbeddingConfig, getRerankConfig } = require('./config');
 
 // 中间件
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -55,7 +55,6 @@ const ShareService = require('./services/shareService');
 const MCPService = require('./services/mcpService');
 const TTSService = require('./services/ttsService');
 const RagService = require('./services/ragService');
-const RagMcpServer = require('./services/ragMcpServer');
 const ProviderConfigService = require('./services/providerConfigService');
 
 // Controllers
@@ -94,40 +93,6 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);
-
-app.post('/mcp', async (req, res) => {
-  const ragMcpServer = app.locals.ragMcpServer;
-  if (!ragMcpServer) {
-    res.status(503).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32603,
-        message: 'RAG MCP service is unavailable',
-      },
-      id: null,
-    });
-    return;
-  }
-  await ragMcpServer.handlePost(req, res);
-});
-
-app.get('/mcp', (req, res) => {
-  const ragMcpServer = app.locals.ragMcpServer;
-  if (!ragMcpServer) {
-    res.status(405).set('Allow', 'POST').send('Method Not Allowed');
-    return;
-  }
-  ragMcpServer.handleMethodNotAllowed(req, res);
-});
-
-app.delete('/mcp', (req, res) => {
-  const ragMcpServer = app.locals.ragMcpServer;
-  if (!ragMcpServer) {
-    res.status(405).set('Allow', 'POST').send('Method Not Allowed');
-    return;
-  }
-  ragMcpServer.handleMethodNotAllowed(req, res);
-});
 
 const audioDir = path.join(process.cwd(), 'runtime', 'audio');
 app.use('/audio', express.static(audioDir));
@@ -203,18 +168,18 @@ async function initializeApp() {
     // 获取启用的提供商
     const textProviders = getEnabledTextProviders();
     const imageProviders = getEnabledImageProviders();
+    const embeddingProviders = getEnabledRagEmbeddingProviders();
+    const rerankProviders = getEnabledRagRerankProviders();
 
     const embeddingConfig = getEmbeddingConfig();
     const rerankConfig = getRerankConfig();
 
     // 初始化 LangChain Manager
-    const langChainManager = new LangChainManager(textProviders, imageProviders);
+    const langChainManager = new LangChainManager(textProviders, imageProviders, embeddingProviders, rerankProviders);
     app.locals.langChainManager = langChainManager;
 
-    const ragService = new RagService(supabase, embeddingConfig || {}, rerankConfig || {});
-    const ragMcpServer = new RagMcpServer(ragService);
+    const ragService = new RagService(supabase, embeddingConfig || {}, rerankConfig || {}, { langChainManager });
     app.locals.ragService = ragService;
-    app.locals.ragMcpServer = ragMcpServer;
 
     // 初始化 Provider 配置服务（支持 Supabase 持久化 + 热更新）
     const providerConfigService = new ProviderConfigService({
@@ -223,6 +188,11 @@ async function initializeApp() {
       onRuntimeConfigApplied: () => {
         const nextEmbeddingConfig = getEmbeddingConfig();
         const nextRerankConfig = getRerankConfig();
+        const nextTextProviders = getEnabledTextProviders();
+        const nextImageProviders = getEnabledImageProviders();
+        const nextEmbeddingProviders = getEnabledRagEmbeddingProviders();
+        const nextRerankProviders = getEnabledRagRerankProviders();
+        langChainManager.reload(nextTextProviders, nextImageProviders, nextEmbeddingProviders, nextRerankProviders);
         ragService.reloadConfig(nextEmbeddingConfig || {}, nextRerankConfig || {});
       },
     });
@@ -231,6 +201,8 @@ async function initializeApp() {
 
     console.log('Available text providers:', langChainManager.getAvailableTextProviders().map((p) => p.name));
     console.log('Available image providers:', langChainManager.getAvailableImageProviders().map((p) => p.name));
+    console.log('Available embedding providers:', langChainManager.getAvailableEmbeddingProviders().map((p) => p.name));
+    console.log('Available rerank providers:', langChainManager.getAvailableRerankProviders().map((p) => p.name));
 
     // 初始化 Services
     const mcpService = new MCPService();
@@ -267,10 +239,8 @@ async function initializeApp() {
     if (ragStatus.enabled) {
       const rerankInfo = ragStatus.rerankEnabled ? `，Rerank ${ragStatus.rerankModel}` : '，Rerank 未启用';
       console.log(`RAG 服务: 已启用（${ragStatus.embeddingModel}，维度 ${ragStatus.dim}，Hybrid: sparse=${ragStatus.sparseTopK}/dense=${ragStatus.denseTopK}/rrf=${ragStatus.rrfTopK}${rerankInfo}）`);
-      console.log(`RAG MCP 服务: 已启用（POST /mcp）`);
     } else {
       console.log('RAG 服务: 未配置（可在 Provider 配置页或环境变量中启用 Embedding Provider）');
-      console.log('RAG MCP 服务: 未启用（依赖 RAG 服务）');
     }
 
     const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService, ragService });

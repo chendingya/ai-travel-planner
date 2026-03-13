@@ -1,7 +1,7 @@
 'use strict';
 
-const https = require('https');
-const http  = require('http');
+const { createEmbeddingAdapter } = require('./langchain/embedding');
+const { createRerankAdapter } = require('./langchain/rerank');
 
 const TYPE_KEYWORDS = {
   food: ['美食', '吃', '餐厅', '小吃', '饮食', '饭店', '馆子', '早餐', '夜宵', '咖啡'],
@@ -76,12 +76,74 @@ function describeIntent(intent) {
 }
 
 class RagService {
-  constructor(supabase, embeddingConfig = {}, rerankConfig = {}) {
+  constructor(supabase, embeddingConfig = {}, rerankConfig = {}, deps = {}) {
     this.supabase = supabase;
+    this.langChainManager = deps && typeof deps === 'object' ? deps.langChainManager || null : null;
     this._cache = new Map();
     this._cacheMaxSize = 200;
     this._intentCatalog = null;
     this.reloadConfig(embeddingConfig, rerankConfig);
+  }
+
+  _safePreview(value, limit = 120) {
+    const text = normalizeText(value);
+    if (!text) return '';
+    if (text.length <= limit) return text;
+    return `${text.slice(0, Math.max(1, limit - 1))}…`;
+  }
+
+  _maskKey(value) {
+    const key = typeof value === 'string' ? value.trim() : '';
+    if (!key) return '';
+    if (key.length <= 8) return `${key.slice(0, 2)}****`;
+    return `${key.slice(0, 4)}****${key.slice(-4)}`;
+  }
+
+  _adapterName(adapter) {
+    return adapter?.constructor?.name || '';
+  }
+
+  _embeddingLogContext() {
+    return {
+      provider: this.embeddingProvider || '',
+      model: this.model || '',
+      dimensions: this.dim,
+      enabled: !!this.embeddingEnabled,
+      baseURL: this.baseURL || '',
+      kbSlug: this.kbSlug || '',
+      datasetVersion: this.datasetVersion || '',
+      adapter: this._adapterName(this.embeddingAdapter),
+      apiKeyMasked: this._maskKey(this.apiKey),
+    };
+  }
+
+  _rerankLogContext() {
+    return {
+      provider: this.rerankProvider || '',
+      model: this.rerankModel || '',
+      enabled: !!this.rerankEnabled,
+      baseURL: this.rerankBaseURL || '',
+      path: this.rerankPath || '',
+      timeoutMs: this.rerankTimeoutMs,
+      candidateFactor: this.rerankCandidateFactor,
+      adapter: this._adapterName(this.rerankAdapter),
+      apiKeyMasked: this._maskKey(this.rerankApiKey),
+    };
+  }
+
+  _errorMeta(error) {
+    return {
+      message: this._errorText(error),
+      code: typeof error?.code === 'string' ? error.code : '',
+      causeCode: typeof error?.cause?.code === 'string' ? error.cause.code : '',
+      status: Number.isFinite(error?.status) ? error.status : '',
+      type: typeof error?.type === 'string' ? error.type : '',
+      name: typeof error?.name === 'string' ? error.name : '',
+    };
+  }
+
+  _log(event, payload = {}) {
+    console.log(`[RagService] ${event}:`, JSON.stringify(payload));
   }
 
   reloadConfig(embeddingConfig = {}, rerankConfig = {}) {
@@ -112,9 +174,94 @@ class RagService {
     this.rerankCandidateFactor = rerankConfig.candidateFactor || 3;
     this.rerankTimeoutMs = rerankConfig.timeoutMs || 10000;
 
+    const fallbackEmbeddingAdapter = createEmbeddingAdapter({
+      name: this.embeddingProvider,
+      enabled: this.embeddingEnabled,
+      baseURL: this.baseURL,
+      apiKey: this.apiKey,
+      model: this.model,
+      dimensions: this.dim,
+      timeoutMs: Number(process.env.AI_EMBEDDING_HTTP_TIMEOUT_MS || process.env.AI_CHAT_MODEL_HTTP_TIMEOUT_MS || 60000),
+    });
+    if (this.langChainManager && typeof this.langChainManager.selectEmbeddingProviderByName === 'function') {
+      const managedEmbedding = this.langChainManager.selectEmbeddingProviderByName(this.embeddingProvider);
+      this.embeddingAdapter = managedEmbedding || fallbackEmbeddingAdapter;
+    } else {
+      this.embeddingAdapter = fallbackEmbeddingAdapter;
+    }
+    const fallbackAdapter = createRerankAdapter({
+      name: this.rerankProvider,
+      enabled: this.rerankEnabled,
+      baseURL: this.rerankBaseURL,
+      path: this.rerankPath,
+      model: this.rerankModel,
+      apiKey: this.rerankApiKey,
+      timeoutMs: this.rerankTimeoutMs,
+    });
+    if (this.langChainManager && typeof this.langChainManager.selectRerankProviderByName === 'function') {
+      const managed = this.langChainManager.selectRerankProviderByName(this.rerankProvider);
+      this.rerankAdapter = managed || fallbackAdapter;
+    } else {
+      this.rerankAdapter = fallbackAdapter;
+    }
+
     this._cache.clear();
     this._intentCatalog = null;
+    this._log('config reloaded', {
+      embedding: this._embeddingLogContext(),
+      rerank: this._rerankLogContext(),
+    });
     return this.getStatus();
+  }
+
+  _errorText(error) {
+    if (!error) return 'Unknown error';
+    if (typeof error === 'string') return error;
+    const message = typeof error?.message === 'string' ? error.message : String(error);
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const causeCode = typeof error?.cause?.code === 'string' ? error.cause.code : '';
+    return [message, code, causeCode].filter(Boolean).join(' | ');
+  }
+
+  _isTransientFetchError(error) {
+    const text = this._errorText(error).toLowerCase();
+    return (
+      text.includes('fetch failed') ||
+      text.includes('timeout') ||
+      text.includes('timed out') ||
+      text.includes('connect timeout') ||
+      text.includes('und_err_connect_timeout') ||
+      text.includes('etimedout') ||
+      text.includes('econnreset') ||
+      text.includes('econnrefused') ||
+      text.includes('socket hang up')
+    );
+  }
+
+  async _sleep(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async _withRetry(operation, options = {}) {
+    const retriesRaw = Number(options.retries ?? process.env.RAG_FETCH_RETRIES ?? 2);
+    const retries = Number.isFinite(retriesRaw) && retriesRaw >= 0 ? retriesRaw : 2;
+    const baseDelayMsRaw = Number(options.baseDelayMs ?? process.env.RAG_FETCH_RETRY_DELAY_MS ?? 250);
+    const baseDelayMs = Number.isFinite(baseDelayMsRaw) && baseDelayMsRaw > 0 ? baseDelayMsRaw : 250;
+    const label = typeof options.label === 'string' ? options.label : 'rag';
+
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return await operation(attempt);
+      } catch (error) {
+        lastError = error;
+        if (!this._isTransientFetchError(error) || attempt >= retries) break;
+        const delayMs = baseDelayMs * (attempt + 1);
+        console.warn(`[RagService] ${label} transient failure, retrying (${attempt + 1}/${retries + 1}):`, this._errorText(error));
+        await this._sleep(delayMs);
+      }
+    }
+    throw lastError;
   }
 
   getStatus() {
@@ -133,7 +280,7 @@ class RagService {
   }
 
   isAvailable() {
-    return !!(this.embeddingEnabled && this.apiKey && this.supabase);
+    return !!(this.embeddingEnabled && this.supabase && this.embeddingAdapter && typeof this.embeddingAdapter.embed === 'function');
   }
 
   async embedText(text) {
@@ -142,53 +289,25 @@ class RagService {
 
     if (this._cache.has(normalized)) return this._cache.get(normalized);
 
-    const body = JSON.stringify({
-      model: this.model,
-      input: [normalized],
-      dimensions: this.dim,
-      encoding_format: 'float',
-    });
+    if (!this.embeddingAdapter || typeof this.embeddingAdapter.embed !== 'function') {
+      throw new Error('embedText: 未配置可用的 Embedding 提供商');
+    }
 
-    const embedding = await new Promise((resolve, reject) => {
-      const url = new URL(`${this.baseURL}/embeddings`);
-      const req = https.request(
-        {
-          hostname: url.hostname,
-          port: url.port || (url.protocol === 'https:' ? '443' : '80'),
-          path: url.pathname,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Length': Buffer.byteLength(body),
-          },
-        },
-        (res) => {
-          let raw = '';
-          res.on('data', chunk => { raw += chunk; });
-          res.on('end', () => {
-            try {
-              const json = JSON.parse(raw);
-              if (json.error) {
-                reject(new Error(`Embedding API: ${JSON.stringify(json.error)}`));
-                return;
-              }
-              const vec = json.data?.[0]?.embedding;
-              if (!Array.isArray(vec)) {
-                reject(new Error(`Embedding API 返回格式异常: ${raw.slice(0, 200)}`));
-                return;
-              }
-              resolve(vec);
-            } catch (e) {
-              reject(new Error(`Embedding API JSON 解析失败: ${raw.slice(0, 200)}`));
-            }
-          });
-        }
-      );
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
+    let embedding;
+    try {
+      embedding = await this.embeddingAdapter.embed(normalized, {
+        model: this.model,
+        dimensions: this.dim,
+      });
+    } catch (error) {
+      this._log('embedText failed', {
+        queryPreview: this._safePreview(normalized),
+        queryLength: normalized.length,
+        embedding: this._embeddingLogContext(),
+        error: this._errorMeta(error),
+      });
+      throw error;
+    }
 
     if (this._cache.size >= this._cacheMaxSize) this._cache.clear();
     this._cache.set(normalized, embedding);
@@ -198,63 +317,21 @@ class RagService {
   async rerankChunks(query, chunks) {
     if (!chunks || chunks.length === 0) return chunks;
 
+    if (!this.rerankAdapter || typeof this.rerankAdapter.rerank !== 'function') {
+      return chunks;
+    }
+
     const documents = chunks.map(c => (c.content || '').slice(0, 1000));
-    const body = JSON.stringify({
-      query,
-      documents,
-      model: this.rerankModel,
-      return_documents: false,
-    });
 
     try {
-      const url = new URL(`${this.rerankBaseURL}${this.rerankPath.startsWith('/') ? this.rerankPath : `/${this.rerankPath}`}`);
-      const lib = url.protocol === 'https:' ? https : http;
-      const port = url.port || (url.protocol === 'https:' ? '443' : '80');
-
-      const scoreItems = await new Promise((resolve, reject) => {
-        const req = lib.request(
-          {
-            hostname: url.hostname,
-            port,
-            path: `${url.pathname}${url.search || ''}`,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(this.rerankApiKey ? { Authorization: `Bearer ${this.rerankApiKey}` } : {}),
-              'Content-Length': Buffer.byteLength(body),
-            },
-          },
-          (res) => {
-            let raw = '';
-            res.on('data', c => { raw += c; });
-            res.on('end', () => {
-              try {
-                const json = JSON.parse(raw);
-                if (Array.isArray(json)) {
-                  resolve(json.map(r => ({ index: r.index, score: r.score ?? r.relevance_score ?? 0 })));
-                } else if (Array.isArray(json.results)) {
-                  resolve(json.results.map(r => ({ index: r.index, score: r.relevance_score ?? r.score ?? 0 })));
-                } else if (Array.isArray(json.scores)) {
-                  resolve(json.scores.map((score, index) => ({ index, score })));
-                } else if (Array.isArray(json.data)) {
-                  resolve(json.data.map((item, index) => ({ index: item.index ?? index, score: item.score ?? item.relevance_score ?? 0 })));
-                } else {
-                  reject(new Error(`Rerank API 未知响应格式: ${raw.slice(0, 200)}`));
-                }
-              } catch (e) {
-                reject(new Error(`Rerank API JSON 解析失败: ${raw.slice(0, 200)}`));
-              }
-            });
-          }
-        );
-        req.setTimeout(this.rerankTimeoutMs, () => {
-          req.destroy();
-          reject(new Error(`Rerank API 超时（${this.rerankTimeoutMs}ms）`));
-        });
-        req.on('error', reject);
-        req.write(body);
-        req.end();
+      this._log('rerank request', {
+        queryPreview: this._safePreview(query),
+        queryLength: normalizeText(query).length,
+        documentCount: documents.length,
+        documentLengths: documents.map((doc) => doc.length).slice(0, 10),
+        rerank: this._rerankLogContext(),
       });
+      const scoreItems = await this.rerankAdapter.rerank(query, documents);
 
       return scoreItems
         .sort((a, b) => b.score - a.score)
@@ -262,6 +339,14 @@ class RagService {
 
     } catch (err) {
       console.warn('[RagService] Rerank 失败，降级为 RRF 排序:', err.message);
+      this._log('rerank failed', {
+        queryPreview: this._safePreview(query),
+        queryLength: normalizeText(query).length,
+        documentCount: documents.length,
+        documentLengths: documents.map((doc) => doc.length).slice(0, 10),
+        rerank: this._rerankLogContext(),
+        error: this._errorMeta(err),
+      });
       return chunks;
     }
   }
@@ -287,7 +372,10 @@ class RagService {
         query = query.eq('dataset_version', this.datasetVersion);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await this._withRetry(
+        async () => await query,
+        { label: 'intent catalog load' }
+      );
       if (error) {
         throw new Error(`加载意图词典失败: ${error.message || error}`);
       }
@@ -378,7 +466,10 @@ class RagService {
         filter_dataset_version: this.datasetVersion || null,
         sparse_threshold: sparseThreshold,
       };
-      const { data, error } = await this.supabase.rpc('match_travel_knowledge_sparse', payload);
+      const { data, error } = await this._withRetry(
+        async () => await this.supabase.rpc('match_travel_knowledge_sparse', payload),
+        { label: 'sparse retrieve' }
+      );
       if (error) throw error;
       return (Array.isArray(data) ? data : []).map((row) => ({
         ...row,
@@ -386,14 +477,29 @@ class RagService {
         sparse_score: Number(row?.sparse_score || 0),
       }));
     } catch (error) {
-      console.warn('[RagService] sparse retrieve failed:', error?.message || error);
+      console.warn('[RagService] sparse retrieve failed:', this._errorText(error));
+      this._log('sparse retrieve failed detail', {
+        queryPreview: this._safePreview(queryText),
+        queryLength: normalizeText(queryText).length,
+        city: city || '',
+        type: typeName || '',
+        sparseTopK: opts.sparseTopK || this.defaultSparseTopK,
+        sparseThreshold: opts.sparseThreshold ?? this.defaultSparseThreshold,
+        kbSlug: this.kbSlug || '',
+        datasetVersion: this.datasetVersion || '',
+        queryTermsCount: uniq(tokenizeText(queryText)).length,
+        error: this._errorMeta(error),
+      });
       return [];
     }
   }
 
   async denseRetrieve(queryText, city, typeName, opts = {}) {
     try {
-      const vector = await this.embedText(queryText);
+      const vector = await this._withRetry(
+        async () => await this.embedText(queryText),
+        { label: 'embed text' }
+      );
       const payload = {
         query_embedding: vector,
         match_count: opts.denseTopK || this.defaultDenseTopK,
@@ -403,7 +509,10 @@ class RagService {
         filter_dataset_version: this.datasetVersion || null,
         similarity_threshold: opts.threshold ?? this.defaultThreshold,
       };
-      const { data, error } = await this.supabase.rpc('match_travel_knowledge', payload);
+      const { data, error } = await this._withRetry(
+        async () => await this.supabase.rpc('match_travel_knowledge', payload),
+        { label: 'dense retrieve' }
+      );
       if (error) throw error;
       return (Array.isArray(data) ? data : []).map((row) => ({
         ...row,
@@ -411,7 +520,17 @@ class RagService {
         sparse_score: Number(row?.sparse_score || 0),
       }));
     } catch (error) {
-      console.warn('[RagService] dense retrieve failed:', error?.message || error);
+      console.warn('[RagService] dense retrieve failed:', this._errorText(error));
+      this._log('dense retrieve failed detail', {
+        queryPreview: this._safePreview(queryText),
+        queryLength: normalizeText(queryText).length,
+        city: city || '',
+        type: typeName || '',
+        denseTopK: opts.denseTopK || this.defaultDenseTopK,
+        similarityThreshold: opts.threshold ?? this.defaultThreshold,
+        embedding: this._embeddingLogContext(),
+        error: this._errorMeta(error),
+      });
       return [];
     }
   }

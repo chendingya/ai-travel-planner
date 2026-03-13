@@ -443,6 +443,54 @@ test('user without db row falls back to local env even when another user has row
   });
 });
 
+test('user can clear provider kind and empty array should not fall back to env defaults', async () => {
+  await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'env-text',
+        enabled: true,
+        baseURL: 'https://env.example.com/v1',
+        apiKey: 'sk-env-text',
+        priority: 1,
+        models: [{ model: 'env-model', priority: 1 }],
+      },
+    ]);
+    process.env.AI_RAG_RERANK_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'env-rerank',
+        enabled: true,
+        baseURL: 'https://rerank.env.example.com',
+        apiKey: 'sk-env-rerank',
+        model: 'env-rerank-model',
+        path: '/rerank',
+        timeoutMs: 10000,
+        candidateFactor: 3,
+        priority: 1,
+      },
+    ]);
+
+    const supabase = createSupabaseMock([
+      {
+        user_id: USER_A,
+        text_providers: [],
+        image_providers: [],
+        rag_embedding_providers: [],
+        rag_rerank_providers: [],
+        updated_by: USER_A,
+        updated_at: '',
+      },
+    ]);
+
+    const service = new ProviderConfigService({ supabase, langChainManager: createManagerMock() });
+    await service.bootstrap();
+
+    const config = await service.getConfig(USER_A);
+    assert.equal(config.textProviders.length, 0);
+    assert.equal(config.ragRerankProviders.length, 0);
+  });
+});
+
 test('keepApiKey=true should keep stored key even if payload contains apiKey', async () => {
   await withEnvBackup(async () => {
     process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
@@ -496,5 +544,147 @@ test('keepApiKey=true should keep stored key even if payload contains apiKey', a
 
     const stored = supabase.state.rows.get(USER_A);
     assert.equal(service._readApiKey(stored.text_providers[0].apiKey), 'sk-old');
+  });
+});
+
+test('missing provider ids should not trigger full-kind connectivity checks when keepApiKey=true', async () => {
+  await withEnvBackup(async () => {
+    process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
+    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'text-a',
+        enabled: true,
+        baseURL: 'https://text.example.com/v1',
+        apiKey: 'sk-text',
+        priority: 1,
+        models: [{ model: 'm1', priority: 1 }],
+      },
+    ]);
+    process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'image-a',
+        enabled: true,
+        baseURL: 'https://image.example.com/v1',
+        apiKey: 'sk-image',
+        model: 'gpt-image-1',
+        priority: 1,
+      },
+    ]);
+    process.env.AI_RAG_EMBEDDING_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'embed-a',
+        enabled: true,
+        baseURL: 'https://embed.example.com/v1',
+        apiKey: 'sk-embed',
+        model: 'embed-1',
+        dimensions: 1024,
+        priority: 1,
+      },
+    ]);
+    process.env.AI_RAG_RERANK_PROVIDERS_JSON = JSON.stringify([
+      {
+        name: 'rerank-a',
+        enabled: true,
+        baseURL: 'https://rerank.example.com',
+        apiKey: 'sk-rerank',
+        model: 'rerank-1',
+        path: '/rerank',
+        timeoutMs: 10000,
+        candidateFactor: 3,
+        priority: 1,
+      },
+    ]);
+
+    const service = new ProviderConfigService({ supabase: createSupabaseMock(), langChainManager: createManagerMock() });
+    let textProbeCount = 0;
+    let imageProbeCount = 0;
+    let embeddingProbeCount = 0;
+    let rerankProbeCount = 0;
+
+    service._probeTextModel = async () => {
+      textProbeCount += 1;
+      return { ok: true, message: 'ok' };
+    };
+    service._probeImageProvider = async () => {
+      imageProbeCount += 1;
+      return { ok: true, message: 'ok' };
+    };
+    service._probeEmbeddingProvider = async () => {
+      embeddingProbeCount += 1;
+      return { ok: true, message: 'ok' };
+    };
+    service._probeRerankProvider = async () => {
+      rerankProbeCount += 1;
+      return { ok: true, message: 'ok' };
+    };
+
+    await service.bootstrap();
+
+    await service.updateConfig(
+      {
+        textProviders: [
+          {
+            id: '',
+            name: 'text-a',
+            enabled: true,
+            baseURL: 'https://text.example.com/v1',
+            apiKey: '',
+            hasApiKey: true,
+            keepApiKey: true,
+            priority: 1,
+            models: [{ id: '', model: 'm1', priority: 1 }],
+          },
+        ],
+        imageProviders: [
+          {
+            id: '',
+            name: 'image-a',
+            enabled: true,
+            baseURL: 'https://image.example.com/v1',
+            model: 'gpt-image-1',
+            apiKey: '',
+            hasApiKey: true,
+            keepApiKey: true,
+            priority: 1,
+          },
+        ],
+        ragEmbeddingProviders: [
+          {
+            id: '',
+            name: 'embed-a',
+            enabled: true,
+            baseURL: 'https://embed.example.com/v1',
+            model: 'embed-2',
+            dimensions: 1024,
+            apiKey: '',
+            hasApiKey: true,
+            keepApiKey: true,
+            priority: 1,
+          },
+        ],
+        ragRerankProviders: [
+          {
+            id: '',
+            name: 'rerank-a',
+            enabled: true,
+            baseURL: 'https://rerank.example.com',
+            model: 'rerank-1',
+            path: '/rerank',
+            timeoutMs: 10000,
+            candidateFactor: 3,
+            apiKey: '',
+            hasApiKey: true,
+            keepApiKey: true,
+            priority: 1,
+          },
+        ],
+      },
+      USER_A
+    );
+
+    assert.equal(textProbeCount, 0);
+    assert.equal(imageProbeCount, 0);
+    assert.equal(embeddingProbeCount, 1);
+    assert.equal(rerankProbeCount, 0);
   });
 });

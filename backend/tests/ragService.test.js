@@ -137,3 +137,57 @@ test('RagService search falls back to global scope when filtered scopes miss', a
   assert.match(summary.text, /命中范围: global/);
   assert.match(summary.text, /北京通用攻略/);
 });
+
+test('RagService retries transient sparse rpc failures before giving up', async () => {
+  let sparseCallCount = 0;
+
+  const supabase = createSupabaseMock(async (name, payload) => {
+    if (name === 'match_travel_knowledge_sparse') {
+      sparseCallCount += 1;
+      if (sparseCallCount === 1) {
+        const err = new Error('fetch failed');
+        err.cause = { code: 'UND_ERR_CONNECT_TIMEOUT' };
+        throw err;
+      }
+      return {
+        data: [
+          {
+            external_id: 'doc-retry',
+            city: payload.filter_city || '杭州',
+            type: payload.filter_type || 'guide',
+            title: '重试命中文档',
+            content: '说明重试成功。',
+            sparse_score: 0.73,
+          },
+        ],
+        error: null,
+      };
+    }
+
+    if (name === 'match_travel_knowledge') {
+      return { data: [], error: null };
+    }
+
+    throw new Error(`unexpected rpc: ${name}`);
+  });
+
+  const service = new RagService(
+    supabase,
+    {
+      apiKey: 'test-key',
+      topK: 1,
+      denseTopK: 2,
+      sparseTopK: 2,
+      rrfTopK: 2,
+    },
+    { enabled: false }
+  );
+
+  service.embedText = async () => [0.1, 0.2, 0.3];
+
+  const result = await service.search('杭州攻略', { city: '杭州', topK: 1 });
+
+  assert.equal(sparseCallCount >= 2, true);
+  assert.equal(result.finalRows.length, 1);
+  assert.equal(result.finalRows[0].external_id, 'doc-retry');
+});

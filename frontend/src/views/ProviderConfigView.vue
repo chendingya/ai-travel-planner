@@ -37,6 +37,9 @@
         <t-tabs v-model="activeTab" class="provider-tabs">
           <t-tab-panel value="text" label="Text Providers">
             <div class="tab-tools">
+              <t-button variant="outline" theme="danger" :disabled="state.textProviders.length === 0" @click="clearProviders('text')">
+                清空当前分类
+              </t-button>
               <t-button theme="primary" variant="outline" @click="addTextProvider">
                 <template #icon><t-icon name="add" /></template>
                 新增文本提供商
@@ -135,6 +138,9 @@
 
           <t-tab-panel value="image" label="Pic Providers">
             <div class="tab-tools">
+              <t-button variant="outline" theme="danger" :disabled="state.imageProviders.length === 0" @click="clearProviders('image')">
+                清空当前分类
+              </t-button>
               <t-button theme="primary" variant="outline" @click="addImageProvider">
                 <template #icon><t-icon name="add" /></template>
                 新增图片提供商
@@ -201,6 +207,9 @@
 
           <t-tab-panel value="embedding" label="RAG Embedding">
             <div class="tab-tools">
+              <t-button variant="outline" theme="danger" :disabled="state.ragEmbeddingProviders.length === 0" @click="clearProviders('embedding')">
+                清空当前分类
+              </t-button>
               <t-button theme="primary" variant="outline" @click="addRagEmbeddingProvider">
                 <template #icon><t-icon name="add" /></template>
                 新增 Embedding 提供商
@@ -268,6 +277,9 @@
 
           <t-tab-panel value="rerank" label="RAG Rerank">
             <div class="tab-tools">
+              <t-button variant="outline" theme="danger" :disabled="state.ragRerankProviders.length === 0" @click="clearProviders('rerank')">
+                清空当前分类
+              </t-button>
               <t-button theme="primary" variant="outline" @click="addRagRerankProvider">
                 <template #icon><t-icon name="add" /></template>
                 新增 Rerank 提供商
@@ -351,7 +363,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { MessagePlugin } from 'tdesign-vue-next';
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next';
 import { useAuthState } from '../composables/useAuthState';
 import GlassButton from '../components/GlassButton.vue';
 
@@ -653,6 +665,34 @@ const summarizeResults = (results = []) => {
   return { ok: false, message: first.message || '测试失败' };
 };
 
+const getEmptyProviderKinds = () => {
+  const kinds = [];
+  if (state.textProviders.length === 0) kinds.push('Text Providers');
+  if (state.imageProviders.length === 0) kinds.push('Pic Providers');
+  if (state.ragEmbeddingProviders.length === 0) kinds.push('RAG Embedding');
+  if (state.ragRerankProviders.length === 0) kinds.push('RAG Rerank');
+  return kinds;
+};
+
+const confirmDialogAsync = ({ header, body, confirmBtn = '确认', cancelBtn = '取消', theme = 'warning' }) =>
+  new Promise((resolve) => {
+    const dialog = DialogPlugin.confirm({
+      header,
+      body,
+      confirmBtn,
+      cancelBtn,
+      theme,
+      onConfirm: () => {
+        dialog.destroy();
+        resolve(true);
+      },
+      onClose: () => {
+        dialog.destroy();
+        resolve(false);
+      },
+    });
+  });
+
 const applyServerValidation = (details = [], results = []) => {
   state.textProviders.forEach((provider) => {
     provider._test = null;
@@ -738,6 +778,19 @@ const saveConfig = async () => {
     MessagePlugin.info('当前没有需要保存的改动');
     return;
   }
+
+  const emptyKinds = getEmptyProviderKinds();
+  if (emptyKinds.length > 0) {
+    const confirmed = await confirmDialogAsync({
+      header: '确认保存空值',
+      body: `以下分类当前为空：${emptyKinds.join('、')}。保存后将清空这些分类的配置，是否继续？`,
+      confirmBtn: '继续保存',
+      cancelBtn: '取消',
+      theme: 'warning',
+    });
+    if (!confirmed) return;
+  }
+
   saving.value = true;
   try {
     const payload = buildPayload();
@@ -838,6 +891,40 @@ const addRagRerankProvider = () => {
 
 const removeRagRerankProvider = (index) => {
   state.ragRerankProviders.splice(index, 1);
+};
+
+const clearProviders = (kind) => {
+  const kindLabel = kind === 'text'
+    ? '文本提供商'
+    : kind === 'image'
+      ? '图片提供商'
+      : kind === 'embedding'
+        ? 'RAG Embedding 提供商'
+        : 'RAG Rerank 提供商';
+  const body = `确认清空当前${kindLabel}吗？清空后需要点击“校验并保存”才会真正生效。`;
+  confirmDialogAsync({
+    header: '清空确认',
+    body,
+    confirmBtn: '确认清空',
+    cancelBtn: '取消',
+    theme: 'warning',
+  }).then((confirmed) => {
+    if (!confirmed) return;
+
+    if (kind === 'text') {
+      state.textProviders = [];
+      return;
+    }
+    if (kind === 'image') {
+      state.imageProviders = [];
+      return;
+    }
+    if (kind === 'embedding') {
+      state.ragEmbeddingProviders = [];
+      return;
+    }
+    state.ragRerankProviders = [];
+  });
 };
 
 const goBack = () => {

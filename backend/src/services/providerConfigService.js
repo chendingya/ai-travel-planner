@@ -2,6 +2,8 @@ const OpenAI = require('openai');
 const crypto = require('crypto');
 const ModelScopeImageAdapter = require('./langchain/image/ModelScopeImageAdapter');
 const OpenAICompatibleImageAdapter = require('./langchain/image/OpenAICompatibleImageAdapter');
+const { createEmbeddingAdapter } = require('./langchain/embedding');
+const { createRerankAdapter } = require('./langchain/rerank');
 
 const TABLE_NAME = 'ai_provider_configs';
 const KEY_ENV_NAME = 'PROVIDER_CONFIG_ENCRYPTION_KEY';
@@ -136,10 +138,11 @@ class ProviderConfigService {
   _normalizeTextProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const providerId = id || this._textProviderId(index);
     const directApiKey = this._readApiKey(src.apiKey);
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
-    const hasExistingApiKey = id && keyMap.has(id);
-    const keptApiKey = hasExistingApiKey ? keyMap.get(id) : '';
+    const hasExistingApiKey = keyMap.has(providerId);
+    const keptApiKey = hasExistingApiKey ? keyMap.get(providerId) : '';
     const apiKey = keepApiKey ? keptApiKey : directApiKey;
     const baseModel = src.model == null ? '' : String(src.model).trim();
     const modelsRaw = Array.isArray(src.models) ? src.models : [];
@@ -161,10 +164,11 @@ class ProviderConfigService {
   _normalizeImageProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const providerId = id || this._imageProviderId(index);
     const directApiKey = this._readApiKey(src.apiKey);
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
-    const hasExistingApiKey = id && keyMap.has(id);
-    const keptApiKey = hasExistingApiKey ? keyMap.get(id) : '';
+    const hasExistingApiKey = keyMap.has(providerId);
+    const keptApiKey = hasExistingApiKey ? keyMap.get(providerId) : '';
     const apiKey = keepApiKey ? keptApiKey : directApiKey;
     return {
       id,
@@ -180,9 +184,10 @@ class ProviderConfigService {
   _normalizeRagEmbeddingProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const providerId = id || this._ragEmbeddingProviderId(index);
     const directApiKey = this._readApiKey(src.apiKey);
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
-    const keptApiKey = id && keyMap.has(id) ? keyMap.get(id) : '';
+    const keptApiKey = keyMap.has(providerId) ? keyMap.get(providerId) : '';
     const apiKey = keepApiKey ? keptApiKey : directApiKey;
     const dimensions = Number(src.dimensions ?? src.dimension);
     return {
@@ -200,9 +205,10 @@ class ProviderConfigService {
   _normalizeRagRerankProvider(entry, index, keyMap = new Map()) {
     const src = entry && typeof entry === 'object' ? shallowClone(entry) : {};
     const id = typeof src.id === 'string' ? src.id.trim() : '';
+    const providerId = id || this._ragRerankProviderId(index);
     const directApiKey = this._readApiKey(src.apiKey);
     const keepApiKey = normalizeBool(src.keepApiKey, false) || (src.hasApiKey === true && !directApiKey);
-    const keptApiKey = id && keyMap.has(id) ? keyMap.get(id) : '';
+    const keptApiKey = keyMap.has(providerId) ? keyMap.get(providerId) : '';
     const apiKey = keepApiKey ? keptApiKey : directApiKey;
     const rawPath = src.path == null ? '/rerank' : String(src.path).trim();
     const timeoutMs = Number(src.timeoutMs);
@@ -556,6 +562,52 @@ class ProviderConfigService {
     return this._normalizeConfig({ textProviders, imageProviders, ragEmbeddingProviders, ragRerankProviders });
   }
 
+  _mergePerKindWithEnvFallback(config, row = null) {
+    const current = config && typeof config === 'object' ? config : {};
+    const defaults = this._defaultConfig && typeof this._defaultConfig === 'object' ? this._defaultConfig : {};
+    const srcRow = row && typeof row === 'object' ? row : null;
+    const hasOwn = (key) => !!(srcRow && Object.prototype.hasOwnProperty.call(srcRow, key));
+
+    const textProviders = hasOwn('text_providers')
+      ? (Array.isArray(current.textProviders) ? current.textProviders : [])
+      : (Array.isArray(defaults.textProviders) ? defaults.textProviders : []);
+    const imageProviders = hasOwn('image_providers')
+      ? (Array.isArray(current.imageProviders) ? current.imageProviders : [])
+      : (Array.isArray(defaults.imageProviders) ? defaults.imageProviders : []);
+    const ragEmbeddingProviders = hasOwn('rag_embedding_providers')
+      ? (Array.isArray(current.ragEmbeddingProviders) ? current.ragEmbeddingProviders : [])
+      : (Array.isArray(defaults.ragEmbeddingProviders) ? defaults.ragEmbeddingProviders : []);
+    const ragRerankProviders = hasOwn('rag_rerank_providers')
+      ? (Array.isArray(current.ragRerankProviders) ? current.ragRerankProviders : [])
+      : (Array.isArray(defaults.ragRerankProviders) ? defaults.ragRerankProviders : []);
+
+    return this._normalizeConfig({
+      textProviders,
+      imageProviders,
+      ragEmbeddingProviders,
+      ragRerankProviders,
+    });
+  }
+
+  _signatureByKind(config, kind) {
+    const src = config && typeof config === 'object' ? config : {};
+    if (kind === 'text') {
+      return JSON.stringify(this._storageShape({ textProviders: Array.isArray(src.textProviders) ? src.textProviders : [] }, { encryptKeys: false }).textProviders);
+    }
+    if (kind === 'image') {
+      return JSON.stringify(this._storageShape({ imageProviders: Array.isArray(src.imageProviders) ? src.imageProviders : [] }, { encryptKeys: false }).imageProviders);
+    }
+    if (kind === 'embedding') {
+      return JSON.stringify(this._storageShape({ ragEmbeddingProviders: Array.isArray(src.ragEmbeddingProviders) ? src.ragEmbeddingProviders : [] }, { encryptKeys: false }).ragEmbeddingProviders);
+    }
+    return JSON.stringify(this._storageShape({ ragRerankProviders: Array.isArray(src.ragRerankProviders) ? src.ragRerankProviders : [] }, { encryptKeys: false }).ragRerankProviders);
+  }
+
+  _detectChangedKinds(previousConfig, nextConfig) {
+    const kinds = ['text', 'image', 'embedding', 'rerank'];
+    return kinds.filter((kind) => this._signatureByKind(previousConfig, kind) !== this._signatureByKind(nextConfig, kind));
+  }
+
   _syncRagRuntimeEnv(storageShape) {
     const ragEmbeddingProviders = Array.isArray(storageShape?.ragEmbeddingProviders) ? storageShape.ragEmbeddingProviders : [];
     const ragRerankProviders = Array.isArray(storageShape?.ragRerankProviders) ? storageShape.ragRerankProviders : [];
@@ -586,7 +638,12 @@ class ProviderConfigService {
     this._syncRagRuntimeEnv(storageShape);
 
     if (this.langChainManager && typeof this.langChainManager.reload === 'function') {
-      this.langChainManager.reload(storageShape.textProviders, storageShape.imageProviders);
+      this.langChainManager.reload(
+        storageShape.textProviders,
+        storageShape.imageProviders,
+        storageShape.ragEmbeddingProviders || [],
+        storageShape.ragRerankProviders || [],
+      );
     }
 
     this._runtimeConfig = normalized;
@@ -688,100 +745,29 @@ class ProviderConfigService {
   }
 
   async _probeEmbeddingProvider(provider) {
-    const body = JSON.stringify({
-      model: provider.model,
-      input: ['ping'],
-      dimensions: provider.dimensions,
-      encoding_format: 'float',
-    });
-    const url = new URL(`${provider.baseURL}/embeddings`);
-    const lib = url.protocol === 'https:' ? require('https') : require('http');
-    return await new Promise((resolve) => {
-      const req = lib.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? '443' : '80'),
-        path: `${url.pathname}${url.search || ''}`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${provider.apiKey}`,
-          'Content-Length': Buffer.byteLength(body),
-        },
-      }, (res) => {
-        let raw = '';
-        res.on('data', (chunk) => { raw += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(raw);
-            if (json?.error) {
-              resolve({ ok: false, message: String(json.error?.message || 'Embedding 连接测试失败') });
-              return;
-            }
-            const embedding = json?.data?.[0]?.embedding;
-            if (!Array.isArray(embedding)) {
-              resolve({ ok: false, message: 'Embedding 接口返回格式异常' });
-              return;
-            }
-            resolve({ ok: true, message: 'ok' });
-          } catch (_) {
-            resolve({ ok: false, message: 'Embedding 接口返回了无效 JSON' });
-          }
-        });
-      });
-      req.on('error', (error) => resolve({ ok: false, message: String(error?.message || error || 'Embedding 连接测试失败') }));
-      req.write(body);
-      req.end();
-    });
+    try {
+      const adapter = createEmbeddingAdapter(provider);
+      if (!adapter || !adapter.isAvailable()) {
+        return { ok: false, message: 'Embedding 提供商配置不完整' };
+      }
+      await adapter.testConnection();
+      return { ok: true, message: 'ok' };
+    } catch (error) {
+      return { ok: false, message: String(error?.message || error || 'Embedding 连接测试失败') };
+    }
   }
 
   async _probeRerankProvider(provider) {
-    const body = JSON.stringify({
-      query: 'ping',
-      documents: ['ping'],
-      model: provider.model,
-      return_documents: false,
-    });
-    const url = new URL(`${provider.baseURL}${provider.path.startsWith('/') ? provider.path : `/${provider.path}`}`);
-    const lib = url.protocol === 'https:' ? require('https') : require('http');
-    return await new Promise((resolve) => {
-      const req = lib.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? '443' : '80'),
-        path: `${url.pathname}${url.search || ''}`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
-          'Content-Length': Buffer.byteLength(body),
-        },
-      }, (res) => {
-        let raw = '';
-        res.on('data', (chunk) => { raw += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(raw);
-            if (Array.isArray(json) || Array.isArray(json?.results) || Array.isArray(json?.scores) || Array.isArray(json?.data)) {
-              resolve({ ok: true, message: 'ok' });
-              return;
-            }
-            if (json?.error) {
-              resolve({ ok: false, message: String(json.error?.message || 'Rerank 连接测试失败') });
-              return;
-            }
-            resolve({ ok: false, message: 'Rerank 接口返回格式异常' });
-          } catch (_) {
-            resolve({ ok: false, message: 'Rerank 接口返回了无效 JSON' });
-          }
-        });
-      });
-      req.setTimeout(Number(provider.timeoutMs) > 0 ? Number(provider.timeoutMs) : 10000, () => {
-        req.destroy();
-        resolve({ ok: false, message: 'Rerank 连接测试超时' });
-      });
-      req.on('error', (error) => resolve({ ok: false, message: String(error?.message || error || 'Rerank 连接测试失败') }));
-      req.write(body);
-      req.end();
-    });
+    try {
+      const adapter = createRerankAdapter(provider);
+      if (!adapter || !adapter.isAvailable()) {
+        return { ok: false, message: 'Rerank 提供商配置不完整' };
+      }
+      await adapter.testConnection();
+      return { ok: true, message: 'ok' };
+    } catch (error) {
+      return { ok: false, message: String(error?.message || error || 'Rerank 连接测试失败') };
+    }
   }
 
   async _probeTextModel(provider, modelName) {
@@ -820,85 +806,98 @@ class ProviderConfigService {
     }
   }
 
-  async _validateConnectivity(config) {
+  async _validateConnectivity(config, options = {}) {
+    const requestedKinds = Array.isArray(options?.kinds) ? options.kinds : null;
+    const kindSet = requestedKinds
+      ? new Set(requestedKinds.filter((kind) => ['text', 'image', 'embedding', 'rerank'].includes(kind)))
+      : null;
+    const shouldValidate = (kind) => !kindSet || kindSet.has(kind);
     const results = [];
     const textProviders = Array.isArray(config?.textProviders) ? config.textProviders : [];
     const imageProviders = Array.isArray(config?.imageProviders) ? config.imageProviders : [];
     const ragEmbeddingProviders = Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders : [];
     const ragRerankProviders = Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders : [];
 
-    for (const provider of textProviders) {
-      if (!provider?.enabled) continue;
-      const providerName = provider.name || 'text_provider';
-      const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
-      if (!apiKey) {
-        results.push({ kind: 'text', provider: providerName, model: '', ok: false, message: '启用的文本提供商缺少 API Key' });
-        continue;
-      }
-      for (const model of provider.models || []) {
-        const modelName = model?.model || '';
-        if (!modelName) {
-          results.push({ kind: 'text', provider: providerName, model: '', ok: false, message: '模型名称不能为空' });
+    if (shouldValidate('text')) {
+      for (const provider of textProviders) {
+        if (!provider?.enabled) continue;
+        const providerName = provider.name || 'text_provider';
+        const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+        if (!apiKey) {
+          results.push({ kind: 'text', provider: providerName, model: '', ok: false, message: '启用的文本提供商缺少 API Key' });
           continue;
         }
-        const tested = await this._probeTextModel(provider, modelName);
+        for (const model of provider.models || []) {
+          const modelName = model?.model || '';
+          if (!modelName) {
+            results.push({ kind: 'text', provider: providerName, model: '', ok: false, message: '模型名称不能为空' });
+            continue;
+          }
+          const tested = await this._probeTextModel(provider, modelName);
+          results.push({
+            kind: 'text',
+            provider: providerName,
+            model: modelName,
+            ok: !!tested.ok,
+            message: tested.message || (tested.ok ? 'ok' : '文本连通性测试失败'),
+          });
+        }
+      }
+    }
+
+    if (shouldValidate('image')) {
+      for (const provider of imageProviders) {
+        if (!provider?.enabled) continue;
+        const providerName = provider.name || 'image_provider';
+        const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+        if (!apiKey) {
+          results.push({ kind: 'image', provider: providerName, model: provider?.model || '', ok: false, message: '启用的图片提供商缺少 API Key' });
+          continue;
+        }
+        const tested = await this._probeImageProvider(provider);
         results.push({
-          kind: 'text',
+          kind: 'image',
           provider: providerName,
-          model: modelName,
+          model: provider?.model || '',
           ok: !!tested.ok,
-          message: tested.message || (tested.ok ? 'ok' : '文本连通性测试失败'),
+          message: tested.message || (tested.ok ? 'ok' : '图片连通性测试失败'),
         });
       }
     }
 
-    for (const provider of imageProviders) {
-      if (!provider?.enabled) continue;
-      const providerName = provider.name || 'image_provider';
-      const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
-      if (!apiKey) {
-        results.push({ kind: 'image', provider: providerName, model: provider?.model || '', ok: false, message: '启用的图片提供商缺少 API Key' });
-        continue;
+    if (shouldValidate('embedding')) {
+      for (const provider of ragEmbeddingProviders) {
+        if (!provider?.enabled) continue;
+        const providerName = provider.name || 'rag_embedding_provider';
+        const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
+        if (!apiKey) {
+          results.push({ kind: 'embedding', provider: providerName, model: provider?.model || '', ok: false, message: '启用的 Embedding 提供商缺少 API Key' });
+          continue;
+        }
+        const tested = await this._probeEmbeddingProvider(provider);
+        results.push({
+          kind: 'embedding',
+          provider: providerName,
+          model: provider?.model || '',
+          ok: !!tested.ok,
+          message: tested.message || (tested.ok ? 'ok' : 'Embedding 连通性测试失败'),
+        });
       }
-      const tested = await this._probeImageProvider(provider);
-      results.push({
-        kind: 'image',
-        provider: providerName,
-        model: provider?.model || '',
-        ok: !!tested.ok,
-        message: tested.message || (tested.ok ? 'ok' : '图片连通性测试失败'),
-      });
     }
 
-    for (const provider of ragEmbeddingProviders) {
-      if (!provider?.enabled) continue;
-      const providerName = provider.name || 'rag_embedding_provider';
-      const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : '';
-      if (!apiKey) {
-        results.push({ kind: 'embedding', provider: providerName, model: provider?.model || '', ok: false, message: '启用的 Embedding 提供商缺少 API Key' });
-        continue;
+    if (shouldValidate('rerank')) {
+      for (const provider of ragRerankProviders) {
+        if (!provider?.enabled) continue;
+        const providerName = provider.name || 'rag_rerank_provider';
+        const tested = await this._probeRerankProvider(provider);
+        results.push({
+          kind: 'rerank',
+          provider: providerName,
+          model: provider?.model || '',
+          ok: !!tested.ok,
+          message: tested.message || (tested.ok ? 'ok' : 'Rerank 连通性测试失败'),
+        });
       }
-      const tested = await this._probeEmbeddingProvider(provider);
-      results.push({
-        kind: 'embedding',
-        provider: providerName,
-        model: provider?.model || '',
-        ok: !!tested.ok,
-        message: tested.message || (tested.ok ? 'ok' : 'Embedding 连通性测试失败'),
-      });
-    }
-
-    for (const provider of ragRerankProviders) {
-      if (!provider?.enabled) continue;
-      const providerName = provider.name || 'rag_rerank_provider';
-      const tested = await this._probeRerankProvider(provider);
-      results.push({
-        kind: 'rerank',
-        provider: providerName,
-        model: provider?.model || '',
-        ok: !!tested.ok,
-        message: tested.message || (tested.ok ? 'ok' : 'Rerank 连通性测试失败'),
-      });
     }
 
     const failed = results.filter((item) => !item.ok);
@@ -939,7 +938,8 @@ class ProviderConfigService {
         this._debug('load_user_config.fallback_env.no_row', { userId: effectiveUserId });
         return { config: this._defaultConfig, meta: this._defaultMeta };
       }
-      const config = this._extractConfigFromRow(data);
+      const configFromSupabase = this._extractConfigFromRow(data);
+      const config = this._mergePerKindWithEnvFallback(configFromSupabase, data);
       this._debug('load_user_config.supabase_hit', { userId: effectiveUserId, updatedBy: data.updated_by || '', updatedAt: data.updated_at || '' });
       return {
         config,
@@ -1018,6 +1018,7 @@ class ProviderConfigService {
     const ragEmbeddingKeyMap = this._buildRagEmbeddingKeyMap(loaded.config);
     const ragRerankKeyMap = this._buildRagRerankKeyMap(loaded.config);
     const normalized = this._normalizeConfig(input, { textKeyMap, imageKeyMap, ragEmbeddingKeyMap, ragRerankKeyMap });
+    const changedKinds = this._detectChangedKinds(loaded.config, normalized);
 
     const structureErrors = this._validateStructure(normalized);
     if (structureErrors.length) {
@@ -1027,7 +1028,7 @@ class ProviderConfigService {
       throw err;
     }
 
-    const tested = await this._validateConnectivity(normalized);
+    const tested = await this._validateConnectivity(normalized, { kinds: changedKinds });
     if (!tested.ok) {
       const err = new Error('连通性校验未通过');
       err.status = 400;
