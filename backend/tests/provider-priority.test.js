@@ -184,3 +184,29 @@ test('LangChainManager provider context isolates per-request adapters from defau
   assert.deepEqual(inside, ['user-provider']);
   assert.deepEqual(after, ['default-provider']);
 });
+
+test('AIChatService search_travel_knowledge returns a bounded guidance message after per-turn limit', async () => {
+  const service = new AIChatService({ textAdapters: [] }, null, {
+    ragService: {
+      isAvailable: () => true,
+      search: async (query) => ({ intent: { query }, rows: [] }),
+      buildSearchSummary: () => ({ text: 'mock search result' }),
+    },
+  });
+
+  const tool = service._createTravelKnowledgeTool({
+    sessionId: 'session-1',
+    perTurnMaxCalls: 2,
+    callCounter: { count: 0 },
+    rate_limit_key: 'test-user',
+  });
+
+  const first = await tool.func({ query: '金华景点' });
+  const second = await tool.func({ query: '金华美食' });
+  const third = await tool.func({ query: '金华住宿' });
+
+  assert.equal(first, 'mock search result');
+  assert.equal(second, 'mock search result');
+  assert.match(third, /已达到本轮 search_travel_knowledge 调用上限/);
+  assert.match(third, /请不要继续调用该工具/);
+});

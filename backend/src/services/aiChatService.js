@@ -382,11 +382,15 @@ class AIChatService {
     });
   }
 
-  _createTravelKnowledgeTool() {
+  _createTravelKnowledgeTool(options = {}) {
     if (!this.ragService || !this.ragService.isAvailable()) return null;
 
     const { z } = require('zod');
     const { DynamicStructuredTool } = require('@langchain/core/tools');
+    const toolRateLimitKey = this._toolRateLimitKey(options?.sessionId || '', options);
+    const perTurnMaxCallsRaw = Number(options?.perTurnMaxCalls);
+    const perTurnMaxCalls = Number.isFinite(perTurnMaxCallsRaw) && perTurnMaxCallsRaw > 0 ? perTurnMaxCallsRaw : 3;
+    const callCounter = options?.callCounter && typeof options.callCounter === 'object' ? options.callCounter : { count: 0 };
 
     return new DynamicStructuredTool({
       name: 'search_travel_knowledge',
@@ -405,6 +409,17 @@ class AIChatService {
       func: async (input) => {
         const query = typeof input?.query === 'string' ? input.query.trim() : '';
         if (!query) throw new Error('缺少 query，无法执行知识库检索');
+        this._requireToolQuota(toolRateLimitKey, { toolName: 'search_travel_knowledge', query });
+
+        callCounter.count = Number(callCounter.count || 0) + 1;
+        if (callCounter.count > perTurnMaxCalls) {
+          return [
+            '已达到本轮 search_travel_knowledge 调用上限。',
+            '请不要继续调用该工具。',
+            '请基于本轮已经获得的知识检索结果、对话上下文和通用旅行知识直接给出最终回答。',
+            '如果现有信息仍不足，请明确说明信息不足，而不是重复调用工具。',
+          ].join('\n');
+        }
 
         const result = await this.ragService.search(query, {
           city: typeof input?.city === 'string' ? input.city.trim() : undefined,
@@ -973,12 +988,16 @@ class AIChatService {
         : '';
       const contextPlanEnabledRaw = options.context_plan_enabled ?? options.contextPlanEnabled;
       const contextPlanEnabled = contextPlanEnabledRaw == null ? true : !!contextPlanEnabledRaw;
+      const searchTravelKnowledgeCallCounter = { count: 0 };
       const sessionState = sessionId
         ? await this.sessionMemoryService.loadSessionState(sessionId, userId)
         : { rawMessages: [], messages: [], summary: '' };
       let longTermMemories = [];
       try {
-        longTermMemories = await this.longTermMemoryService.loadLongTermMemories(userId);
+        longTermMemories = await this.withRetry(
+          () => this.longTermMemoryService.loadLongTermMemories(userId),
+          { retries: 2, baseDelayMs: 250 }
+        );
       } catch (error) {
         console.warn('Load long term memories failed:', error?.message || error);
       }
@@ -1078,7 +1097,12 @@ class AIChatService {
             console.warn('Failed to load MCP tools:', e);
           }
         }
-        const travelKnowledgeTool = this._createTravelKnowledgeTool();
+        const travelKnowledgeTool = this._createTravelKnowledgeTool({
+          sessionId,
+          ...options,
+          perTurnMaxCalls: 3,
+          callCounter: searchTravelKnowledgeCallCounter,
+        });
         hasTravelKnowledgeTool = !!travelKnowledgeTool;
         tools = this._dedupeToolsByName([
           ...(travelKnowledgeTool ? [travelKnowledgeTool] : []),
@@ -1143,24 +1167,6 @@ class AIChatService {
 
       // 捕获当前的 trace 上下文，确保在回调中可用
       const currentTrace = this._currentTrace();
-
-      // RAG 工具调用限制: 单轮最多3次
-      let ragCallCount = 0;
-      const MAX_RAG_CALLS = 3;
-      const toolLimitCallback = {
-        handleToolStart: (tool, input, runId, parentRunId, tags, metadata, name) => {
-          const toolName = name || tool?.name || tool?.id?.[tool?.id?.length - 1];
-          if (toolName === 'search_travel_knowledge') {
-            ragCallCount++;
-            if (ragCallCount > MAX_RAG_CALLS) {
-              const err = new Error('工具调用次数过多');
-              err.code = 'TOOL_CALLS_EXCEEDED';
-              throw err;
-            }
-          }
-        }
-      };
-      extraCallbacks.push(toolLimitCallback);
 
       // 定义通用的元数据捕获回调
       if (currentTrace?.aiMeta && typeof currentTrace.aiMeta.mcp !== 'boolean') {
