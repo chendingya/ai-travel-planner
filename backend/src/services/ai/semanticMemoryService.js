@@ -94,6 +94,37 @@ class SemanticMemoryService {
     return ALLOWED_MEMORY_TYPES.includes(type) ? type : '';
   }
 
+  _formatStructuredMemoryValue(value, maxChars = 120, depth = 0) {
+    if (depth > 2) return '';
+    if (typeof value === 'string') return this._normalizeText(value, maxChars);
+    if (typeof value === 'number' || typeof value === 'boolean') return this._normalizeText(String(value), maxChars);
+
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((item) => this._formatStructuredMemoryValue(item, maxChars, depth + 1))
+        .filter(Boolean);
+      return this._normalizeText(normalized.join('、'), maxChars);
+    }
+
+    if (value && typeof value === 'object') {
+      if (typeof value.text === 'string' && value.text.trim()) {
+        return this._normalizeText(value.text, maxChars);
+      }
+      const entries = Object.entries(value)
+        .map(([key, item]) => {
+          const normalizedValue = this._formatStructuredMemoryValue(item, maxChars, depth + 1);
+          if (!normalizedValue) return '';
+          const normalizedKey = this._normalizeText(String(key).replace(/_/g, ' '), 32);
+          return normalizedKey ? `${normalizedKey}=${normalizedValue}` : normalizedValue;
+        })
+        .filter(Boolean)
+        .slice(0, 4);
+      return this._normalizeText(entries.join('，'), maxChars);
+    }
+
+    return '';
+  }
+
   _fingerprint(text) {
     const normalized = this._normalizeText(text, 2000).toLowerCase();
     if (!normalized) return '';
@@ -445,7 +476,7 @@ class SemanticMemoryService {
     const structuredText = structured
       .map((item) => {
         const key = typeof item?.memory_key === 'string' ? item.memory_key : '';
-        const value = this._normalizeText(item?.memory_value?.text ?? item?.memory_value, 80);
+        const value = this._formatStructuredMemoryValue(item?.memory_value, 80);
         if (!key || !value) return '';
         return `${key}: ${value}`;
       })

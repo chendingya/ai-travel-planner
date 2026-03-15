@@ -364,7 +364,12 @@ test('semantic profile should aggregate tags and highlights', async () => {
       {
         user_id: USER_A,
         memory_key: 'budget_preference',
-        memory_value: { text: '预算优先' },
+        memory_value: { max_budget: 3000, seat_type: '二等座' },
+      },
+      {
+        user_id: USER_A,
+        memory_key: 'food_preference',
+        memory_value: { text: '不喜欢吃鱼，点餐时需要避开鱼类菜品' },
       },
     ],
     semanticMemories: [
@@ -396,11 +401,14 @@ test('semantic profile should aggregate tags and highlights', async () => {
   });
 
   const profile = await service.getMemoryProfile(USER_A);
-  assert.equal(profile.structured_memories.length, 1);
+  assert.equal(profile.structured_memories.length, 2);
   assert.equal(profile.semantic_profile.stats.total_memories, 2);
   assert.ok(profile.semantic_profile.tags.includes('文化'));
   assert.equal(profile.semantic_profile.highlights[0].id, 'sem-1');
   assert.equal(profile.semantic_profile.recent_memories.length, 2);
+  assert.doesNotMatch(profile.semantic_profile.summary, /\[object Object\]/);
+  assert.match(profile.semantic_profile.summary, /budget_preference: max budget=3000/);
+  assert.match(profile.semantic_profile.summary, /food_preference: 不喜欢吃鱼/);
 });
 
 test('memory metrics should include semantic memory fields', async () => {
