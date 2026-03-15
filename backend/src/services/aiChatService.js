@@ -803,10 +803,28 @@ class AIChatService {
       }
 
       // 4. 执行 (带历史记录)
-      
+
       // 捕获当前的 trace 上下文，确保在回调中可用
       const currentTrace = this._currentTrace();
-      
+
+      // RAG 工具调用限制: 单轮最多3次
+      let ragCallCount = 0;
+      const MAX_RAG_CALLS = 3;
+      const toolLimitCallback = {
+        handleToolStart: (tool, input, runId, parentRunId, tags, metadata, name) => {
+          const toolName = name || tool?.name || tool?.id?.[tool?.id?.length - 1];
+          if (toolName === 'search_travel_knowledge') {
+            ragCallCount++;
+            if (ragCallCount > MAX_RAG_CALLS) {
+              const err = new Error('工具调用次数过多');
+              err.code = 'TOOL_CALLS_EXCEEDED';
+              throw err;
+            }
+          }
+        }
+      };
+      extraCallbacks.push(toolLimitCallback);
+
       // 定义通用的元数据捕获回调
       const recordProvider = (metaInput) => {
         const meta = metaInput || {};
@@ -950,6 +968,9 @@ class AIChatService {
       if (msg.includes('GraphRecursionError') || error.code === 'GRAPH_RECURSION_LIMIT') {
          msg = '模型在工具调用上进入了过多步骤，我已中止本次执行。请尝试提供更具体的信息。';
          code = 'GRAPH_RECURSION_LIMIT';
+      } else if (error.code === 'TOOL_CALLS_EXCEEDED' || lowerMsg.includes('tool_calls_exceeded')) {
+         msg = '工具调用次数过多，我已中止本次执行。';
+         code = 'TOOL_CALLS_EXCEEDED';
       } else if (msg.includes('429') || msg.includes('Rate limit')) {
          msg = '请求过于频繁，请稍后重试。';
          code = 'MODELSCOPE_REQUEST_LIMIT';

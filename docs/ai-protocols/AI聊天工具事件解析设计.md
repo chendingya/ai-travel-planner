@@ -211,3 +211,114 @@ LangGraph 事件映射关系：
 2. 再讲“工具记录与答案分离”：`thinking` 与 `markdown` 各司其职。
 3. 再讲“可维护性”：后端 `summary` 优先，前端仅做兜底。
 4. 最后讲“可运维”：`debug_stream` 验证链路，`debug_tool_raw` 验证工具原始返回。
+
+---
+
+## 12. LangChain / LangGraph 实际落地（代码对照）
+
+本节回答两个问题：
+1. 项目里哪些位置真正使用了 LangChain / LangGraph。
+2. Agent 是如何构建、如何降级、如何执行工具与回传流式事件。
+
+### 12.1 依赖与启动入口
+- 依赖声明：`backend/package.json`
+  - `@langchain/core`
+  - `@langchain/langgraph`
+  - `@langchain/openai`
+  - `langchain`
+- 启动注入：`backend/src/index.js`
+  - 启动时执行 `applyLangChainTokenPatch()`（兼容 token 估算）。
+  - 初始化 `LangChainManager`，并注入到 `PlanService`、`AIChatService`。
+
+### 12.2 LangChain 主要使用位置
+
+1. 模型与提供商管理（文本/图片/Embedding/Rerank）
+  - 文件：`backend/src/services/langchain/LangChainManager.js`
+  - 关键能力：
+    - `invokeText(...)`：按 provider 优先级调用并在失败时切换。
+    - `generateImage(...)`：图片模型调用与错误降级。
+    - `runWithTrace(...)`：追踪 request 维度的调试上下文。
+
+2. 具体文本模型实现
+  - 文件：`backend/src/services/langchain/text/OpenAICompatibleAdapter.js`
+  - 通过 `ChatOpenAI` 创建 LLM（`streaming: true`），作为 Agent 的底层模型。
+
+3. MCP 工具转 LangChain Tool
+  - 文件：`backend/src/services/mcpService.js`
+  - `getLangChainTools()` 将 MCP `tools/list` 结果转换为 `DynamicStructuredTool`：
+    - 输入 schema：JSON Schema -> Zod
+    - 执行逻辑：`callTool(...)` + 超时控制
+
+4. 会话历史与消息类型映射
+  - 文件：`backend/src/services/langchain/SupabaseMessageHistory.js`
+  - 将数据库消息与 `HumanMessage / AIMessage / ToolMessage` 互转，保留 `tool_calls/tool_call_id`。
+
+5. LangChain/LangGraph 事件统一协议
+  - 文件：`backend/src/services/ai/streamToolEvents.js`
+  - 将 `on_tool_start/on_tool_end/on_tool_error` 归一为 `tool_call/tool_result/tool_error`。
+
+### 12.3 LangGraph Agent 构建逻辑（核心）
+
+文件：`backend/src/services/langchain/LangChainManager.js` 的 `createAgent(...)`
+
+构建步骤：
+1. 使用 `@langchain/langgraph/prebuilt` 的 `createReactAgent` 创建 ReAct Agent。
+2. 对候选文本 provider 做筛选与排序：
+  - 先按 `allowedProviders` 过滤
+  - 再把 `provider`（首选）放到最前
+3. 为每个 provider 分别创建一个 Agent Runnable：
+  - `adapter.createLLM()` 得到该 provider 的 LLM
+  - `llm.withConfig({ metadata: { provider, model } })`
+  - `agent.withConfig({ metadata, runName })`
+4. 将多个 Agent 通过 `primary.withFallbacks(fallbacks)` 组合。
+
+结论：
+- 这是“同构多 Provider Agent + Runnable 级 fallback”方案。
+- 当前并未手写自定义 StateGraph 节点；采用的是 LangGraph prebuilt ReAct Agent。
+
+### 12.4 Chat 链路中的 Agent 执行
+
+文件：`backend/src/services/aiChatService.js`
+
+主要流程：
+1. 组装系统提示词（可选注入 RAG 上下文）。
+2. 工具集构建：
+  - 内置 `query_train_tickets`
+  - 可选 `search_travel_knowledge`
+  - MCP 动态工具 `mcpService.getLangChainTools()`
+3. 调用 `langChainManager.createAgent(...)` 生成 Agent Runnable。
+4. 通过 `agentRunnable.streamEvents(..., { version: 'v2' })` 流式执行。
+5. 事件处理：
+  - `on_chat_model_stream` -> 文本分片
+  - `on_tool_*` -> `buildToolEventFromLangChainEvent(...)` 归一化工具事件
+6. 有状态会话时：
+  - 先加载 `SupabaseMessageHistory`
+  - 结束后按增量写回消息
+
+补充：
+- 对 `search_travel_knowledge` 额外做了单轮次数限制（防止工具过度调用）。
+
+### 12.5 Plan 链路中的 Agent 执行
+
+文件：`backend/src/services/planService.js`
+
+主要流程：
+1. 拉取 MCP 工具列表：`mcpService.getLangChainTools()`。
+2. 构建 Agent：`langChainManager.createAgent(...)`。
+3. 配置回调桥接：`createToolStepCallbacks(...)`，将工具步骤实时推给前端。
+4. 执行：`agentRunnable.invoke({ messages }, { recursionLimit, callbacks })`。
+5. 读取 `finalState.messages`，提取最终文本与步骤摘要，最后归一化为结构化行程。
+
+控制项（环境变量）：
+- 总超时：`AI_PLAN_TIMEOUT_MS`
+- 递归限制：`AI_CHAT_AGENT_RECURSION_LIMIT`
+- 工具调用上限：`AI_PLAN_MAX_TOOL_CALLS`
+
+### 12.6 与本文协议的关系
+
+本文上半部分定义了“工具事件如何解析与展示”。
+本节补充了“这些事件从哪里来”：
+- 来源是 LangGraph `streamEvents` 与回调。
+- 归一化由 `streamToolEvents` 承担。
+- Chat 与 Plan 共享同一套工具事件语义。
+
