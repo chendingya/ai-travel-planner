@@ -134,6 +134,46 @@ test('requireAuth authenticates with local claims data before falling back to ge
   }
 });
 
+test('requireAuth uses local JWT payload without upstream auth calls', async () => {
+  let getClaimsCalls = 0;
+  let getUserCalls = 0;
+  const token = createUnsignedJwt({
+    sub: 'local-jwt-user-1',
+    email: 'local-jwt@example.com',
+    role: 'authenticated',
+    exp: Math.floor(Date.now() / 1000) + 300,
+    user_metadata: { username: 'local-jwt-user' },
+  });
+
+  const auth = loadAuthMiddleware({
+    auth: {
+      getClaims: async () => {
+        getClaimsCalls += 1;
+        return { data: null, error: null };
+      },
+      getUser: async () => {
+        getUserCalls += 1;
+        return { data: { user: null }, error: null };
+      },
+    },
+  });
+
+  try {
+    const req = createReq(`sb-access-token=${token}`);
+    const res = createRes();
+    const result = await invokeMiddleware(auth.requireAuth, req, res);
+
+    assert.deepEqual(result, { type: 'next' });
+    assert.equal(getClaimsCalls, 0);
+    assert.equal(getUserCalls, 0);
+    assert.equal(req.user?.id, 'local-jwt-user-1');
+    assert.equal(req.user?.email, 'local-jwt@example.com');
+    assert.equal(req.user?.user_metadata?.username, 'local-jwt-user');
+  } finally {
+    auth.restore();
+  }
+});
+
 test('optionalAuth swallows late upstream rejection after timeout', async () => {
   const previousTimeout = process.env.AUTH_UPSTREAM_TIMEOUT_MS;
   process.env.AUTH_UPSTREAM_TIMEOUT_MS = '5';

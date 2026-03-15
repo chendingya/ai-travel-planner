@@ -1,6 +1,6 @@
 # AI 聊天 Memory 设计与实现文档
 
-> 更新时间：2026-03-08  
+> 更新时间：2026-03-15  
 > 适用范围：当前仓库中的 AI 聊天、长期记忆管理、计划上下文挂载实现  
 > 相关代码：
 > - backend/src/services/aiChatService.js
@@ -128,6 +128,20 @@ flowchart TD
 ---
 
 ## 5. 三层 Memory 详细设计
+
+## 5.0 每个 Memory 是怎么做的（速查矩阵）
+
+| 维度 | 短期记忆（SessionMemoryService） | 结构化长期记忆（LongTermMemoryService） | 语义长期记忆（SemanticMemoryService） | 计划上下文（PlanContextService） |
+| --- | --- | --- | --- | --- |
+| 目标 | 保留当前会话有效上下文并控长 | 沉淀跨会话稳定偏好 | 沉淀弱结构化用户画像并可相似召回 | 将用户选中的计划持续注入会话 |
+| 读取时机 | 每轮聊天开始 | 每轮聊天开始 | 每轮聊天开始（按当前消息检索） | `context_plan_id` 生效时 |
+| 写入时机 | 每轮结束写消息；达到阈值写摘要 | 每轮结束后抽取并 upsert；也支持手工增删改 | 每轮结束后抽取、向量化并 upsert | 不写入记忆表，仅从 `plans` 读取并格式化 |
+| 入模形式 | `messages`（summary 前缀 + recent window + token trim） | system prompt 文本块 | system prompt 文本块（Top-K 召回） | system prompt 文本块 |
+| 主要存储 | `ai_chat_sessions.messages/summary` | `ai_user_memories` | `ai_user_semantic_memories` + RPC 检索 | `plans` |
+| 核心约束 | 最大窗口 + token 预算 + 摘要触发阈值 | `memory_key` 白名单 + 置信度阈值 + `UNIQUE(user_id,memory_key)` | `memory_type` 白名单 + 指纹去重 + 相似度阈值 + Top-K | 必须按 `user_id` 校验归属 |
+| 可观测性 | 输出 `short_memory` 与 token 估算 metrics | 管理页可编辑/删除/清空 | `profile` 聚合（tags/highlights/stats）+ recall 计数 | 由挂载参数与计划摘要可见 |
+
+一句话：**短期记忆管“最近聊了什么”，结构化长期记忆管“明确偏好”，语义长期记忆管“隐性画像”，计划上下文管“当前业务背景”。**
 
 ## 5.1 短期记忆
 
@@ -333,7 +347,7 @@ flowchart LR
 AI_CHAT_LONG_MEMORY_ENABLED=true
 AI_CHAT_LONG_MEMORY_MIN_CONFIDENCE=0.75
 AI_CHAT_SEMANTIC_MEMORY_ENABLED=true
-AI_CHAT_SEMANTIC_MEMORY_TOP_K=4
+AI_CHAT_SEMANTIC_MEMORY_TOP_K=3
 AI_CHAT_SEMANTIC_MEMORY_MIN_SIMILARITY=0.65
 AI_CHAT_SEMANTIC_MEMORY_MAX_ITEMS_PER_TURN=3
 AI_EMBEDDING_BASE_URL=https://api-inference.modelscope.cn/v1
@@ -836,7 +850,9 @@ flowchart TD
    K --> L[按阈值刷新 session summary]
    L --> M[从本轮对话中抽取长期记忆候选]
    M --> N[upsert 到 ai_user_memories]
-   N --> O[结束]
+  N --> O[从本轮对话中抽取语义长期记忆候选]
+  O --> P[embedding + upsert 到 ai_user_semantic_memories]
+  P --> Q[结束]
 ```
 
 ---

@@ -233,6 +233,17 @@ const requireAuth = async (req, res, next) => {
     return res.status(401).json({ message: '未提供认证令牌', error: '未提供认证令牌' });
   }
 
+  const localJwtUser = tryBuildLocalJwtUser(token);
+  if (localJwtUser) {
+    req.user = localJwtUser;
+    const providerConfigService = req.app?.locals?.providerConfigService;
+    if (providerConfigService && typeof providerConfigService.getRuntimeContext === 'function') {
+      const runtime = await providerConfigService.getRuntimeContext(localJwtUser.id);
+      return runWithProviderScopes(req, runtime, next);
+    }
+    return next();
+  }
+
   try {
     const { data, error } = await verifyToken(token);
     if (error || !data?.user) {
