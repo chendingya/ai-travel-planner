@@ -1,4 +1,3 @@
-const { ChatOpenAI } = require('@langchain/openai');
 const OpenAI = require('openai');
 const BaseRerankAdapter = require('./BaseRerankAdapter');
 
@@ -107,6 +106,14 @@ function truncateForPrompt(value, maxChars) {
   return `${normalized.slice(0, limit - 1)}…`;
 }
 
+function sanitizePromptText(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[^\p{L}\p{N}\p{P}\p{Zs}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function compactDocumentsForPrompt(docs, options = {}) {
   const totalBudget = toPositiveInt(
     options.totalDocChars ?? process.env.AI_RERANK_TOTAL_DOC_CHARS,
@@ -127,7 +134,11 @@ function compactDocumentsForPrompt(docs, options = {}) {
   const dynamicLimit = Math.max(minDocLimit, Math.floor(totalBudget / list.length));
   const finalPerDocLimit = Math.min(perDocLimit, dynamicLimit);
 
-  return list.map((doc, index) => `[${index}] ${truncateForPrompt(doc, finalPerDocLimit)}`);
+  const sanitize = options.sanitize === true;
+  return list.map((doc, index) => {
+    const source = sanitize ? sanitizePromptText(doc) : doc;
+    return `[${index}] ${truncateForPrompt(source, finalPerDocLimit)}`;
+  });
 }
 
 function buildRerankPrompts(query, docs, options = {}) {
@@ -135,7 +146,8 @@ function buildRerankPrompts(query, docs, options = {}) {
     options.maxQueryChars ?? process.env.AI_RERANK_QUERY_MAX_CHARS,
     400
   );
-  const compactQuery = truncateForPrompt(query, queryLimit);
+  const sanitize = options.sanitize === true;
+  const compactQuery = truncateForPrompt(sanitize ? sanitizePromptText(query) : query, queryLimit);
   const compactDocs = compactDocumentsForPrompt(docs, options);
 
   return {
@@ -156,6 +168,28 @@ function buildRerankPrompts(query, docs, options = {}) {
       'Return JSON only in this exact shape:',
       `{"scores":[${compactDocs.map(() => '0.0').join(',')}]}`,
     ].join('\n'),
+  };
+}
+
+function safePreview(value, maxChars = 160) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function buildPromptMeta(query, docs, prompts) {
+  const compactDocs = compactDocumentsForPrompt(docs);
+  return {
+    rawQueryLength: String(query || '').length,
+    rawDocCount: Array.isArray(docs) ? docs.length : 0,
+    rawDocLengths: (Array.isArray(docs) ? docs : []).map((doc) => String(doc || '').length).slice(0, 12),
+    compactDocLengths: compactDocs.map((doc) => doc.length).slice(0, 12),
+    compactQueryPreview: safePreview(query, 120),
+    compactDocPreviews: compactDocs.slice(0, 3).map((doc) => safePreview(doc, 120)),
+    compactDocPreviewCount: compactDocs.length,
+    systemPromptLength: String(prompts?.systemPrompt || '').length,
+    userPromptLength: String(prompts?.userPrompt || '').length,
   };
 }
 
@@ -238,37 +272,84 @@ class OpenAICompatibleRerankAdapter extends BaseRerankAdapter {
     return '';
   }
 
-  _createChatLLM() {
-    return new ChatOpenAI({
-      apiKey: this.apiKey || undefined,
-      configuration: this._resolvedOpenAIBaseURL() ? { baseURL: this._resolvedOpenAIBaseURL() } : undefined,
-      modelName: this.model,
-      temperature: 0,
-      maxTokens: 1024,
-      timeout: this.requestTimeoutMs(),
-      maxRetries: this.maxRetries(),
-      streaming: false,
-    });
+  _log(event, payload = {}) {
+    console.log(`[OpenAICompatibleRerankAdapter] ${event}:`, JSON.stringify(payload));
   }
 
-  async _rerankViaChatOpenAI(query, docs) {
-    const { systemPrompt, userPrompt } = buildRerankPrompts(query, docs);
+  _errorMeta(error) {
+    return {
+      message: typeof error?.message === 'string' ? error.message : String(error || ''),
+      status: Number.isFinite(error?.status) ? error.status : '',
+      code: typeof error?.code === 'string' ? error.code : '',
+      type: typeof error?.type === 'string' ? error.type : '',
+      causeCode: typeof error?.cause?.code === 'string' ? error.cause.code : '',
+      name: typeof error?.name === 'string' ? error.name : '',
+    };
+  }
 
-    const llm = this._createChatLLM();
-    const result = await llm.invoke([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ]);
+  _isRetryableBadRequest(error) {
+    return Number(error?.status) === 400;
+  }
 
-    const content = this._normalizeTextContent(result && typeof result === 'object' ? result.content : result);
-    if (!content || !content.trim()) {
-      throw new Error('OpenAI Rerank 缺少可解析文本');
+  _padScores(scores, expectedCount) {
+    const normalized = Array.isArray(scores) ? scores.map((item) => Number(item) || 0) : [];
+    if (!Number.isFinite(expectedCount) || expectedCount <= 0) return normalized;
+    if (normalized.length >= expectedCount) return normalized.slice(0, expectedCount);
+    return normalized.concat(new Array(expectedCount - normalized.length).fill(0));
+  }
+
+  async _rerankDocsIndividually(query, docs) {
+    const scores = new Array(docs.length).fill(0);
+    const failed = [];
+    let successCount = 0;
+
+    for (let index = 0; index < docs.length; index += 1) {
+      const singleDoc = [docs[index]];
+      const prompts = buildRerankPrompts(query, singleDoc);
+      try {
+        const result = await this._requestChatCompletion(prompts, singleDoc, query, `isolate:${index}`);
+        const content = this._normalizeTextContent(result?.choices?.[0]?.message?.content);
+        if (!content || !content.trim()) {
+          throw new Error('OpenAI Rerank 缺少可解析文本');
+        }
+        const singleScores = parseScores(content, 1);
+        scores[index] = Number(singleScores[0]) || 0;
+        successCount += 1;
+      } catch (error) {
+        failed.push({
+          index,
+          preview: safePreview(docs[index], 200),
+          error: this._errorMeta(error),
+        });
+      }
     }
-    return parseScores(content, docs.length);
+
+    this._log('doc isolation summary', {
+      totalDocs: docs.length,
+      successCount,
+      failedCount: failed.length,
+      failed,
+    });
+
+    if (successCount === 0) {
+      const err = new Error('OpenAI Rerank 文档逐条定位后全部失败');
+      err.status = 400;
+      err.failedDocs = failed;
+      throw err;
+    }
+
+    return scores;
   }
 
-  async _rerankViaResponses(query, docs) {
-    const { systemPrompt, userPrompt } = buildRerankPrompts(query, docs);
+  async _requestChatCompletion(prompts, docs, query, retryTag = 'primary') {
+    const promptMeta = buildPromptMeta(query, docs, prompts);
+    this._log('chat request', {
+      retryTag,
+      model: this.model,
+      baseURL: this._resolvedOpenAIBaseURL() || '',
+      timeoutMs: this.requestTimeoutMs(),
+      ...promptMeta,
+    });
 
     const client = new OpenAI({
       apiKey: this.apiKey || undefined,
@@ -277,15 +358,91 @@ class OpenAICompatibleRerankAdapter extends BaseRerankAdapter {
       maxRetries: this.maxRetries(),
     });
 
-    const resp = await client.responses.create({
+    try {
+      return await client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: 'system', content: prompts.systemPrompt },
+          { role: 'user', content: prompts.userPrompt },
+        ],
+        temperature: 0,
+        max_tokens: Math.min(1024, Math.max(128, docs.length * 8)),
+        stream: false,
+      });
+    } catch (error) {
+      this._log('chat request failed', {
+        retryTag,
+        model: this.model,
+        baseURL: this._resolvedOpenAIBaseURL() || '',
+        timeoutMs: this.requestTimeoutMs(),
+        ...promptMeta,
+        error: this._errorMeta(error),
+      });
+      throw error;
+    }
+  }
+
+  async _rerankViaChatOpenAI(query, docs) {
+    const prompts = buildRerankPrompts(query, docs);
+    let result;
+    try {
+      result = await this._requestChatCompletion(prompts, docs, query, 'primary');
+    } catch (error) {
+      if (!this._isRetryableBadRequest(error)) throw error;
+      this._log('batch request rejected, start doc isolation', {
+        model: this.model,
+        baseURL: this._resolvedOpenAIBaseURL() || '',
+        totalDocs: docs.length,
+        error: this._errorMeta(error),
+      });
+      return this._padScores(await this._rerankDocsIndividually(query, docs), docs.length);
+    }
+
+    const content = this._normalizeTextContent(result?.choices?.[0]?.message?.content);
+    if (!content || !content.trim()) {
+      throw new Error('OpenAI Rerank 缺少可解析文本');
+    }
+    return parseScores(content, docs.length);
+  }
+
+  async _rerankViaResponses(query, docs) {
+    const { systemPrompt, userPrompt } = buildRerankPrompts(query, docs);
+    const promptMeta = buildPromptMeta(query, docs, { systemPrompt, userPrompt });
+    this._log('responses request', {
       model: this.model,
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0,
-      max_output_tokens: Math.min(1024, Math.max(128, docs.length * 8)),
+      baseURL: this._resolvedOpenAIBaseURL() || '',
+      timeoutMs: this.requestTimeoutMs(),
+      ...promptMeta,
     });
+
+    const client = new OpenAI({
+      apiKey: this.apiKey || undefined,
+      baseURL: this._resolvedOpenAIBaseURL() || undefined,
+      timeout: this.requestTimeoutMs(),
+      maxRetries: this.maxRetries(),
+    });
+
+    let resp;
+    try {
+      resp = await client.responses.create({
+        model: this.model,
+        input: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0,
+        max_output_tokens: Math.min(1024, Math.max(128, docs.length * 8)),
+      });
+    } catch (error) {
+      this._log('responses request failed', {
+        model: this.model,
+        baseURL: this._resolvedOpenAIBaseURL() || '',
+        timeoutMs: this.requestTimeoutMs(),
+        ...promptMeta,
+        error: this._errorMeta(error),
+      });
+      throw error;
+    }
 
     const text = this._extractResponseText(resp);
     if (!text || !text.trim()) {

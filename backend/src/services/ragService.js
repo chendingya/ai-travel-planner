@@ -103,31 +103,33 @@ class RagService {
     return adapter?.constructor?.name || '';
   }
 
-  _embeddingLogContext() {
+  _embeddingLogContext(context = null) {
+    const resolved = context || this._getActiveEmbeddingContext();
     return {
-      provider: this.embeddingProvider || '',
-      model: this.model || '',
-      dimensions: this.dim,
-      enabled: !!this.embeddingEnabled,
-      baseURL: this.baseURL || '',
-      kbSlug: this.kbSlug || '',
-      datasetVersion: this.datasetVersion || '',
-      adapter: this._adapterName(this.embeddingAdapter),
-      apiKeyMasked: this._maskKey(this.apiKey),
+      provider: resolved.provider || '',
+      model: resolved.model || '',
+      dimensions: resolved.dim,
+      enabled: !!resolved.enabled,
+      baseURL: resolved.baseURL || '',
+      kbSlug: resolved.kbSlug || '',
+      datasetVersion: resolved.datasetVersion || '',
+      adapter: this._adapterName(resolved.adapter),
+      apiKeyMasked: this._maskKey(resolved.apiKey),
     };
   }
 
-  _rerankLogContext() {
+  _rerankLogContext(context = null) {
+    const resolved = context || this._getActiveRerankContext();
     return {
-      provider: this.rerankProvider || '',
-      model: this.rerankModel || '',
-      enabled: !!this.rerankEnabled,
-      baseURL: this.rerankBaseURL || '',
-      path: this.rerankPath || '',
-      timeoutMs: this.rerankTimeoutMs,
-      candidateFactor: this.rerankCandidateFactor,
-      adapter: this._adapterName(this.rerankAdapter),
-      apiKeyMasked: this._maskKey(this.rerankApiKey),
+      provider: resolved.provider || '',
+      model: resolved.model || '',
+      enabled: !!resolved.enabled,
+      baseURL: resolved.baseURL || '',
+      path: resolved.path || '',
+      timeoutMs: resolved.timeoutMs,
+      candidateFactor: resolved.candidateFactor,
+      adapter: this._adapterName(resolved.adapter),
+      apiKeyMasked: this._maskKey(resolved.apiKey),
     };
   }
 
@@ -144,6 +146,99 @@ class RagService {
 
   _log(event, payload = {}) {
     console.log(`[RagService] ${event}:`, JSON.stringify(payload));
+  }
+
+  _getActiveProviderConfig() {
+    const config = this.langChainManager && typeof this.langChainManager.getActiveProviderConfig === 'function'
+      ? this.langChainManager.getActiveProviderConfig()
+      : null;
+    return config && typeof config === 'object' ? config : null;
+  }
+
+  _getActiveEmbeddingContext() {
+    const activeConfig = this._getActiveProviderConfig();
+    const runtimeProvider = Array.isArray(activeConfig?.ragEmbeddingProviders)
+      ? activeConfig.ragEmbeddingProviders.find((provider) => provider && provider.enabled && provider.apiKey)
+      : null;
+    if (runtimeProvider) {
+      const fallbackAdapter = createEmbeddingAdapter({
+        name: runtimeProvider.name || '',
+        enabled: runtimeProvider.enabled !== false,
+        baseURL: runtimeProvider.baseURL || '',
+        apiKey: runtimeProvider.apiKey || '',
+        model: runtimeProvider.model || this.model,
+        dimensions: runtimeProvider.dimensions || this.dim,
+        timeoutMs: Number(process.env.AI_EMBEDDING_HTTP_TIMEOUT_MS || process.env.AI_CHAT_MODEL_HTTP_TIMEOUT_MS || 60000),
+      });
+      const managedEmbedding = this.langChainManager && typeof this.langChainManager.selectEmbeddingProviderByName === 'function'
+        ? this.langChainManager.selectEmbeddingProviderByName(runtimeProvider.name)
+        : null;
+      return {
+        provider: runtimeProvider.name || '',
+        apiKey: runtimeProvider.apiKey || '',
+        model: runtimeProvider.model || this.model || 'Qwen/Qwen3-Embedding-8B',
+        dim: runtimeProvider.dimensions || this.dim || 1024,
+        baseURL: runtimeProvider.baseURL || this.baseURL || 'https://api-inference.modelscope.cn/v1',
+        kbSlug: this.kbSlug || 'travel-cn-public',
+        datasetVersion: this.datasetVersion || '',
+        enabled: runtimeProvider.enabled !== false,
+        adapter: managedEmbedding || fallbackAdapter,
+      };
+    }
+    return {
+      provider: this.embeddingProvider || '',
+      apiKey: this.apiKey || '',
+      model: this.model || 'Qwen/Qwen3-Embedding-8B',
+      dim: this.dim || 1024,
+      baseURL: this.baseURL || 'https://api-inference.modelscope.cn/v1',
+      kbSlug: this.kbSlug || 'travel-cn-public',
+      datasetVersion: this.datasetVersion || '',
+      enabled: this.embeddingEnabled !== false,
+      adapter: this.embeddingAdapter,
+    };
+  }
+
+  _getActiveRerankContext() {
+    const activeConfig = this._getActiveProviderConfig();
+    const runtimeProvider = Array.isArray(activeConfig?.ragRerankProviders)
+      ? activeConfig.ragRerankProviders.find((provider) => provider && provider.enabled && provider.baseURL)
+      : null;
+    if (runtimeProvider) {
+      const fallbackAdapter = createRerankAdapter({
+        name: runtimeProvider.name || '',
+        enabled: runtimeProvider.enabled !== false,
+        baseURL: (runtimeProvider.baseURL || '').replace(/\/$/, ''),
+        path: runtimeProvider.path || '/rerank',
+        model: runtimeProvider.model || this.rerankModel,
+        apiKey: runtimeProvider.apiKey || '',
+        timeoutMs: runtimeProvider.timeoutMs || this.rerankTimeoutMs,
+      });
+      const managed = this.langChainManager && typeof this.langChainManager.selectRerankProviderByName === 'function'
+        ? this.langChainManager.selectRerankProviderByName(runtimeProvider.name)
+        : null;
+      return {
+        provider: runtimeProvider.name || '',
+        enabled: runtimeProvider.enabled !== false,
+        baseURL: (runtimeProvider.baseURL || '').replace(/\/$/, ''),
+        path: runtimeProvider.path || '/rerank',
+        model: runtimeProvider.model || this.rerankModel || 'BAAI/bge-reranker-v2-m3',
+        apiKey: runtimeProvider.apiKey || '',
+        timeoutMs: runtimeProvider.timeoutMs || this.rerankTimeoutMs || 10000,
+        candidateFactor: runtimeProvider.candidateFactor || this.rerankCandidateFactor || 3,
+        adapter: managed || fallbackAdapter,
+      };
+    }
+    return {
+      provider: this.rerankProvider || '',
+      enabled: !!this.rerankEnabled,
+      baseURL: this.rerankBaseURL || 'http://localhost:8001',
+      path: this.rerankPath || '/rerank',
+      model: this.rerankModel || 'BAAI/bge-reranker-v2-m3',
+      apiKey: this.rerankApiKey || '',
+      timeoutMs: this.rerankTimeoutMs || 10000,
+      candidateFactor: this.rerankCandidateFactor || 3,
+      adapter: this.rerankAdapter,
+    };
   }
 
   reloadConfig(embeddingConfig = {}, rerankConfig = {}) {
@@ -265,14 +360,16 @@ class RagService {
   }
 
   getStatus() {
+    const embedding = this._getActiveEmbeddingContext();
+    const rerank = this._getActiveRerankContext();
     return {
       enabled: this.isAvailable(),
-      embeddingProvider: this.embeddingProvider || '',
-      embeddingModel: this.model || '',
-      dim: this.dim,
-      rerankEnabled: !!this.rerankEnabled,
-      rerankProvider: this.rerankProvider || '',
-      rerankModel: this.rerankModel || '',
+      embeddingProvider: embedding.provider || '',
+      embeddingModel: embedding.model || '',
+      dim: embedding.dim,
+      rerankEnabled: !!rerank.enabled,
+      rerankProvider: rerank.provider || '',
+      rerankModel: rerank.model || '',
       denseTopK: this.defaultDenseTopK,
       sparseTopK: this.defaultSparseTopK,
       rrfTopK: this.defaultRrfTopK,
@@ -280,44 +377,48 @@ class RagService {
   }
 
   isAvailable() {
-    return !!(this.embeddingEnabled && this.supabase && this.embeddingAdapter && typeof this.embeddingAdapter.embed === 'function');
+    const embedding = this._getActiveEmbeddingContext();
+    return !!(embedding.enabled && this.supabase && embedding.adapter && typeof embedding.adapter.embed === 'function');
   }
 
   async embedText(text) {
     const normalized = (text || '').slice(0, 8000).trim();
     if (!normalized) throw new Error('embedText: 输入文本为空');
 
-    if (this._cache.has(normalized)) return this._cache.get(normalized);
+    const embeddingContext = this._getActiveEmbeddingContext();
+    const cacheKey = `${embeddingContext.provider}|${embeddingContext.model}|${embeddingContext.dim}|${normalized}`;
+    if (this._cache.has(cacheKey)) return this._cache.get(cacheKey);
 
-    if (!this.embeddingAdapter || typeof this.embeddingAdapter.embed !== 'function') {
+    if (!embeddingContext.adapter || typeof embeddingContext.adapter.embed !== 'function') {
       throw new Error('embedText: 未配置可用的 Embedding 提供商');
     }
 
     let embedding;
     try {
-      embedding = await this.embeddingAdapter.embed(normalized, {
-        model: this.model,
-        dimensions: this.dim,
+      embedding = await embeddingContext.adapter.embed(normalized, {
+        model: embeddingContext.model,
+        dimensions: embeddingContext.dim,
       });
     } catch (error) {
       this._log('embedText failed', {
         queryPreview: this._safePreview(normalized),
         queryLength: normalized.length,
-        embedding: this._embeddingLogContext(),
+        embedding: this._embeddingLogContext(embeddingContext),
         error: this._errorMeta(error),
       });
       throw error;
     }
 
     if (this._cache.size >= this._cacheMaxSize) this._cache.clear();
-    this._cache.set(normalized, embedding);
+    this._cache.set(cacheKey, embedding);
     return embedding;
   }
 
   async rerankChunks(query, chunks) {
     if (!chunks || chunks.length === 0) return chunks;
 
-    if (!this.rerankAdapter || typeof this.rerankAdapter.rerank !== 'function') {
+    const rerankContext = this._getActiveRerankContext();
+    if (!rerankContext.adapter || typeof rerankContext.adapter.rerank !== 'function') {
       return chunks;
     }
 
@@ -329,9 +430,9 @@ class RagService {
         queryLength: normalizeText(query).length,
         documentCount: documents.length,
         documentLengths: documents.map((doc) => doc.length).slice(0, 10),
-        rerank: this._rerankLogContext(),
+        rerank: this._rerankLogContext(rerankContext),
       });
-      const scoreItems = await this.rerankAdapter.rerank(query, documents);
+      const scoreItems = await rerankContext.adapter.rerank(query, documents);
 
       return scoreItems
         .sort((a, b) => b.score - a.score)
@@ -344,7 +445,7 @@ class RagService {
         queryLength: normalizeText(query).length,
         documentCount: documents.length,
         documentLengths: documents.map((doc) => doc.length).slice(0, 10),
-        rerank: this._rerankLogContext(),
+        rerank: this._rerankLogContext(rerankContext),
         error: this._errorMeta(err),
       });
       return chunks;
@@ -496,6 +597,7 @@ class RagService {
 
   async denseRetrieve(queryText, city, typeName, opts = {}) {
     try {
+      const embeddingContext = this._getActiveEmbeddingContext();
       const vector = await this._withRetry(
         async () => await this.embedText(queryText),
         { label: 'embed text' }
@@ -503,10 +605,10 @@ class RagService {
       const payload = {
         query_embedding: vector,
         match_count: opts.denseTopK || this.defaultDenseTopK,
-        filter_kb_slug: this.kbSlug,
+        filter_kb_slug: embeddingContext.kbSlug,
         filter_city: city || null,
         filter_type: typeName || null,
-        filter_dataset_version: this.datasetVersion || null,
+        filter_dataset_version: embeddingContext.datasetVersion || null,
         similarity_threshold: opts.threshold ?? this.defaultThreshold,
       };
       const { data, error } = await this._withRetry(
@@ -528,7 +630,7 @@ class RagService {
         type: typeName || '',
         denseTopK: opts.denseTopK || this.defaultDenseTopK,
         similarityThreshold: opts.threshold ?? this.defaultThreshold,
-        embedding: this._embeddingLogContext(),
+        embedding: this._embeddingLogContext(embeddingContext),
         error: this._errorMeta(error),
       });
       return [];
@@ -630,8 +732,9 @@ class RagService {
       opts.rrfK || this.defaultRrfK
     );
 
-    if (this.rerankEnabled && fusedRows.length > 1) {
-      const rerankCandidates = fusedRows.slice(0, Math.min(fusedRows.length, Math.max(topK * this.rerankCandidateFactor, topK)));
+    const rerankContext = this._getActiveRerankContext();
+    if (rerankContext.enabled && fusedRows.length > 1) {
+      const rerankCandidates = fusedRows.slice(0, Math.min(fusedRows.length, Math.max(topK * rerankContext.candidateFactor, topK)));
       const reranked = await this.rerankChunks(queryText, rerankCandidates);
       const rerankScores = new Map(reranked.map((row) => [row.doc_id, row.rerank_score]));
       fusedRows = fusedRows

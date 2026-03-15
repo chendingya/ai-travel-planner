@@ -172,7 +172,8 @@ test('bootstrap loads env defaults and getConfig works per user', async () => {
     assert.equal(config.textProviders[0].models.length, 2);
     assert.equal(config.textProviders[0].models[0].model, 'm1');
     assert.equal(config.imageProviders[0].name, 'img-a');
-    assert.equal(manager.calls.length >= 1, true);
+    const runtime = await service.getRuntimeContext(USER_A);
+    assert.equal(runtime.config.textProviders[0].name, 'text-a');
   });
 });
 
@@ -233,7 +234,7 @@ test('updateConfig stores encrypted key and keepApiKey works', async () => {
   });
 });
 
-test('updateConfig persists rag embedding and rerank providers and applies runtime env', async () => {
+test('updateConfig persists rag embedding and rerank providers without mutating global runtime env', async () => {
   await withEnvBackup(async () => {
     process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
@@ -247,19 +248,9 @@ test('updateConfig persists rag embedding and rerank providers and applies runti
 
     const supabase = createSupabaseMock();
     const manager = createManagerMock();
-    const applied = [];
     const service = new ProviderConfigService({
       supabase,
       langChainManager: manager,
-      onRuntimeConfigApplied: () => {
-        applied.push({
-          embeddingApiKey: process.env.QWEN_EMBEDDING_API_KEY,
-          embeddingModel: process.env.QWEN_EMBEDDING_MODEL,
-          rerankEnabled: process.env.RERANK_ENABLED,
-          rerankBaseURL: process.env.RERANK_BASE_URL,
-          rerankPath: process.env.RERANK_PATH,
-        });
-      },
     });
     service._probeEmbeddingProvider = async () => ({ ok: true, message: 'ok' });
     service._probeRerankProvider = async () => ({ ok: true, message: 'ok' });
@@ -304,12 +295,15 @@ test('updateConfig persists rag embedding and rerank providers and applies runti
     const stored = supabase.state.rows.get(USER_A);
     assert.equal(service._readApiKey(stored.rag_embedding_providers[0].apiKey), 'sk-embed');
     assert.equal(service._readApiKey(stored.rag_rerank_providers[0].apiKey), 'sk-rerank');
-    assert.equal(process.env.QWEN_EMBEDDING_API_KEY, 'sk-embed');
-    assert.equal(process.env.QWEN_EMBEDDING_MODEL, 'embed-model');
-    assert.equal(process.env.RERANK_ENABLED, 'true');
-    assert.equal(process.env.RERANK_BASE_URL, 'https://rerank.example.com');
-    assert.equal(process.env.RERANK_PATH, '/rerank');
-    assert.equal(applied.length >= 2, true);
+    assert.equal(process.env.QWEN_EMBEDDING_API_KEY, '');
+    assert.equal(process.env.QWEN_EMBEDDING_MODEL, undefined);
+    assert.equal(process.env.RERANK_ENABLED, 'false');
+    assert.equal(process.env.RERANK_BASE_URL, '');
+    assert.equal(process.env.RERANK_PATH, undefined);
+
+    const runtime = await service.getRuntimeContext(USER_A);
+    assert.equal(runtime.config.ragEmbeddingProviders[0].name, 'embed-a');
+    assert.equal(runtime.config.ragRerankProviders[0].name, 'rerank-a');
   });
 });
 
@@ -354,7 +348,7 @@ test('updateConfig rejects on connectivity failure and does not persist', async 
   });
 });
 
-test('updateConfig is user-scoped and triggers runtime reload on success', async () => {
+test('updateConfig is user-scoped and keeps global manager runtime untouched', async () => {
   await withEnvBackup(async () => {
     process.env.PROVIDER_CONFIG_ENCRYPTION_KEY = ENC_KEY;
     process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify([]);
@@ -389,7 +383,7 @@ test('updateConfig is user-scoped and triggers runtime reload on success', async
     const userB = await service.getConfig(USER_B);
 
     assert.equal(supabase.state.upsertCount, 1);
-    assert.equal(manager.calls.length >= 2, true);
+    assert.equal(manager.calls.length, 0);
     assert.equal(userA.textProviders[0].name, 'text-ok');
     assert.equal(userB.textProviders.length, 0);
   });

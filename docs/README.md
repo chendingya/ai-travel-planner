@@ -1,6 +1,6 @@
 # Docs
 
-当前文档已按主题拆分为子目录，避免 `docs` 根目录继续平铺堆积。
+当前文档已按主题拆分为子目录；`docs` 根目录仅保留少量跨模块专题文档（如 RAG），避免再次回到大面积平铺结构。
 
 ## 目录结构
 
@@ -49,6 +49,13 @@
 1. [features/AI提供商管理功能说明.md](features/AI提供商管理功能说明.md)
 2. [getting-started/QUICKSTART.md](getting-started/QUICKSTART.md)
 3. [architecture/后端架构文档.md](architecture/后端架构文档.md)
+
+### 排查 RAG / 知识库
+
+1. [RAG知识库技术文档.md](RAG知识库技术文档.md)
+2. [rag-embedding-flow.md](rag-embedding-flow.md)
+3. [features/AI提供商管理功能说明.md](features/AI提供商管理功能说明.md)
+4. [testing/测试用例清单.md](testing/测试用例清单.md)
 
 ### 做业务功能迭代
 

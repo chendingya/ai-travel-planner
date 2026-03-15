@@ -1,96 +1,125 @@
 # RAG Embedding 入库流程说明
 
-本文说明 [`backend/scripts/ingest_local_qwen.py`](/home/wushiwei/projects_z/cdy/RAG/ai-travel-planner/backend/scripts/ingest_local_qwen.py) 中本地 Qwen Embedding 入库 Supabase 的实际流程，重点展开 embedding 相关操作。
+> 更新时间：2026-03-15  
+> 适用文件：`backend/scripts/ingest_local_qwen.py`
 
-## 整体流程
+本文只说明“本地 Qwen Embedding 模型 -> Supabase”的入库流程。  
+如果你想看整体 RAG 运行时，请回到 `docs/RAG知识库技术文档.md`。
+
+## 1. 这份文档讲什么，不讲什么
+
+这份文档聚焦 3 件事：
+
+1. `ingest_local_qwen.py` 如何读取 JSONL
+2. 如何把每条 `content` 变成 embedding
+3. 如何把向量和元数据写入 `travel_knowledge`
+
+它不覆盖：
+
+- 爬虫抓取和 chunk 生产
+- 运行时检索链路
+- AI Chat 如何使用检索结果
+
+## 2. 整体流程
 
 ```mermaid
 flowchart TD
-    A["启动脚本<br/>parse_args"] --> B["推断 dataset_version"]
-    B --> C["检查输入文件 / Supabase 参数"]
+    A["启动脚本 parse_args"] --> B["推断 dataset_version"]
+    B --> C["检查 JSONL / 模型路径 / Supabase 参数"]
     C --> D["读取 checkpoint"]
-    D --> E{"是否存在断点?"}
+    D --> E{"是否已有断点?"}
 
     E -- 否 --> F["从 batch 1 开始"]
-    E -- 是 --> G["从上次成功批次后继续"]
+    E -- 是 --> G["从断点后继续"]
 
-    F --> H["读取 JSONL 全部 chunk"]
+    F --> H["load_chunks 读取 JSONL"]
     G --> H
 
-    H --> I["加载本地 Qwen3-Embedding-4B<br/>AutoTokenizer + AutoModel"]
-    I --> J["按 batch_size 分批"]
-    J --> K["取当前 batch"]
-    K --> L["抽取每条 chunk 的 content"]
-    L --> M["normalize_text 文本清洗"]
-    M --> N["tokenizer 编码"]
-    N --> O["模型前向推理"]
-    O --> P["last_hidden_state"]
-    P --> Q["last_token_pool"]
-    Q --> R["L2 归一化"]
-    R --> S{"是否要降到 1024 维?"}
-    S -- 是 --> T["截断到前 1024 维"]
-    T --> U["再次 L2 归一化"]
-    S -- 否 --> V["保留原始维度"]
-    U --> W["组装 Supabase 行"]
-    V --> W
-    W --> X["写入 travel_knowledge"]
-    X --> Y{"是否成功?"}
-    Y -- 是 --> Z["更新 checkpoint"]
-    Z --> AA{"还有下一批?"}
-    AA -- 是 --> K
-    AA -- 否 --> AB["标记 completed"]
-    Y -- 否 --> AC["打印失败 chunk id"]
-    AC --> AD["退出，等待下次续跑"]
+    H --> I["加载本地 Qwen Embedding 模型"]
+    I --> J["按 batch_size 切批"]
+    J --> K["提取本批 content"]
+    K --> L["normalize_text 清洗"]
+    L --> M["tokenizer 编码"]
+    M --> N["模型前向"]
+    N --> O["last_token_pool 取句向量"]
+    O --> P["第一次 L2 归一化"]
+    P --> Q{"目标维度 < hidden_size ?"}
+    Q -- 是 --> R["截断前 N 维"]
+    R --> S["第二次 L2 归一化"]
+    Q -- 否 --> T["保持原维度"]
+    S --> U["build_rows 组装入库行"]
+    T --> U
+    U --> V["upsert_rows 写入 Supabase"]
+    V --> W{"是否成功?"}
+    W -- 是 --> X["更新 checkpoint"]
+    X --> Y{"还有下一批?"}
+    Y -- 是 --> K
+    Y -- 否 --> Z["标记 completed"]
+    W -- 否 --> AA["打印失败 batch id 并退出"]
 ```
 
-## Embedding 部分的具体含义
+## 3. 脚本的关键输入
 
-### 1. 从每个 chunk 里只取 `content`
+脚本支持命令行参数，也会读取 `.env`。
 
-原始 JSONL 里每条数据通常有这些字段：
+最重要的输入有：
 
-- `city`
-- `type`
-- `title`
-- `tags`
-- `sourceUrl`
-- `content`
+- `--file` / `RAG_KNOWLEDGE_FILE`
+- `--model-path` / `QWEN_EMBEDDING_MODEL_PATH`
+- `--supabase-url` / `SUPABASE_URL`
+- `--supabase-key` / `SUPABASE_SERVICE_ROLE_KEY`
+- `--dim` / `QWEN_EMBEDDING_DIM`
+- `--kb` / `RAG_KB_SLUG`
+- `--dataset-version` / `RAG_DATASET_VERSION`
+- `--checkpoint-file`
 
-脚本在做 embedding 时，只把 `content` 拿出来送进模型。
+默认行为：
 
-原因是：
+- `dataset_version` 会优先从文件名 `knowledge_<version>_filtered.jsonl` 推断
+- `kb_slug` 默认是 `travel-cn-public`
+- `dim` 默认是 `1024`
 
-- `content` 才是主要语义正文
-- `city`、`title`、`tags` 更适合作为过滤条件和展示字段
-- 如果把所有元信息一起拼进去，向量会混入很多非正文信号
+## 4. 为什么 embedding 只取 `content`
 
-所以当前设计是：
+脚本在真正做向量化时，只提取每条 chunk 的 `content`：
 
-- `content` 负责生成语义向量
-- 其他字段照样入库，但不参与 embedding
+```python
+texts = [normalize_text(item.get("content")) for item in batch]
+```
 
-### 2. 先做文本清洗
+这样做的原因是：
 
-脚本会对 `content` 先执行 `normalize_text()`。
+- `content` 是主要语义正文
+- `city`、`title`、`poiName` 更适合做过滤和展示
+- 元信息已经会作为结构化字段入库，不必强行混进向量
 
-这一步主要不是“润色文本”，而是“确保输入对 tokenizer 合法”。
+当前设计可以理解成：
 
-当前清洗内容包括：
+- 语义检索靠 `content + embedding`
+- 结构过滤靠 `city/type/poi_name/...`
 
-- `None` 转为空字符串
-- 非字符串类型转成字符串
-- 去掉孤立的 Unicode 代理字符，比如 `\udcb0`、`\udd58`
+## 5. `normalize_text()` 在解决什么问题
+
+本地模型链路里，`normalize_text()` 的职责不是“润色文本”，而是保证 tokenizer 安全可用。
+
+它主要处理：
+
+- `None` 转空字符串
+- 非字符串类型转字符串
+- 删除孤立 Unicode 代理字符
 - 去掉首尾空白
 
-之所以需要这一步，是因为：
+这么做的原因是：
 
-- Python 本身能容忍一些坏字符
-- 但 `transformers` 底层 fast tokenizer 对非法 Unicode 往往不稳定
-- 如果不先清洗，可能直接在 tokenizer 阶段报错
+- Python 字符串能容忍脏字符
+- `transformers` tokenizer 未必能稳定处理这些脏字符
+- 不先清洗，常见故障会直接出现在 tokenizer 阶段
 
-### 3. tokenizer 把文本变成 token
+## 6. 本地模型如何生成句向量
 
-清洗后的文本会送进：
+### 6.1 tokenizer
+
+脚本使用：
 
 ```python
 tokenizer(
@@ -102,158 +131,84 @@ tokenizer(
 )
 ```
 
-这一步做了几件事：
+这里的 `max_length=8192` 只是“送进模型前的安全上限”，不是 chunk 切分策略本身。
 
-- 把文本按模型词表切成 token
-- 把 token 映射成整数 id，也就是 `input_ids`
-- 生成 `attention_mask`，标记哪些位置是真实 token，哪些是 padding
-- 对同一批不同长度文本进行补齐
-- 对太长文本按 `max_length` 截断
+### 6.2 前向输出
 
-这里要注意：
-
-- `max_length=8192` 是 tokenizer 的截断上限
-- 它不是 chunk 切分长度
-- 它只决定“最多让多少 token 进入模型”
-
-所以：
-
-- chunk 切分是上游数据处理策略
-- `max_length` 是模型前处理阶段的安全上限
-
-### 4. Qwen 模型输出每个 token 的 hidden states
-
-接着执行模型前向：
-
-```python
-outputs = self.model(**tokenized)
-```
-
-真正用于 embedding 的是：
+模型输出的关键张量是：
 
 ```python
 outputs.last_hidden_state
 ```
 
-它可以理解成一个三维张量：
+它的形状可以理解为：
 
 ```text
 [batch_size, seq_len, hidden_size]
 ```
 
-含义分别是：
+对于默认本地 `Qwen3-Embedding-4B`，`hidden_size` 通常是 `2560`。
 
-- `batch_size`：这一批有多少条文本
-- `seq_len`：补齐后的 token 序列长度
-- `hidden_size`：每个 token 的表示维度
+### 6.3 `last_token_pool`
 
-对 `Qwen3-Embedding-4B` 来说，`hidden_size` 是 `2560`。
+脚本没有做平均池化，而是使用 Qwen 官方推荐的 `last_token_pool()`：
 
-也就是说，这一步拿到的还不是“每条文本一个向量”，而是：
+- 左侧 padding 时，直接取最后一个位置
+- 否则根据 `attention_mask` 找每条文本最后一个有效 token
 
-- 每条文本里
-- 每个 token
-- 都有一个 2560 维表示
-
-### 5. 用 `last_token_pool` 取句向量
-
-因为最终要存的是“每条文本一个 embedding”，所以要从 token 级表示压缩成句子级表示。
-
-当前脚本使用的是 Qwen 官方推荐的 `last_token_pool`。
-
-它的逻辑是：
-
-- 如果使用左侧 padding，那么最后一个位置就是最后一个有效 token
-- 如果不是左侧 padding，就根据 `attention_mask` 找到每条文本真正的最后一个 token
-- 取那个 token 对应的 hidden state，作为整条文本的表示
-
-所以张量形状会从：
+结果会从 token 级表示压缩成句子级表示：
 
 ```text
 [batch_size, seq_len, 2560]
+-> [batch_size, 2560]
 ```
 
-变成：
+## 7. 为什么要做两次归一化
 
-```text
-[batch_size, 2560]
-```
+### 7.1 第一次归一化
 
-这一步之后，才得到“每条文本一个向量”。
-
-### 6. 第一次 L2 归一化
-
-取到句向量后，脚本会先做一次：
+先对完整句向量做一次 L2 normalize：
 
 ```python
 embeddings = F.normalize(embeddings, p=2, dim=1)
 ```
 
-也就是 L2 归一化。
+作用：
 
-它的作用是把每个向量缩放到长度为 1。
+- 让余弦相似度更稳定
+- 避免向量长度差异影响检索
 
-这样做的好处：
+### 7.2 截断维度
 
-- 后面做余弦相似度检索更稳定
-- 向量长度差异不会干扰检索
-- 更符合 embedding 检索的常见做法
-
-此时你得到的是：
-
-- 每条文本一个向量
-- 每个向量维度是 2560
-- 每个向量都已归一化
-
-### 7. 如果需要，把 2560 维截到 1024 维
-
-你的表结构在 [`rag-setup.sql`](/home/wushiwei/projects_z/cdy/RAG/ai-travel-planner/rag-setup.sql) 里定义的是：
-
-```sql
-embedding VECTOR(1024)
-```
-
-但 `Qwen3-Embedding-4B` 的原始输出维度是 `2560`。
-
-所以脚本会判断：
-
-- 如果当前配置的 `dim=1024`
-- 并且模型输出维度大于 1024
-- 就只保留前 1024 维
-
-对应代码逻辑就是：
+如果目标维度 `dim` 小于模型原始输出维度，就会执行：
 
 ```python
 embeddings = embeddings[:, : self.dim]
 ```
 
-这不是随便裁掉，而是利用 Qwen3-Embedding 支持的 Matryoshka-style truncation 思路：
+这通常对应：
 
-- 前部维度保留主要语义信息
-- 可以在性能、存储、检索速度之间做折中
+- 原始向量 `2560`
+- 目标向量 `1024`
 
-### 8. 第二次 L2 归一化
+这么做是为了和 `rag-setup.sql` 中的 `VECTOR(1024)` 保持一致，也为了降低存储和检索成本。
 
-向量截断以后，长度又变了，所以脚本会再做一次归一化：
+### 7.3 第二次归一化
+
+截断后会再次做一次 L2 normalize：
 
 ```python
 embeddings = F.normalize(embeddings, p=2, dim=1)
 ```
 
-这一步非常重要。
+原因很直接：
 
-因为如果你：
+- 截断会改变向量长度
+- 如果不再归一化，最终写入库的向量就不再是单位向量
 
-- 先归一化成 2560 维单位向量
-- 再直接裁成 1024 维
+## 8. 写库时保留了哪些信息
 
-那么裁完以后它就不再是单位向量了。
-
-所以必须再归一化一次，保证最终写进库里的 1024 维向量仍然适合做余弦相似度检索。
-
-### 9. 写入 Supabase 的 `embedding` 列
-
-最后，脚本会把每条 chunk 组装成数据库行，包括：
+`build_rows()` 会把每条 chunk 组装成完整数据库行，除了 `embedding` 外，还会带上：
 
 - `kb_slug`
 - `dataset_version`
@@ -261,52 +216,79 @@ embeddings = F.normalize(embeddings, p=2, dim=1)
 - `city`
 - `type`
 - `title`
+- `section_title`
+- `sub_section_title`
+- `poi_name`
 - `content`
+- `tags`
+- `source`
+- `source_url`
+- `license`
+- `lang`
+- `content_hash`
 - `metadata`
-- `embedding`
 
-其中：
+这里的设计理念是：
 
-- `embedding` 是最终得到的 1024 维浮点向量
-- 对应 Supabase 里 `travel_knowledge.embedding VECTOR(1024)` 这一列
+- JSONL 是“源数据”
+- 数据库是“带向量的派生产物”
+- 但派生产物仍尽量保留足够元数据，方便后续回溯、迁移和重建
 
-写入时通过 PostgREST 调用 Supabase：
+## 9. 如何写入 Supabase
 
-- 成功则更新本地 checkpoint
-- 失败则打印这一批的 `chunk id`
-- 下次启动时可以从断点继续
+脚本通过 PostgREST 直接写入：
 
-## Embedding 部分的单独视图
+- 目标表：`travel_knowledge`
+- 冲突键：`kb_slug,content_hash`
+- 策略：`resolution=ignore-duplicates`
 
-```mermaid
-flowchart LR
-    A["content 文本"] --> B["normalize_text"]
-    B --> C["tokenizer"]
-    C --> D["input_ids / attention_mask"]
-    D --> E["Qwen3-Embedding-4B 前向计算"]
-    E --> F["last_hidden_state<br/>每个 token 一个 2560 维向量"]
-    F --> G["last_token_pool<br/>取最后一个有效 token"]
-    G --> H["得到每条文本一个 2560 维向量"]
-    H --> I["第一次 L2 normalize"]
-    I --> J{"目标维度是否为 1024?"}
-    J -- 是 --> K["截断到前 1024 维"]
-    K --> L["第二次 L2 normalize"]
-    J -- 否 --> M["保留原始维度"]
-    L --> N["最终 embedding"]
-    M --> N
-    N --> O["写入 Supabase embedding 列"]
-```
+这意味着：
 
-## 一句话总结
+- 重复跑不会重复插入
+- 已存在的同内容行默认会被忽略
 
-当前 embedding 流程本质上是在做这件事：
+## 10. 为什么这个脚本支持断点续跑
 
-1. 取正文 `content`
-2. 清洗成合法文本
-3. tokenizer 转成 token
-4. 模型为每个 token 计算 hidden state
-5. 取最后一个有效 token 作为整段文本的表示
-6. 归一化
-7. 从 2560 维压到 1024 维
-8. 再归一化
-9. 存进 Supabase 的 `embedding` 列
+本地 embedding 最重的成本通常不是写库，而是：
+
+- 模型加载
+- GPU/CPU 推理
+- 大文件长时间批处理
+
+所以 `ingest_local_qwen.py` 增加了 checkpoint 机制：
+
+- 每批成功后记录 `last_success_batch`
+- 下次启动时继续跑剩余批次
+- 全部完成后标记 `completed`
+
+这对大文件、本地显卡不稳定、或者中途手动中断都很有用。
+
+## 11. 与 `ingest.js` 的区别
+
+`ingest_local_qwen.py` 和 `ingest.js` 的主要区别不是“写库结构”，而是“embedding 怎么来”。
+
+### `ingest_local_qwen.py`
+
+- 本地 `transformers` 模型
+- 支持 checkpoint
+- 适合离线批处理
+
+### `ingest.js`
+
+- 远程 OpenAI-compatible embeddings API
+- 实现更轻
+- 不需要本地模型环境
+
+两者最终都写向同一张 `travel_knowledge` 表。
+
+## 12. 一句话总结
+
+这条本地入库链路本质上在做：
+
+1. 读取知识库 JSONL
+2. 取每条 `content`
+3. 清洗后送进本地 Qwen Embedding 模型
+4. 用 `last_token_pool` 取句向量
+5. 归一化并按需截断到 1024 维
+6. 连同元数据一起写入 Supabase
+7. 用 checkpoint 保证长任务可续跑

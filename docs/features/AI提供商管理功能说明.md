@@ -10,14 +10,22 @@
 - API Key 仅后端可见，前端默认脱敏
 - API Key 落库前会使用 `PROVIDER_CONFIG_ENCRYPTION_KEY`（AES-256-GCM）加密；未配置该密钥时保存会失败
 - 保存前强制连通性校验
-- 保存成功后后端热更新，无需重启服务
+- 保存成功后无需重启服务；新配置会在当前用户后续请求中立即生效
 
 ## 数据来源与优先级
 
 1. 登录用户访问时优先读取 Supabase 表 `ai_provider_configs` 中该 `user_id` 的配置
 2. 若表中无配置，则回退 `.env` 中的 `AI_TEXT_PROVIDERS_JSON` / `AI_IMAGE_PROVIDERS_JSON` / `AI_RAG_EMBEDDING_PROVIDERS_JSON` / `AI_RAG_RERANK_PROVIDERS_JSON`
 3. 若表中某一类 provider 为空（如 `rag_embedding_providers=[]`），仅该类回退到 `.env` 对应配置，其它类保持 Supabase 值
-4. 通过页面保存后写回当前用户行，并立即热更新到该用户后续请求的运行时
+4. 通过页面保存后写回当前用户行，并在该用户后续请求中以“请求级上下文”方式优先生效
+
+## 运行时生效方式
+
+- Provider 配置不再写入进程级全局运行时，也不会覆盖其他用户的配置
+- `requireAuth` 鉴权成功后，会读取当前用户的有效 provider 配置并注入本次请求的运行时上下文
+- `aiChat / plan / image / RAG / TTS` 在本次请求中都优先读取这份上下文配置
+- 未登录请求或当前用户无个人配置时，仍回退到 `.env` 默认配置
+- 因为是“按请求隔离”，多个用户并发请求时不会互相串用 provider
 
 ## 配置结构
 
@@ -66,7 +74,7 @@
 - `POST /api/provider-config/test`
   - 测试单个 provider 连通性（用于页面行级测试）
 - `PUT /api/provider-config`
-  - 保存并热更新配置；仅校验本次改动类别的启用项
+  - 保存配置；仅校验本次改动类别的启用项；保存成功后当前用户后续请求立即生效
 
 ## 连通性校验规则
 
@@ -90,4 +98,3 @@
 - 字段：`user_id`、`text_providers`、`image_providers`、`rag_embedding_providers`、`rag_rerank_providers`、`updated_by`、`created_at`、`updated_at`
 - 触发器：`updated_at` 自动更新
 - RLS：登录用户仅可读写自己的行（`auth.uid() = user_id`）
-

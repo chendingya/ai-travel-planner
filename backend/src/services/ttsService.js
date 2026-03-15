@@ -8,6 +8,7 @@ class TTSService {
   constructor(options = {}) {
     this.audioDir = options.audioDir || path.join(process.cwd(), 'runtime', 'audio');
     this.publicBasePath = options.publicBasePath || '/audio';
+    this.langChainManager = options.langChainManager || null;
     this.tasks = new Map();
     const cleanupRaw = options.cleanupAfterMs ?? process.env.TTS_CLEANUP_MS;
     const cleanupMs = Number(cleanupRaw);
@@ -148,7 +149,14 @@ class TTSService {
   }
 
   _resolveOpenAICompatConfig(voiceHint) {
-    const providers = getEnabledTextProviders();
+    const activeConfig = typeof this.langChainManager?.getActiveProviderConfig === 'function'
+      ? this.langChainManager.getActiveProviderConfig()
+      : null;
+    const providers = Array.isArray(activeConfig?.textProviders) && activeConfig.textProviders.length
+      ? activeConfig.textProviders
+        .filter((provider) => provider && provider.enabled && provider.apiKey)
+        .sort((a, b) => Number(a?.priority || 1) - Number(b?.priority || 1))
+      : getEnabledTextProviders();
     const primary = providers.length ? providers[0] : null;
     const baseURL = process.env.TTS_OPENAI_BASE_URL || primary?.baseURL || process.env.DASHSCOPE_BASE_URL || '';
     const apiKey = process.env.TTS_OPENAI_API_KEY || primary?.apiKey || process.env.DASHSCOPE_API_KEY || '';

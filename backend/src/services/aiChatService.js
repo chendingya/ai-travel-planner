@@ -469,6 +469,14 @@ class AIChatService {
   }
 
   _pickPreferredProviderName({ enableTools }) {
+    const activeAdapters = typeof this.langChainManager?.getTextAdapters === 'function'
+      ? this.langChainManager.getTextAdapters()
+      : (Array.isArray(this.langChainManager?.textAdapters) ? this.langChainManager.textAdapters : []);
+    const runtimePreferred = Array.isArray(activeAdapters)
+      ? activeAdapters.find((adapter) => adapter && typeof adapter.name === 'string' && adapter.name.trim())
+      : null;
+    if (runtimePreferred?.name) return runtimePreferred.name.trim();
+
     const mcpPreferred = this._normalizeProviderName(
       process.env.AI_TEXT_PROVIDER_MCP_PRIMARY || process.env.AI_TEXT_PROVIDER_MCP_PREFERRED
     );
@@ -777,7 +785,6 @@ class AIChatService {
       // 3. 创建 Agent Runnable
       const optionProvider = this._normalizeProviderName(options?.provider);
       const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools });
-      const allowedProviders = preferredProvider ? [preferredProvider] : [];
       
       const agentRunnable = await this.langChainManager.createAgent({
         tools,
@@ -789,7 +796,6 @@ class AIChatService {
           }\n3. 无法获取时说明原因。`
           : systemPrompt,
         provider: preferredProvider,
-        allowedProviders,
         modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
       });
 
@@ -849,13 +855,6 @@ class AIChatService {
         handleChainStart: (chain, inputs, runId, parentRunId, tags, metadata) => recordProvider(metadata),
         handleLLMStart: (llm, prompts, runId, parentRunId, extraParams, tags, metadata) => recordProvider(metadata),
       };
-
-      if (preferredProvider) {
-        const adapter = Array.isArray(this.langChainManager?.textAdapters)
-          ? this.langChainManager.textAdapters.find(a => a && a.name === preferredProvider)
-          : null;
-        recordProvider({ provider: preferredProvider, model: adapter?.model || '' });
-      }
 
       const pickChunkText = (value) => {
         if (typeof value === 'string') return value;

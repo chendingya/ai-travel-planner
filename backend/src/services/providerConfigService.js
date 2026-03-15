@@ -632,20 +632,6 @@ class ProviderConfigService {
 
   _applyRuntimeConfig(config, meta = {}) {
     const normalized = this._normalizeConfig(config);
-    const storageShape = this._storageShape(normalized, { encryptKeys: false });
-    process.env.AI_TEXT_PROVIDERS_JSON = JSON.stringify(storageShape.textProviders);
-    process.env.AI_IMAGE_PROVIDERS_JSON = JSON.stringify(storageShape.imageProviders);
-    this._syncRagRuntimeEnv(storageShape);
-
-    if (this.langChainManager && typeof this.langChainManager.reload === 'function') {
-      this.langChainManager.reload(
-        storageShape.textProviders,
-        storageShape.imageProviders,
-        storageShape.ragEmbeddingProviders || [],
-        storageShape.ragRerankProviders || [],
-      );
-    }
-
     this._runtimeConfig = normalized;
     this._runtimeMeta = {
       source: meta.source || 'runtime',
@@ -921,6 +907,18 @@ class ProviderConfigService {
     this._initialized = true;
   }
 
+  async getRuntimeContext(userId = '') {
+    await this.ensureInitialized();
+    const effectiveUserId = typeof userId === 'string' ? userId.trim() : '';
+    if (!effectiveUserId) {
+      return {
+        config: this._normalizeConfig(this._defaultConfig),
+        meta: { ...this._defaultMeta },
+      };
+    }
+    return await this._loadUserConfig(effectiveUserId);
+  }
+
   async _loadUserConfig(userId) {
     await this.ensureInitialized();
     const effectiveUserId = this._requireUserId(userId);
@@ -964,17 +962,12 @@ class ProviderConfigService {
 
   async activateUserRuntime(userId) {
     const effectiveUserId = this._requireUserId(userId);
-    const loaded = await this._loadUserConfig(effectiveUserId);
+    const loaded = await this.getRuntimeContext(effectiveUserId);
     const signature = this._configSignature(loaded.config);
-    if (this._activeRuntimeUserId === effectiveUserId && this._activeRuntimeSignature === signature) {
-      this._debug('activate_user_runtime.skip_same_signature', { userId: effectiveUserId });
-      return;
-    }
-
-    this._applyRuntimeConfig(loaded.config, loaded.meta);
     this._activeRuntimeUserId = effectiveUserId;
     this._activeRuntimeSignature = signature;
-    this._debug('activate_user_runtime.applied', { userId: effectiveUserId, source: loaded.meta?.source || 'env' });
+    this._debug('activate_user_runtime.loaded', { userId: effectiveUserId, source: loaded.meta?.source || 'env' });
+    return loaded;
   }
 
   async getConfig(userId) {
@@ -1066,7 +1059,11 @@ class ProviderConfigService {
     this._activeRuntimeSignature = this._configSignature(normalized);
 
     return {
-      config: this._maskForClient(this._runtimeConfig, this._runtimeMeta),
+      config: this._maskForClient(normalized, {
+        source: 'supabase',
+        updatedBy: effectiveUserId,
+        updatedAt: now,
+      }),
       testResults: tested.results,
     };
   }

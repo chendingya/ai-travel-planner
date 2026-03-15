@@ -185,16 +185,6 @@ async function initializeApp() {
     const providerConfigService = new ProviderConfigService({
       supabase,
       langChainManager,
-      onRuntimeConfigApplied: () => {
-        const nextEmbeddingConfig = getEmbeddingConfig();
-        const nextRerankConfig = getRerankConfig();
-        const nextTextProviders = getEnabledTextProviders();
-        const nextImageProviders = getEnabledImageProviders();
-        const nextEmbeddingProviders = getEnabledRagEmbeddingProviders();
-        const nextRerankProviders = getEnabledRagRerankProviders();
-        langChainManager.reload(nextTextProviders, nextImageProviders, nextEmbeddingProviders, nextRerankProviders);
-        ragService.reloadConfig(nextEmbeddingConfig || {}, nextRerankConfig || {});
-      },
     });
     await providerConfigService.bootstrap();
     app.locals.providerConfigService = providerConfigService;
@@ -233,7 +223,8 @@ async function initializeApp() {
     const configuredEntries = configuredServers && typeof configuredServers === 'object' ? Object.entries(configuredServers) : [];
     
     const planService = new PlanService(langChainManager, mcpService, supabase);
-    const ttsService = new TTSService({ audioDir });
+    const ttsService = new TTSService({ audioDir, langChainManager });
+    app.locals.ttsService = ttsService;
 
     const ragStatus = ragService.getStatus();
     if (ragStatus.enabled) {

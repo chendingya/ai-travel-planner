@@ -34,6 +34,14 @@ class PlanService {
   }
 
   _getMcpPreferredProvider() {
+    const activeAdapters = typeof this.langChainManager?.getTextAdapters === 'function'
+      ? this.langChainManager.getTextAdapters()
+      : (Array.isArray(this.langChainManager?.textAdapters) ? this.langChainManager.textAdapters : []);
+    const runtimePreferred = Array.isArray(activeAdapters)
+      ? activeAdapters.find((adapter) => adapter && typeof adapter.name === 'string' && adapter.name.trim())
+      : null;
+    if (runtimePreferred?.name) return runtimePreferred.name.trim();
+
     const raw =
       process.env.AI_TEXT_PROVIDER_MCP_PRIMARY || process.env.AI_TEXT_PROVIDER_MCP_PREFERRED || '';
     return typeof raw === 'string' ? raw.trim() : '';
@@ -61,7 +69,6 @@ class PlanService {
     if (!preferredProvider) return await this.langChainManager.invokeText(messages, { onAdapterStart });
     return await this.langChainManager.invokeText(messages, {
       provider: preferredProvider,
-      allowedProviders: [preferredProvider],
       onAdapterStart,
     });
   }
@@ -392,12 +399,6 @@ class PlanService {
         const headroom = Math.max(10000, planTimeoutMs - 5000);
         return Math.max(modelTimeoutMs, headroom);
       })();
-      const mcpProviderName = typeof process.env.AI_TEXT_PROVIDER_MCP_PRIMARY === 'string' && process.env.AI_TEXT_PROVIDER_MCP_PRIMARY.trim()
-        ? process.env.AI_TEXT_PROVIDER_MCP_PRIMARY.trim()
-        : typeof process.env.AI_TEXT_PROVIDER_MCP_PREFERRED === 'string' && process.env.AI_TEXT_PROVIDER_MCP_PREFERRED.trim()
-          ? process.env.AI_TEXT_PROVIDER_MCP_PREFERRED.trim()
-          : '';
-      const allowedProviders = mcpProviderName ? [mcpProviderName] : [];
       const recursionLimit = Number(process.env.AI_CHAT_AGENT_RECURSION_LIMIT || '60');
       const { HumanMessage } = require('@langchain/core/messages');
 
@@ -406,7 +407,6 @@ class PlanService {
         tools,
         systemPrompt,
         provider: preferredProvider,
-        allowedProviders: preferredProvider ? [preferredProvider] : allowedProviders,
         modelscopeMaxRequestsPerChat: Number(process.env.AI_CHAT_MODELSCOPE_MAX_REQUESTS_PER_CHAT || '20')
       });
 
@@ -457,16 +457,10 @@ class PlanService {
       const result = {
         text: lastMsg?.content || '',
         steps: finalMessages,
-        provider: preferredProvider || ''
+        provider: Array.isArray(aiMeta?.providers)
+          ? (aiMeta.providers.find((item) => item && item.kind === 'text' && item.provider)?.provider || preferredProvider || '')
+          : (preferredProvider || '')
       };
-
-      if (aiMeta && result?.provider) {
-        const model = typeof result?.provider === 'string'
-          ? (this.langChainManager?.textAdapters || []).find((a) => a?.name === result.provider)?.model
-          : '';
-        const adapter = { name: result.provider, model };
-        this._recordProvider(aiMeta, adapter, 'text');
-      }
 
       const includeSteps = options?.includeSteps === true;
       const shouldLogSteps = typeof this.langChainManager?._debug === 'function';
