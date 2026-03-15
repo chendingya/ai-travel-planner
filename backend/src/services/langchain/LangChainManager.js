@@ -32,16 +32,21 @@ class LangChainManager {
       .flatMap((provider, providerIndex) => {
         const src = provider && typeof provider === 'object' ? provider : {};
         const models = Array.isArray(src.models) ? src.models : [];
-        const basePriority = parsePriority(src.priority, providerIndex + 1);
+        const providerPriority = parsePriority(src.priority, providerIndex + 1);
 
         if (models.length > 0) {
           return models.map((modelEntry, modelIndex) => {
             const modelObj = typeof modelEntry === 'string' ? { model: modelEntry } : modelEntry || {};
             const modelName = typeof modelObj.model === 'string' ? modelObj.model.trim() : '';
+            const modelPriority = parsePriority(modelObj.priority, modelIndex + 1);
             return {
               ...src,
               model: modelName || (typeof src.model === 'string' ? src.model : ''),
-              priority: parsePriority(modelObj.priority, basePriority + modelIndex),
+              priority: providerPriority,
+              providerPriority,
+              modelPriority,
+              _providerOrder: providerIndex,
+              _modelOrder: modelIndex,
             };
           });
         }
@@ -49,13 +54,25 @@ class LangChainManager {
         return [{
           ...src,
           model: typeof src.model === 'string' ? src.model : '',
-          priority: basePriority,
+          priority: providerPriority,
+          providerPriority,
+          modelPriority: 1,
+          _providerOrder: providerIndex,
+          _modelOrder: 0,
         }];
       })
-      .sort((a, b) => parsePriority(a.priority, 1) - parsePriority(b.priority, 1));
+      .sort((a, b) =>
+        parsePriority(a.providerPriority ?? a.priority, 1) - parsePriority(b.providerPriority ?? b.priority, 1) ||
+        parsePriority(a.modelPriority, 1) - parsePriority(b.modelPriority, 1) ||
+        parsePriority(a._providerOrder, 0) - parsePriority(b._providerOrder, 0) ||
+        parsePriority(a._modelOrder, 0) - parsePriority(b._modelOrder, 0)
+      );
 
     return expandedProviders
-      .map((provider) => new OpenAICompatibleAdapter(provider))
+      .map((provider) => {
+        const { _providerOrder, _modelOrder, ...adapterConfig } = provider;
+        return new OpenAICompatibleAdapter(adapterConfig);
+      })
       .filter((adapter) => adapter !== null && adapter.isAvailable());
   }
 
@@ -462,7 +479,7 @@ class LangChainManager {
     for (const adapter of adapters) {
       try {
         if (onAdapterStart) await onAdapterStart({ adapter });
-        console.log(`Attempting invokeText with provider: ${adapter.name}`);
+        console.log(`Attempting invokeText with provider: ${adapter.name}/${adapter.model || 'unknown'}`);
         return await adapter.invoke(filteredMessages);
       } catch (error) {
         lastError = error;

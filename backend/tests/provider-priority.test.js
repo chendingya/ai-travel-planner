@@ -104,6 +104,44 @@ test('AIChatService default preferred provider follows current runtime adapters 
   }
 });
 
+test('LangChainManager keeps provider priority ahead of nested model priority', () => {
+  const manager = new LangChainManager(
+    [
+      {
+        name: 'provider-a',
+        enabled: true,
+        baseURL: 'https://provider-a.example.com/v1',
+        apiKey: 'sk-provider-a',
+        priority: 1,
+        models: [
+          { model: 'a-model-2', priority: 2 },
+          { model: 'a-model-1', priority: 1 },
+        ],
+      },
+      {
+        name: 'provider-b',
+        enabled: true,
+        baseURL: 'https://provider-b.example.com/v1',
+        apiKey: 'sk-provider-b',
+        priority: 2,
+        models: [
+          { model: 'b-model-1', priority: 1 },
+        ],
+      },
+    ],
+    [],
+    [],
+    [],
+  );
+
+  const ordered = manager.getAvailableTextProviders().map((item) => `${item.name}/${item.model}`);
+  assert.deepEqual(ordered, [
+    'provider-a/a-model-1',
+    'provider-a/a-model-2',
+    'provider-b/b-model-1',
+  ]);
+});
+
 test('LangChainManager provider context isolates per-request adapters from default adapters', async () => {
   const manager = new LangChainManager(
     [

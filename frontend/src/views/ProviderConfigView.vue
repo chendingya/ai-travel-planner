@@ -544,15 +544,20 @@ const formatTime = (value) => {
 
 const testingKey = (kind, index) => `${kind}:${index}`;
 const isTesting = (kind, index) => testingKeys.value.has(testingKey(kind, index));
+const sortByPriority = (items = []) => [...items].sort((a, b) => (Number(a?.priority) || 1) - (Number(b?.priority) || 1));
 
 const setProviders = (payload) => {
   state.source = payload?.source || 'env';
   state.updatedBy = payload?.updatedBy || '';
   state.updatedAt = payload?.updatedAt || '';
-  state.textProviders = (Array.isArray(payload?.textProviders) ? payload.textProviders : []).map(normalizeTextProvider);
-  state.imageProviders = (Array.isArray(payload?.imageProviders) ? payload.imageProviders : []).map(normalizeImageProvider);
-  state.ragEmbeddingProviders = (Array.isArray(payload?.ragEmbeddingProviders) ? payload.ragEmbeddingProviders : []).map(normalizeRagEmbeddingProvider);
-  state.ragRerankProviders = (Array.isArray(payload?.ragRerankProviders) ? payload.ragRerankProviders : []).map(normalizeRagRerankProvider);
+  state.textProviders = sortByPriority((Array.isArray(payload?.textProviders) ? payload.textProviders : []).map((provider) => {
+    const normalized = normalizeTextProvider(provider);
+    normalized.models = sortByPriority(normalized.models);
+    return normalized;
+  }));
+  state.imageProviders = sortByPriority((Array.isArray(payload?.imageProviders) ? payload.imageProviders : []).map(normalizeImageProvider));
+  state.ragEmbeddingProviders = sortByPriority((Array.isArray(payload?.ragEmbeddingProviders) ? payload.ragEmbeddingProviders : []).map(normalizeRagEmbeddingProvider));
+  state.ragRerankProviders = sortByPriority((Array.isArray(payload?.ragRerankProviders) ? payload.ragRerankProviders : []).map(normalizeRagRerankProvider));
   lastSavedSnapshot.value = createSnapshot();
 };
 

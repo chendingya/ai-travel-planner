@@ -1091,6 +1091,16 @@ class AIChatService {
       const optionProvider = this._normalizeProviderName(options?.provider);
       const preferredProvider = optionProvider || this._pickPreferredProviderName({ enableTools });
       const allowedProviders = preferredProvider ? [preferredProvider] : [];
+      const activeTextAdapters = typeof this.langChainManager?.getTextAdapters === 'function'
+        ? this.langChainManager.getTextAdapters()
+        : (Array.isArray(this.langChainManager?.textAdapters) ? this.langChainManager.textAdapters : []);
+      const resolvePreferredTextAdapter = () => {
+        const adapters = Array.isArray(activeTextAdapters) ? activeTextAdapters : [];
+        if (adapters.length === 0) return null;
+        if (!preferredProvider) return adapters[0];
+        return adapters.find((adapter) => adapter && adapter.name === preferredProvider) || adapters[0];
+      };
+      const preferredTextAdapter = resolvePreferredTextAdapter();
       const toolUsageRuleBlock = enableTools
         ? `工具使用规则：
 1. 优先使用工具获取信息；实时信息优先使用外部工具。
@@ -1153,16 +1163,20 @@ class AIChatService {
       extraCallbacks.push(toolLimitCallback);
 
       // 定义通用的元数据捕获回调
+      if (currentTrace?.aiMeta && typeof currentTrace.aiMeta.mcp !== 'boolean') {
+        currentTrace.aiMeta.mcp = !!enableTools;
+      }
       const recordProvider = (metaInput) => {
         const meta = metaInput || {};
+        const kind = typeof meta.kind === 'string' && meta.kind.trim() ? meta.kind.trim() : 'text';
         const provider = typeof meta.provider === 'string' ? meta.provider : '';
         const model = typeof meta.model === 'string' ? meta.model : '';
         if (!provider && !model) return;
         const trace = currentTrace || this._currentTrace();
         if (!trace || !trace.aiMeta) return;
         const providers = Array.isArray(trace.aiMeta.providers) ? trace.aiMeta.providers : [];
-        const exists = providers.some(p => p.provider === provider && p.model === model);
-        if (!exists) providers.push({ provider, model });
+        const exists = providers.some(p => p.kind === kind && p.provider === provider && p.model === model);
+        if (!exists) providers.push({ kind, provider, model });
         trace.aiMeta.providers = providers;
         if (trace !== this._currentTrace()) {
           const current = this._currentTrace();
@@ -1179,11 +1193,12 @@ class AIChatService {
           const last = providers[providers.length - 1] || {};
           return this._formatUsageSourceLabel(last.provider, last.model);
         }
-        const adapter = Array.isArray(this.langChainManager?.textAdapters)
-          ? this.langChainManager.textAdapters.find(a => a && a.name === preferredProvider)
-          : null;
-        return this._formatUsageSourceLabel(preferredProvider, adapter?.model || '');
+        return this._formatUsageSourceLabel(preferredTextAdapter?.name || preferredProvider, preferredTextAdapter?.model || '');
       };
+
+      if (preferredTextAdapter) {
+        recordProvider({ kind: 'text', provider: preferredTextAdapter.name, model: preferredTextAdapter.model });
+      }
 
       const metadataCallback = {
         handleChainStart: (chain, inputs, runId, parentRunId, tags, metadata) => recordProvider(metadata),

@@ -114,21 +114,34 @@ function expandTextProviders(entries) {
       models.forEach((modelEntry, modelIndex) => {
         const modelObj = typeof modelEntry === 'string' ? { model: modelEntry } : modelEntry;
         const modelName = modelObj && typeof modelObj.model === 'string' ? modelObj.model : '';
-        const priority = parsePriority(
-          modelObj && modelObj.priority != null ? modelObj.priority : normalized.priority + modelIndex,
-          normalized.priority + modelIndex
-        );
         out.push({
           ...normalized,
           model: modelName || normalized.model,
-          priority,
+          priority: normalized.priority,
+          providerPriority: normalized.priority,
+          modelPriority: parsePriority(modelObj && modelObj.priority != null ? modelObj.priority : modelIndex + 1, modelIndex + 1),
+          _providerOrder: index,
+          _modelOrder: modelIndex,
         });
       });
       return;
     }
-    out.push(normalized);
+    out.push({
+      ...normalized,
+      providerPriority: normalized.priority,
+      modelPriority: 1,
+      _providerOrder: index,
+      _modelOrder: 0,
+    });
   });
-  return out;
+  return out
+    .sort((a, b) =>
+      parsePriority(a.providerPriority ?? a.priority, 1) - parsePriority(b.providerPriority ?? b.priority, 1) ||
+      parsePriority(a.modelPriority, 1) - parsePriority(b.modelPriority, 1) ||
+      parsePriority(a._providerOrder, 0) - parsePriority(b._providerOrder, 0) ||
+      parsePriority(a._modelOrder, 0) - parsePriority(b._modelOrder, 0)
+    )
+    .map(({ _providerOrder, _modelOrder, ...provider }) => provider);
 }
 
 const config = {
