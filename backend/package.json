@@ -6,7 +6,11 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test \"tests/**/*.test.js\"",
-    "backfill:semantic-memory": "node scripts/backfillSemanticMemories.js"
+    "backfill:semantic-memory": "node scripts/backfillSemanticMemories.js",
+    "ingest": "node scripts/ingest.js",
+    "ingest:local": "python3 scripts/ingest_local_qwen.py",
+    "ingest:dry": "node scripts/ingest.js --dry-run",
+    "filter": "node scripts/crawler/filter.js"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +24,9 @@
     "@modelcontextprotocol/sdk": "^1.23.0",
     "@supabase/supabase-js": "^2.86.0",
     "12306-mcp": "^0.3.7",
+    "axios": "^1.13.6",
     "bing-cn-mcp": "^1.0.2",
+    "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",

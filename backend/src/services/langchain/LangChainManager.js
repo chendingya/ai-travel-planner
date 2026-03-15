@@ -2,6 +2,8 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const OpenAICompatibleAdapter = require('./text/OpenAICompatibleAdapter');
 const ModelScopeImageAdapter = require('./image/ModelScopeImageAdapter');
 const OpenAICompatibleImageAdapter = require('./image/OpenAICompatibleImageAdapter');
+const { createEmbeddingAdapter } = require('./embedding');
+const { createRerankAdapter } = require('./rerank');
 const sensitiveFilter = require('../../utils/sensitiveFilter');
 
 /**
@@ -9,12 +11,13 @@ const sensitiveFilter = require('../../utils/sensitiveFilter');
  * 统一管理所有 AI 调用，提供商选择和降级
  */
 class LangChainManager {
-  constructor(textProviders, imageProviders) {
+  constructor(textProviders, imageProviders, embeddingProviders = [], rerankProviders = []) {
     this._probeCache = new Set();
     this._traceStore = new AsyncLocalStorage();
+    this._providerStore = new AsyncLocalStorage();
 
-    this.reload(textProviders, imageProviders, { silent: true });
-    console.log(`Initialized ${this.textAdapters.length} text providers and ${this.imageAdapters.length} image providers`);
+    this.reload(textProviders, imageProviders, embeddingProviders, rerankProviders, { silent: true });
+    console.log(`Initialized ${this.textAdapters.length} text providers, ${this.imageAdapters.length} image providers, ${this.embeddingAdapters.length} embedding providers and ${this.rerankAdapters.length} rerank providers`);
   }
 
   _buildTextAdapters(textProviders = []) {
@@ -66,16 +69,156 @@ class LangChainManager {
       .filter((adapter) => adapter !== null && adapter.isAvailable());
   }
 
-  reload(textProviders = [], imageProviders = [], options = {}) {
+  _buildRerankAdapters(rerankProviders = []) {
+    return (Array.isArray(rerankProviders) ? rerankProviders : [])
+      .map((provider) => createRerankAdapter(provider))
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  _buildEmbeddingAdapters(embeddingProviders = []) {
+    return (Array.isArray(embeddingProviders) ? embeddingProviders : [])
+      .map((provider) => createEmbeddingAdapter(provider))
+      .filter((adapter) => adapter !== null && adapter.isAvailable());
+  }
+
+  reload(textProviders = [], imageProviders = [], embeddingProvidersOrOptions = [], rerankProvidersOrOptions = [], maybeOptions = {}) {
+    const hasEmbeddingProviders = Array.isArray(embeddingProvidersOrOptions);
+    const hasRerankProviders = Array.isArray(rerankProvidersOrOptions);
+
+    const embeddingProviders = hasEmbeddingProviders ? embeddingProvidersOrOptions : [];
+    const rerankProviders = hasRerankProviders ? rerankProvidersOrOptions : [];
+    const options = hasEmbeddingProviders
+      ? (hasRerankProviders ? maybeOptions : (rerankProvidersOrOptions || {}))
+      : (embeddingProvidersOrOptions || {});
+
     this.textAdapters = this._buildTextAdapters(textProviders);
     this.imageAdapters = this._buildImageAdapters(imageProviders);
+    this.embeddingAdapters = this._buildEmbeddingAdapters(embeddingProviders);
+    this.rerankAdapters = this._buildRerankAdapters(rerankProviders);
+    this.defaultProviderConfig = {
+      textProviders: Array.isArray(textProviders) ? textProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      imageProviders: Array.isArray(imageProviders) ? imageProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      ragEmbeddingProviders: Array.isArray(embeddingProviders) ? embeddingProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      ragRerankProviders: Array.isArray(rerankProviders) ? rerankProviders.map((provider) => ({ ...(provider || {}) })) : [],
+    };
     if (!options || options.silent !== true) {
-      console.log(`Reloaded providers: text=${this.textAdapters.length}, image=${this.imageAdapters.length}`);
+      console.log(`Reloaded providers: text=${this.textAdapters.length}, image=${this.imageAdapters.length}, embedding=${this.embeddingAdapters.length}, rerank=${this.rerankAdapters.length}`);
     }
     return {
       text: this.textAdapters.length,
       image: this.imageAdapters.length,
+      embedding: this.embeddingAdapters.length,
+      rerank: this.rerankAdapters.length,
     };
+  }
+
+  _cloneProviderConfig(config = {}) {
+    return {
+      textProviders: Array.isArray(config?.textProviders) ? config.textProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      imageProviders: Array.isArray(config?.imageProviders) ? config.imageProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      ragEmbeddingProviders: Array.isArray(config?.ragEmbeddingProviders) ? config.ragEmbeddingProviders.map((provider) => ({ ...(provider || {}) })) : [],
+      ragRerankProviders: Array.isArray(config?.ragRerankProviders) ? config.ragRerankProviders.map((provider) => ({ ...(provider || {}) })) : [],
+    };
+  }
+
+  createProviderContext(config = {}, meta = {}) {
+    return {
+      config: this._cloneProviderConfig(config),
+      meta: meta && typeof meta === 'object' ? { ...meta } : {},
+      adapters: null,
+    };
+  }
+
+  runWithProviderContext(context, runner) {
+    const store = context && typeof context === 'object'
+      ? {
+          ...context,
+          config: this._cloneProviderConfig(context.config || {}),
+          meta: context.meta && typeof context.meta === 'object' ? { ...context.meta } : {},
+          adapters: null,
+        }
+      : this.createProviderContext();
+    const fn = typeof runner === 'function' ? runner : () => runner;
+    return this._providerStore.run(store, fn);
+  }
+
+  _currentProviderContext() {
+    const store = this._providerStore.getStore();
+    return store && typeof store === 'object' ? store : null;
+  }
+
+  getActiveProviderConfig() {
+    const store = this._currentProviderContext();
+    if (store?.config) return this._cloneProviderConfig(store.config);
+    return this._cloneProviderConfig(this.defaultProviderConfig);
+  }
+
+  _resolveTextAdapters() {
+    const store = this._currentProviderContext();
+    if (!store?.config) return this.textAdapters;
+    if (!store.adapters) store.adapters = {};
+    if (!store.adapters.text) {
+      store.adapters.text = this._buildTextAdapters(store.config.textProviders);
+    }
+    return store.adapters.text;
+  }
+
+  _resolveImageAdapters() {
+    const store = this._currentProviderContext();
+    if (!store?.config) return this.imageAdapters;
+    if (!store.adapters) store.adapters = {};
+    if (!store.adapters.image) {
+      store.adapters.image = this._buildImageAdapters(store.config.imageProviders);
+    }
+    return store.adapters.image;
+  }
+
+  _resolveEmbeddingAdapters() {
+    const store = this._currentProviderContext();
+    if (!store?.config) return this.embeddingAdapters;
+    if (!store.adapters) store.adapters = {};
+    if (!store.adapters.embedding) {
+      store.adapters.embedding = this._buildEmbeddingAdapters(store.config.ragEmbeddingProviders);
+    }
+    return store.adapters.embedding;
+  }
+
+  _resolveRerankAdapters() {
+    const store = this._currentProviderContext();
+    if (!store?.config) return this.rerankAdapters;
+    if (!store.adapters) store.adapters = {};
+    if (!store.adapters.rerank) {
+      store.adapters.rerank = this._buildRerankAdapters(store.config.ragRerankProviders);
+    }
+    return store.adapters.rerank;
+  }
+
+  getTextAdapters() {
+    return this._resolveTextAdapters();
+  }
+
+  selectEmbeddingProviderByName(name) {
+    const adapters = this._resolveEmbeddingAdapters();
+    if (!adapters.length) return null;
+    const preferred = typeof name === 'string' ? name.trim() : '';
+    if (!preferred) return adapters[0];
+    return adapters.find((adapter) => adapter && adapter.name === preferred) || adapters[0];
+  }
+
+  getAvailableEmbeddingProviders() {
+    return this._resolveEmbeddingAdapters();
+  }
+
+  selectRerankProviderByName(name) {
+    const adapters = this._resolveRerankAdapters();
+    if (!adapters.length) return null;
+    const preferred = typeof name === 'string' ? name.trim() : '';
+    if (!preferred) return adapters[0];
+    return adapters.find((adapter) => adapter && adapter.name === preferred) || adapters[0];
+  }
+
+  getAvailableRerankProviders() {
+    return this._resolveRerankAdapters();
   }
 
   runWithTrace(trace, runner) {
@@ -211,8 +354,9 @@ class LangChainManager {
   }
 
   selectTextProviderByName(name) {
+    const adapters = this._resolveTextAdapters();
     if (!name) return this.selectTextProvider();
-    const hit = this.textAdapters.find((a) => a && a.name === name);
+    const hit = adapters.find((a) => a && a.name === name);
     return hit || this.selectTextProvider();
   }
 
@@ -227,12 +371,13 @@ class LangChainManager {
    * 按优先级顺序返回第一个可用的提供商
    */
   selectTextProvider() {
-    if (this.textAdapters.length === 0) {
+    const adapters = this._resolveTextAdapters();
+    if (adapters.length === 0) {
       const err = new Error('未配置可用的文本模型提供商');
       err.code = 'TEXT_PROVIDER_UNAVAILABLE';
       throw err;
     }
-    return this.textAdapters[0];
+    return adapters[0];
   }
 
   /**
@@ -240,12 +385,13 @@ class LangChainManager {
    * 按优先级顺序返回第一个可用的提供商
    */
   selectImageProvider() {
-    if (this.imageAdapters.length === 0) {
+    const adapters = this._resolveImageAdapters();
+    if (adapters.length === 0) {
       const err = new Error('未配置可用的图片生成提供商');
       err.code = 'IMAGE_PROVIDER_UNAVAILABLE';
       throw err;
     }
-    return this.imageAdapters[0];
+    return adapters[0];
   }
 
   /**
@@ -253,7 +399,8 @@ class LangChainManager {
    * 如果第一个提供商失败，自动切换到下一个
    */
   async withTextFallback(operationName, operationFn, retries = 0) {
-    const maxRetries = this.textAdapters.length - 1;
+    const adapters = this._resolveTextAdapters();
+    const maxRetries = adapters.length - 1;
 
     if (retries > maxRetries) {
       const err = new Error(`所有文本模型提供商均调用失败：${operationName}`);
@@ -261,7 +408,7 @@ class LangChainManager {
       throw err;
     }
 
-    const adapter = this.textAdapters[retries];
+    const adapter = adapters[retries];
 
     try {
       console.log(`Attempting ${operationName} with provider: ${adapter.name} (attempt ${retries + 1})`);
@@ -288,14 +435,11 @@ class LangChainManager {
 
     const preferred = typeof options.provider === 'string' ? options.provider.trim() : '';
     const allowedRaw = Array.isArray(options.allowedProviders) ? options.allowedProviders : [];
-    const allowedFromEnv = !allowedRaw.length && !preferred
-      ? String(process.env.AI_TEXT_PROVIDER_DEFAULT_PRIMARY || process.env.AI_TEXT_PROVIDER_DEFAULT_PREFERRED || '').trim()
-      : '';
-    const allowedProviders = (allowedRaw.length ? allowedRaw : allowedFromEnv ? [allowedFromEnv] : [])
+    const allowedProviders = allowedRaw
       .map((p) => (typeof p === 'string' ? p.trim() : ''))
       .filter(Boolean);
 
-    const baseAdapters = Array.isArray(options.adapters) && options.adapters.length ? options.adapters : this.textAdapters;
+    const baseAdapters = Array.isArray(options.adapters) && options.adapters.length ? options.adapters : this._resolveTextAdapters();
     const scopedAdapters = allowedProviders.length
       ? baseAdapters.filter((a) => a && allowedProviders.includes(a.name))
       : baseAdapters;
@@ -346,7 +490,8 @@ class LangChainManager {
    * 带降级的图片生成调用
    */
   async withImageFallback(operationName, operationFn, retries = 0) {
-    const maxRetries = this.imageAdapters.length - 1;
+    const adapters = this._resolveImageAdapters();
+    const maxRetries = adapters.length - 1;
 
     if (retries > maxRetries) {
       const err = new Error(`所有图片生成提供商均调用失败：${operationName}`);
@@ -354,7 +499,7 @@ class LangChainManager {
       throw err;
     }
 
-    const adapter = this.imageAdapters[retries];
+    const adapter = adapters[retries];
 
     try {
       console.log(`Attempting ${operationName} with provider: ${adapter.name} (attempt ${retries + 1})`);
@@ -393,10 +538,11 @@ class LangChainManager {
 
     const preferred = typeof options.provider === 'string' ? options.provider : '';
     const adapters = (() => {
-      if (!preferred) return this.imageAdapters;
-      const preferredAdapter = this.imageAdapters.find(a => a.name === preferred);
-      if (!preferredAdapter) return this.imageAdapters;
-      const rest = this.imageAdapters.filter(a => a !== preferredAdapter);
+      const availableAdapters = this._resolveImageAdapters();
+      if (!preferred) return availableAdapters;
+      const preferredAdapter = availableAdapters.find(a => a.name === preferred);
+      if (!preferredAdapter) return availableAdapters;
+      const rest = availableAdapters.filter(a => a !== preferredAdapter);
       return [preferredAdapter, ...rest];
     })();
 
@@ -626,7 +772,7 @@ class LangChainManager {
     const { MemorySaver } = require('@langchain/langgraph');
 
     // 1. 筛选适配器
-    const rawAdapters = this.textAdapters;
+    const rawAdapters = this._resolveTextAdapters();
     const allowed = Array.isArray(allowedProviders) ? allowedProviders.filter(p => typeof p === 'string' && p) : [];
     const baseAdapters = allowed.length ? rawAdapters.filter(a => a && allowed.includes(a.name)) : rawAdapters;
     
@@ -697,7 +843,7 @@ class LangChainManager {
    * 获取可用的文本提供商列表
    */
   getAvailableTextProviders() {
-    return this.textAdapters.map(adapter => ({
+    return this._resolveTextAdapters().map(adapter => ({
       name: adapter.name,
       model: adapter.model,
       enabled: adapter.enabled,
@@ -708,7 +854,7 @@ class LangChainManager {
    * 获取可用的图片提供商列表
    */
   getAvailableImageProviders() {
-    return this.imageAdapters.map(adapter => ({
+    return this._resolveImageAdapters().map(adapter => ({
       name: adapter.name,
       model: adapter.model,
       enabled: adapter.enabled,
@@ -725,6 +871,8 @@ class LangChainManager {
     };
 
     for (const adapter of this.textAdapters) {
+      // 测试连接始终针对默认配置，不走请求级上下文
+      if (!adapter) continue;
       try {
         results.text[adapter.name] = await adapter.testConnection();
       } catch (error) {

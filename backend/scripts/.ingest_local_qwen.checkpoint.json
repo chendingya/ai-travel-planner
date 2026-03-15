@@ -1,0 +1,10 @@
+{
+  "jobs": {
+    "{\"batch_size\": 8, \"dataset_version\": \"20260306_004228\", \"dim\": 1024, \"file\": \"/home/wushiwei/projects_z/cdy/RAG/knowledge_20260306_004228_filtered.jsonl\", \"kb\": \"travel-cn-public\", \"model_path\": \"/home/wushiwei/projects_z/cdy/Qwen/Qwen3-Embedding-4B\"}": {
+      "status": "completed",
+      "last_success_batch": 699,
+      "last_success_row": 5585,
+      "written_rows": 5585
+    }
+  }
+}

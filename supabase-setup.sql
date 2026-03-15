@@ -286,10 +286,18 @@ CREATE TABLE IF NOT EXISTS public.ai_provider_configs (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   text_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
   image_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  rag_embedding_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  rag_rerank_providers JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.ai_provider_configs
+  ADD COLUMN IF NOT EXISTS rag_embedding_providers JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE public.ai_provider_configs
+  ADD COLUMN IF NOT EXISTS rag_rerank_providers JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TRIGGER set_ai_provider_configs_updated_at
   BEFORE UPDATE ON public.ai_provider_configs

@@ -9,7 +9,7 @@ module.exports = (providerConfigController) => {
    * /api/provider-config:
    *   get:
    *     tags: [Provider Config]
-   *     summary: 获取提供商配置（脱敏）
+  *     summary: 获取提供商配置（脱敏，含 Text/Image/RAG Embedding/RAG Rerank）
    *     responses:
    *       200:
    *         description: 获取成功
@@ -35,7 +35,7 @@ module.exports = (providerConfigController) => {
    *             properties:
    *               kind:
    *                 type: string
-   *                 enum: [text, image]
+  *                 enum: [text, image, embedding, rerank]
    *               provider:
    *                 type: object
    *     responses:
@@ -55,7 +55,7 @@ module.exports = (providerConfigController) => {
    * /api/provider-config:
    *   put:
    *     tags: [Provider Config]
-   *     summary: 全量更新提供商配置并热更新
+  *     summary: 全量更新提供商配置并热更新（含 RAG Embedding/Rerank）
    *     requestBody:
    *       required: true
    *       content:
@@ -67,6 +67,10 @@ module.exports = (providerConfigController) => {
    *                 type: array
    *               imageProviders:
    *                 type: array
+  *               ragEmbeddingProviders:
+  *                 type: array
+  *               ragRerankProviders:
+  *                 type: array
    *     responses:
    *       200:
    *         description: 保存成功

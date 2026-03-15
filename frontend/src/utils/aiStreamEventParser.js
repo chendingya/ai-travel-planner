@@ -65,6 +65,20 @@ const normalizeText = (value, maxLen = MAX_TEXT) => {
   return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
 };
 
+const normalizeMultilineText = (value, maxLen = 1800) => {
+  if (value == null) return '';
+  const text = String(value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+};
+
 const unwrapToolPayload = (value, depth = 0) => {
   if (depth > 4 || value == null) return value;
 
@@ -231,6 +245,29 @@ const sanitizeSummary = (value, fallback) => {
   return s;
 };
 
+const shouldPreferDetailedToolText = (toolName, kind) => kind === 'result' && toolName === 'search_travel_knowledge';
+
+const pickDetailedToolText = (payload, toolName, kind) => {
+  if (!shouldPreferDetailedToolText(toolName, kind)) return '';
+
+  const candidates = [
+    payload?.content,
+    unwrapToolPayload(payload?.content),
+    unwrapToolPayload(payload?.rawContent),
+    payload?.rawContent,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const normalized = normalizeMultilineText(candidate, 2000);
+    if (!normalized) continue;
+    if (normalized.includes('\n')) return normalized;
+    if (normalized.length > 120) return normalized;
+  }
+
+  return '';
+};
+
 const parsePayload = (chunk) => {
   const raw = chunk?.data;
   if (raw && typeof raw === 'object') return raw;
@@ -314,6 +351,7 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
     const localSummary = sanitizeSummary(pickSummary(toolName, kind, rawPayloadText), fallback);
     const backendSummary = sanitizeSummary(payload?.summary, '');
     const summary = backendSummary && !isLowQualitySummary(backendSummary) ? backendSummary : localSummary;
+    const detailedText = pickDetailedToolText(payload, toolName, kind);
 
     const title = kind === 'call'
       ? `🔧 工具调用 · ${toolName}`
@@ -321,8 +359,8 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
         ? `✅ 工具返回 · ${toolName}`
         : `❌ 工具异常 · ${toolName}`;
 
-    let text = summary;
-    if (includeRaw) {
+    let text = detailedText || summary;
+    if (includeRaw && !detailedText) {
       const raw = normalizeText(rawPayloadText, rawMaxLen);
       if (raw) text = `${text}\n\n原文片段: ${raw}`;
     }
@@ -358,13 +396,14 @@ export const createAIStreamEventParser = ({ includeRaw = false, rawMaxLen = 300 
       const localSummary = sanitizeSummary(pickSummary(toolName, kind, rawPayloadText), fallback);
       const backendSummary = sanitizeSummary(payload?.summary, '');
       const summary = backendSummary && !isLowQualitySummary(backendSummary) ? backendSummary : localSummary;
+      const detailedToolText = shouldPreferDetailedToolText(toolName, kind);
       return {
         ...base,
         toolName,
         toolCallId: normalizeText(resolveToolCallIdFromPayload(payload), 120),
         summary,
-        content: normalizeText(payload?.content || '', 1200),
-        rawContent: normalizeText(rawPayloadText, 2600),
+        content: detailedToolText ? normalizeMultilineText(payload?.content || '', 1200) : normalizeText(payload?.content || '', 1200),
+        rawContent: detailedToolText ? normalizeMultilineText(rawPayloadText, 2600) : normalizeText(rawPayloadText, 2600),
       };
     }
     if (type === 'text' || type === 'think') {

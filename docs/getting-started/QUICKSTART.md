@@ -158,7 +158,7 @@ MCP_BING_AUTHORIZATION=Bearer xxx
    - 登录后在“个人中心”进入 `提供商管理` 页面（`/provider-config`）
    - 可编辑 text/pic 提供商并保存到 Supabase（按当前登录用户隔离）
    - 需要在后端配置 `PROVIDER_CONFIG_ENCRYPTION_KEY`，否则保存会被拒绝
-   - 保存前强制连通性校验，通过后后端会热更新，无需重启服务
+   - 保存前强制连通性校验，通过后无需重启服务；新配置会在当前用户后续请求中立即生效
 
 ## 验证是否成功
 
@@ -335,8 +335,8 @@ MCP_BING_AUTHORIZATION=xxx
 
 - `GET /api/provider-config`：获取脱敏后的当前配置
 - `POST /api/provider-config/test`：测试单个 provider 连通性
-- `PUT /api/provider-config`：全量校验并保存，成功后热更新
+- `PUT /api/provider-config`：全量校验并保存，成功后从当前用户后续请求开始立即生效
 
 ---
 
-**最后更新：2026-03-07**
+**最后更新：2026-03-15**

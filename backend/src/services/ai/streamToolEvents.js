@@ -7,6 +7,20 @@ const normalizeText = (value, maxLen = MAX_TEXT) => {
   return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
 };
 
+const normalizeMultilineText = (value, maxLen = 1800) => {
+  if (value == null) return '';
+  const text = String(value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+};
+
 const parseJsonLoose = (value) => {
   if (typeof value !== 'string') return null;
   const text = value.trim();
@@ -104,7 +118,7 @@ const firstLine = (value) => {
   return lines[0] || '';
 };
 
-const stringifyForStream = (value, maxLen = 1800) => {
+const stringifyForStream = (value, maxLen = 1800, { preserveLines = false } = {}) => {
   let text = '';
   if (typeof value === 'string') {
     text = value;
@@ -117,6 +131,7 @@ const stringifyForStream = (value, maxLen = 1800) => {
       text = String(value);
     }
   }
+  if (preserveLines) return normalizeMultilineText(text, maxLen);
   const compact = text.replace(/\s+/g, ' ').trim();
   if (!compact) return '';
   return compact.length > maxLen ? `${compact.slice(0, maxLen)}...` : compact;
@@ -339,14 +354,15 @@ const buildToolEventPayload = ({ source = 'chat', phase = 'result', toolName = '
   const providedToolCallId = typeof toolCallId === 'string' ? toolCallId.trim() : '';
   const normalizedToolCallId = providedToolCallId || fallbackToolCallId(normalizedToolName, rawValue);
   const normalized = unwrapToolPayload(rawValue, 0);
+  const preserveLines = normalizedToolName === 'search_travel_knowledge' && typeof normalized === 'string';
   const payload = {
     source,
     type: typeMap[phaseName],
     toolName: normalizedToolName,
     toolCallId: normalizedToolCallId,
     summary: summarizeToolPayload({ toolName: normalizedToolName, phase: phaseName, value: rawValue }),
-    content: stringifyForStream(normalized, 1200),
-    rawContent: stringifyForStream(rawValue, 2600),
+    content: stringifyForStream(normalized, 1200, { preserveLines }),
+    rawContent: stringifyForStream(rawValue, 2600, { preserveLines }),
   };
   if (eventPhase) payload.phase = eventPhase;
   return payload;

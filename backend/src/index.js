@@ -35,7 +35,7 @@ const applyLangChainTokenPatch = () => {
 applyLangChainTokenPatch();
 
 // 配置
-const { config, getEnabledTextProviders, getEnabledImageProviders } = require('./config');
+const { config, getEnabledTextProviders, getEnabledImageProviders, getEnabledRagEmbeddingProviders, getEnabledRagRerankProviders, getEmbeddingConfig, getRerankConfig } = require('./config');
 
 // 中间件
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -54,6 +54,7 @@ const PostcardService = require('./services/postcardService');
 const ShareService = require('./services/shareService');
 const MCPService = require('./services/mcpService');
 const TTSService = require('./services/ttsService');
+const RagService = require('./services/ragService');
 const ProviderConfigService = require('./services/providerConfigService');
 
 // Controllers
@@ -167,18 +168,31 @@ async function initializeApp() {
     // 获取启用的提供商
     const textProviders = getEnabledTextProviders();
     const imageProviders = getEnabledImageProviders();
+    const embeddingProviders = getEnabledRagEmbeddingProviders();
+    const rerankProviders = getEnabledRagRerankProviders();
+
+    const embeddingConfig = getEmbeddingConfig();
+    const rerankConfig = getRerankConfig();
 
     // 初始化 LangChain Manager
-    const langChainManager = new LangChainManager(textProviders, imageProviders);
+    const langChainManager = new LangChainManager(textProviders, imageProviders, embeddingProviders, rerankProviders);
     app.locals.langChainManager = langChainManager;
 
+    const ragService = new RagService(supabase, embeddingConfig || {}, rerankConfig || {}, { langChainManager });
+    app.locals.ragService = ragService;
+
     // 初始化 Provider 配置服务（支持 Supabase 持久化 + 热更新）
-    const providerConfigService = new ProviderConfigService({ supabase, langChainManager });
+    const providerConfigService = new ProviderConfigService({
+      supabase,
+      langChainManager,
+    });
     await providerConfigService.bootstrap();
     app.locals.providerConfigService = providerConfigService;
 
     console.log('Available text providers:', langChainManager.getAvailableTextProviders().map((p) => p.name));
     console.log('Available image providers:', langChainManager.getAvailableImageProviders().map((p) => p.name));
+    console.log('Available embedding providers:', langChainManager.getAvailableEmbeddingProviders().map((p) => p.name));
+    console.log('Available rerank providers:', langChainManager.getAvailableRerankProviders().map((p) => p.name));
 
     // 初始化 Services
     const mcpService = new MCPService();
@@ -209,8 +223,18 @@ async function initializeApp() {
     const configuredEntries = configuredServers && typeof configuredServers === 'object' ? Object.entries(configuredServers) : [];
     
     const planService = new PlanService(langChainManager, mcpService, supabase);
-    const ttsService = new TTSService({ audioDir });
-    const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService });
+    const ttsService = new TTSService({ audioDir, langChainManager });
+    app.locals.ttsService = ttsService;
+
+    const ragStatus = ragService.getStatus();
+    if (ragStatus.enabled) {
+      const rerankInfo = ragStatus.rerankEnabled ? `，Rerank ${ragStatus.rerankModel}` : '，Rerank 未启用';
+      console.log(`RAG 服务: 已启用（${ragStatus.embeddingModel}，维度 ${ragStatus.dim}，Hybrid: sparse=${ragStatus.sparseTopK}/dense=${ragStatus.denseTopK}/rrf=${ragStatus.rrfTopK}${rerankInfo}）`);
+    } else {
+      console.log('RAG 服务: 未配置（可在 Provider 配置页或环境变量中启用 Embedding Provider）');
+    }
+
+    const aiChatService = new AIChatService(langChainManager, supabase, { mcpService, ttsService, ragService });
     const promptService = new PromptService(langChainManager);
     const imageService = new ImageService(langChainManager, supabase);
     const playlistService = new PlaylistService(langChainManager, supabase);
