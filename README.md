@@ -637,4 +637,15 @@ AI_IMAGE_PROVIDERS_JSON='[
 
 ---
 
+## 🖼️ 界面预览
+
+<div align="center">
+  <img src="./docs/chat.png" width="22%" />
+  <img src="./docs/memory.png" width="22%" />
+  <img src="./docs/plandone.png" width="22%" />
+  <img src="./docs/planing.png" width="22%" />
+</div>
+
+---
+
 **Made with ❤️ using Vue.js, Node.js, LangChain, and AI**
